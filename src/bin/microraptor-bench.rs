@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use microraptor::benchutil::{
-    StreamStats, consume_fastq, consume_trusted_fastq_with_pack, synthetic_fastq,
+    StreamStats, consume_fastq, consume_trusted_fastq_read_with_pack, synthetic_fastq,
 };
 use microraptor::pack::pack_bases_and_summarize_qualities_into;
 use microraptor::{FastqConfig, FastqReader, PairValidation, Result};
@@ -237,6 +237,12 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
             input_bytes,
             config,
         )?);
+        measurements.push(measure_path_trusted_pack(
+            "file-trusted-pack-seq-qual",
+            path,
+            input_bytes,
+            config,
+        )?);
     }
     let source = path.to_string_lossy();
 
@@ -420,7 +426,14 @@ fn measure_pack(name: &str, input: &[u8], config: &Config) -> Result<Measurement
 
 fn measure_trusted_pack(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
     measure(name, input.len(), config.iters, || {
-        consume_trusted_fastq_with_pack(input)
+        consume_trusted_fastq_read_with_pack(
+            std::io::Cursor::new(input),
+            FastqConfig {
+                slab_size: config.slab_size,
+                validate: true,
+                ..FastqConfig::default()
+            },
+        )
     })
 }
 
@@ -445,6 +458,17 @@ fn measure_path_pack(
     measure(name, input_bytes, config.iters, || {
         let mut reader = FastqReader::with_config(open_bench_read(path)?, fastq_config(config));
         consume_fastq_with_pack(&mut reader)
+    })
+}
+
+fn measure_path_trusted_pack(
+    name: &str,
+    path: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        consume_trusted_fastq_read_with_pack(open_bench_read(path)?, fastq_config(config))
     })
 }
 
