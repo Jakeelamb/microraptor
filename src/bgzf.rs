@@ -22,6 +22,118 @@ pub const BGZF_EOF_BLOCK: &[u8] = &[
     31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0, 66, 67, 2, 0, 27, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BgzfVirtualOffset(u64);
+
+impl BgzfVirtualOffset {
+    const MAX_COMPRESSED_OFFSET: u64 = (1_u64 << 48) - 1;
+
+    pub fn from_parts(compressed_offset: u64, in_block_offset: u16) -> Result<Self> {
+        if compressed_offset > Self::MAX_COMPRESSED_OFFSET {
+            return Err(FastqError::Bgzf(
+                "BGZF compressed offset exceeds virtual-offset range".into(),
+            ));
+        }
+        Ok(Self((compressed_offset << 16) | u64::from(in_block_offset)))
+    }
+
+    pub fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+
+    pub fn compressed_offset(self) -> u64 {
+        self.0 >> 16
+    }
+
+    pub fn in_block_offset(self) -> u16 {
+        (self.0 & 0xffff) as u16
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BgzfIndexEntry {
+    pub compressed_offset: u64,
+    pub uncompressed_offset: u64,
+    pub compressed_size: u32,
+    pub uncompressed_size: u32,
+}
+
+impl BgzfIndexEntry {
+    pub fn block_virtual_offset(&self) -> Result<BgzfVirtualOffset> {
+        BgzfVirtualOffset::from_parts(self.compressed_offset, 0)
+    }
+
+    pub fn contains_uncompressed_offset(&self, offset: u64) -> bool {
+        offset >= self.uncompressed_offset
+            && offset < self.uncompressed_offset + u64::from(self.uncompressed_size)
+    }
+
+    pub fn virtual_offset_for(&self, offset: u64) -> Result<Option<BgzfVirtualOffset>> {
+        if !self.contains_uncompressed_offset(offset) {
+            return Ok(None);
+        }
+        let in_block = offset - self.uncompressed_offset;
+        let in_block = u16::try_from(in_block)
+            .map_err(|_| FastqError::Bgzf("BGZF in-block offset exceeds u16 range".into()))?;
+        BgzfVirtualOffset::from_parts(self.compressed_offset, in_block).map(Some)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BgzfIndex {
+    entries: Vec<BgzfIndexEntry>,
+    uncompressed_len: u64,
+    compressed_len: u64,
+}
+
+impl BgzfIndex {
+    pub fn entries(&self) -> &[BgzfIndexEntry] {
+        &self.entries
+    }
+
+    pub fn uncompressed_len(&self) -> u64 {
+        self.uncompressed_len
+    }
+
+    pub fn compressed_len(&self) -> u64 {
+        self.compressed_len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn entry_for_uncompressed_offset(&self, offset: u64) -> Option<&BgzfIndexEntry> {
+        if offset >= self.uncompressed_len {
+            return None;
+        }
+        let idx = self
+            .entries
+            .partition_point(|entry| entry.uncompressed_offset <= offset);
+        idx.checked_sub(1)
+            .and_then(|entry_idx| self.entries.get(entry_idx))
+            .filter(|entry| entry.contains_uncompressed_offset(offset))
+    }
+
+    pub fn virtual_offset_for_uncompressed_offset(
+        &self,
+        offset: u64,
+    ) -> Result<Option<BgzfVirtualOffset>> {
+        let Some(entry) = self.entry_for_uncompressed_offset(offset) else {
+            return Ok(None);
+        };
+        entry.virtual_offset_for(offset)
+    }
+}
+
 #[derive(Debug)]
 struct CompressedBlock {
     bytes: Vec<u8>,
@@ -354,6 +466,46 @@ pub fn compress_bgzf_parallel(input: &[u8], workers: usize) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+pub fn build_bgzf_index<R: Read>(mut reader: R) -> Result<BgzfIndex> {
+    let mut entries = Vec::new();
+    let mut compressed_offset = 0_u64;
+    let mut uncompressed_offset = 0_u64;
+
+    while let Some(block) = read_block(&mut reader)? {
+        let compressed_size = u32::try_from(block.bytes.len())
+            .map_err(|_| FastqError::Bgzf("BGZF block size exceeds u32 range".into()))?;
+        if block.is_eof() {
+            compressed_offset += u64::from(compressed_size);
+            break;
+        }
+
+        let decoded = decode_block(&block)?;
+        let uncompressed_size = u32::try_from(decoded.len()).map_err(|_| {
+            FastqError::Bgzf("BGZF uncompressed block size exceeds u32 range".into())
+        })?;
+        if uncompressed_size > 65_536 {
+            return Err(FastqError::Bgzf(
+                "BGZF uncompressed block exceeds 64 KiB".into(),
+            ));
+        }
+
+        entries.push(BgzfIndexEntry {
+            compressed_offset,
+            uncompressed_offset,
+            compressed_size,
+            uncompressed_size,
+        });
+        compressed_offset += u64::from(compressed_size);
+        uncompressed_offset += u64::from(uncompressed_size);
+    }
+
+    Ok(BgzfIndex {
+        entries,
+        uncompressed_len: uncompressed_offset,
+        compressed_len: compressed_offset,
+    })
+}
+
 fn bgzf_reader_loop<R>(
     mut inner: R,
     job_txs: Vec<SyncSender<Job>>,
@@ -620,5 +772,68 @@ mod tests {
             decoded.extend_from_slice(&scratch[..n]);
         }
         assert_eq!(decoded, input);
+    }
+
+    #[test]
+    fn builds_bgzf_index_for_multi_block_stream() {
+        let input = vec![b'A'; BGZF_MAX_PAYLOAD * 2 + 17];
+        let encoded = compress_bgzf_parallel(&input, 3).unwrap();
+        let index = build_bgzf_index(&encoded[..]).unwrap();
+
+        assert_eq!(index.len(), 3);
+        assert_eq!(index.uncompressed_len(), input.len() as u64);
+        assert_eq!(index.compressed_len(), encoded.len() as u64);
+        assert_eq!(index.entries()[0].compressed_offset, 0);
+        assert_eq!(index.entries()[0].uncompressed_offset, 0);
+        assert_eq!(
+            index.entries()[1].uncompressed_offset,
+            u64::from(index.entries()[0].uncompressed_size)
+        );
+
+        let first = index
+            .virtual_offset_for_uncompressed_offset(0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.compressed_offset(), 0);
+        assert_eq!(first.in_block_offset(), 0);
+
+        let second_offset = index.entries()[1].uncompressed_offset + 9;
+        let second = index
+            .virtual_offset_for_uncompressed_offset(second_offset)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            second.compressed_offset(),
+            index.entries()[1].compressed_offset
+        );
+        assert_eq!(second.in_block_offset(), 9);
+        assert!(
+            index
+                .virtual_offset_for_uncompressed_offset(input.len() as u64)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn builds_empty_index_for_eof_only_stream() {
+        let writer = BgzfWriter::new(Vec::new());
+        let encoded = writer.finish().unwrap();
+        let index = build_bgzf_index(&encoded[..]).unwrap();
+
+        assert!(index.is_empty());
+        assert_eq!(index.uncompressed_len(), 0);
+        assert_eq!(index.compressed_len(), encoded.len() as u64);
+    }
+
+    #[test]
+    fn virtual_offset_checks_compressed_offset_range() {
+        let err = BgzfVirtualOffset::from_parts(1_u64 << 48, 0).unwrap_err();
+        assert!(err.to_string().contains("virtual-offset range"));
+
+        let vo = BgzfVirtualOffset::from_parts(123, 45).unwrap();
+        assert_eq!(vo.raw(), (123 << 16) | 45);
+        assert_eq!(vo.compressed_offset(), 123);
+        assert_eq!(vo.in_block_offset(), 45);
     }
 }

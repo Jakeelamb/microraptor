@@ -11,6 +11,7 @@ Current slice:
 - BGZF FASTQ detected by BGZF headers before ordinary gzip
 - serial BGZF streaming reader and writer
 - parallel BGZF decompression/compression entry points for independent blocks
+- BGZF block index construction with virtual-offset lookup
 - reusable slab buffer with carry handling for records crossing slab boundaries
 - SIMD newline scan on nightly through `std::simd`, with scalar fallback when the
   `simd` feature is disabled
@@ -26,7 +27,8 @@ Backend boundary:
 - ordinary gzip currently uses `flate2`; the decoder stage is isolated so ISA-L
   can replace it without touching FASTQ framing
 - BGZF is already block-aware and has parallel whole-input compression and
-  decompression helpers, plus a bounded streaming parallel reader
+  decompression helpers, a bounded streaming parallel reader, and virtual-offset
+  indexing
 - output compression currently uses Rust deflate through `flate2`; libdeflate or
   ISA-L can replace block compression later
 
