@@ -11,8 +11,9 @@ mod source;
 
 #[cfg(feature = "bgzf")]
 pub use bgzf::{
-    BGZF_EOF_BLOCK, BgzfIndex, BgzfIndexEntry, BgzfParallelReader, BgzfReader, BgzfVirtualOffset,
-    BgzfWriter, build_bgzf_index, compress_bgzf_parallel, decompress_bgzf_parallel,
+    BGZF_EOF_BLOCK, BgzfIndex, BgzfIndexEntry, BgzfInflateBackend, BgzfParallelReader, BgzfReader,
+    BgzfVirtualOffset, BgzfWriter, build_bgzf_index, compress_bgzf_parallel,
+    decompress_bgzf_parallel, decompress_bgzf_parallel_with_inflate_backend,
 };
 pub use error::{FastqError, FastqPosition, Result};
 pub use fastq::{

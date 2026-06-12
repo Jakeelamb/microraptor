@@ -53,6 +53,11 @@ The gauntlet writes:
 It also records whether optional external comparators such as `seqkit` or
 `fastp` were installed and runnable.
 
+Build with `--features libdeflate` or `--all-features` to include explicit
+`bgzf-libdeflate-*` rows for synthetic BGZF and `file-bgzf-libdeflate-*` rows
+for real `.bgz` inputs. Ordinary gzip remains on the streaming flate2 path;
+libdeflate is used where BGZF block trailers give an exact output size.
+
 ## Profiling
 
 ```bash

@@ -12,6 +12,7 @@ Current slice:
 - serial BGZF streaming reader and writer
 - parallel BGZF decompression/compression entry points for independent blocks
 - BGZF block index construction with virtual-offset lookup
+- optional libdeflate BGZF inflate backend for block-level comparisons
 - reusable slab buffer with carry handling for records crossing slab boundaries
 - SIMD newline scan on nightly through `std::simd`, with scalar fallback when the
   `simd` feature is disabled
@@ -37,6 +38,7 @@ Features:
 - `simd`: nightly portable-SIMD newline scanner
 - `gzip`: ordinary gzip input by gzip magic
 - `bgzf`: BGZF reader, writer, detection, and parallel block helpers
+- `libdeflate`: optional libdeflate BGZF inflate backend
 
 Benchmarking:
 

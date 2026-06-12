@@ -10,7 +10,7 @@ result_dir="${MICRORAPTOR_GAUNTLET_RESULT_DIR:-target/bench-results}"
 
 mkdir -p "${input_dir}" "${result_dir}"
 
-cargo build --release --bin microraptor-bench --bin microraptor-fixture
+cargo build --release --all-features --bin microraptor-bench --bin microraptor-fixture
 target/release/microraptor-fixture \
   --out-dir "${input_dir}" \
   --records "${records}" \

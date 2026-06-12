@@ -8,9 +8,11 @@ description = "Slab-based FASTQ streaming core for raw and gzip inputs"
 [dependencies]
 crc32fast = "1.5"
 flate2 = { version = "1.0", optional = true }
+libdeflater = { version = "1.25.2", optional = true }
 
 [features]
 default = ["bgzf", "gzip", "simd"]
 bgzf = ["dep:flate2"]
 gzip = ["dep:flate2"]
+libdeflate = ["bgzf", "dep:libdeflater"]
 simd = []

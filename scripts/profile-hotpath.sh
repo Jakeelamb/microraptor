@@ -10,7 +10,7 @@ profile_dir="${MICRORAPTOR_PROFILE_DIR:-target/profiles}"
 
 mkdir -p "${input_dir}" "${profile_dir}"
 
-cargo build --release --bin microraptor-bench --bin microraptor-fixture
+cargo build --release --all-features --bin microraptor-bench --bin microraptor-fixture
 target/release/microraptor-fixture \
   --out-dir "${input_dir}" \
   --records "${records}" \

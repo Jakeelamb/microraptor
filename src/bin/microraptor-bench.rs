@@ -1,4 +1,6 @@
 use std::fmt::Write as _;
+#[cfg(all(feature = "bgzf", feature = "libdeflate"))]
+use std::io::Read;
 #[cfg(feature = "gzip")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -112,6 +114,19 @@ fn run() -> Result<()> {
             let bgzf = microraptor::compress_bgzf_parallel(&raw, config.workers)?;
             measurements.push(measure_bgzf_serial("bgzf-serial", &bgzf, &config)?);
             measurements.push(measure_bgzf_parallel("bgzf-parallel", &bgzf, &config)?);
+            #[cfg(feature = "libdeflate")]
+            {
+                measurements.push(measure_bgzf_libdeflate_serial(
+                    "bgzf-libdeflate-serial",
+                    &bgzf,
+                    &config,
+                )?);
+                measurements.push(measure_bgzf_libdeflate_parallel(
+                    "bgzf-libdeflate-parallel",
+                    &bgzf,
+                    &config,
+                )?);
+            }
         }
     }
 
@@ -132,6 +147,21 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
     let mut measurements = Vec::new();
     if config.mode.includes_parse() {
         measurements.push(measure_path_fastq("file-auto", path, input_bytes, config)?);
+        #[cfg(all(feature = "bgzf", feature = "libdeflate"))]
+        if path_has_bgzf_header(path)? {
+            measurements.push(measure_path_bgzf_libdeflate_serial(
+                "file-bgzf-libdeflate-serial",
+                path,
+                input_bytes,
+                config,
+            )?);
+            measurements.push(measure_path_bgzf_libdeflate_parallel(
+                "file-bgzf-libdeflate-parallel",
+                path,
+                input_bytes,
+                config,
+            )?);
+        }
     }
     if config.mode.includes_pack() {
         measurements.push(measure_path_pack(
@@ -221,6 +251,54 @@ fn measure_bgzf_parallel(name: &str, input: &[u8], config: &Config) -> Result<Me
     })
 }
 
+#[cfg(all(feature = "bgzf", feature = "libdeflate"))]
+fn measure_bgzf_libdeflate_serial(
+    name: &str,
+    input: &[u8],
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input.len(), config.iters, || {
+        let source = microraptor::BgzfReader::with_inflate_backend(
+            input,
+            microraptor::BgzfInflateBackend::Libdeflate,
+        );
+        let mut reader = FastqReader::with_config(
+            source,
+            FastqConfig {
+                slab_size: config.slab_size,
+                validate: true,
+                ..FastqConfig::default()
+            },
+        );
+        consume_fastq(&mut reader)
+    })
+}
+
+#[cfg(all(feature = "bgzf", feature = "libdeflate"))]
+fn measure_bgzf_libdeflate_parallel(
+    name: &str,
+    input: &[u8],
+    config: &Config,
+) -> Result<Measurement> {
+    let owned: Arc<[u8]> = Arc::from(input);
+    measure(name, input.len(), config.iters, || {
+        let source = microraptor::BgzfParallelReader::with_inflate_backend(
+            std::io::Cursor::new(Arc::clone(&owned)),
+            config.workers,
+            microraptor::BgzfInflateBackend::Libdeflate,
+        )?;
+        let mut reader = FastqReader::with_config(
+            source,
+            FastqConfig {
+                slab_size: config.slab_size,
+                validate: true,
+                ..FastqConfig::default()
+            },
+        );
+        consume_fastq(&mut reader)
+    })
+}
+
 fn measure_pack(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
     measure(name, input.len(), config.iters, || {
         let mut reader = FastqReader::with_config(
@@ -291,6 +369,60 @@ fn measure_path_pack(
         }
         Ok(stats)
     })
+}
+
+#[cfg(all(feature = "bgzf", feature = "libdeflate"))]
+fn measure_path_bgzf_libdeflate_serial(
+    name: &str,
+    path: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let file = std::fs::File::open(path)?;
+        let source = microraptor::BgzfReader::with_inflate_backend(
+            file,
+            microraptor::BgzfInflateBackend::Libdeflate,
+        );
+        let mut reader = FastqReader::with_config(source, fastq_config(config));
+        consume_fastq(&mut reader)
+    })
+}
+
+#[cfg(all(feature = "bgzf", feature = "libdeflate"))]
+fn measure_path_bgzf_libdeflate_parallel(
+    name: &str,
+    path: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let file = std::fs::File::open(path)?;
+        let source = microraptor::BgzfParallelReader::with_inflate_backend(
+            file,
+            config.workers,
+            microraptor::BgzfInflateBackend::Libdeflate,
+        )?;
+        let mut reader = FastqReader::with_config(source, fastq_config(config));
+        consume_fastq(&mut reader)
+    })
+}
+
+#[cfg(all(feature = "bgzf", feature = "libdeflate"))]
+fn path_has_bgzf_header(path: &Path) -> Result<bool> {
+    let mut file = std::fs::File::open(path)?;
+    let mut prefix = [0_u8; 18];
+    let n = file.read(&mut prefix)?;
+    Ok(n >= 18
+        && prefix[0] == 31
+        && prefix[1] == 139
+        && prefix[2] == 8
+        && prefix[3] & 4 != 0
+        && u16::from_le_bytes([prefix[10], prefix[11]]) >= 6
+        && prefix[12] == b'B'
+        && prefix[13] == b'C'
+        && prefix[14] == 2
+        && prefix[15] == 0)
 }
 
 fn fastq_config(config: &Config) -> FastqConfig {

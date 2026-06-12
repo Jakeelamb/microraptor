@@ -22,6 +22,14 @@ pub const BGZF_EOF_BLOCK: &[u8] = &[
     31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0, 66, 67, 2, 0, 27, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BgzfInflateBackend {
+    #[default]
+    Flate2,
+    #[cfg(feature = "libdeflate")]
+    Libdeflate,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BgzfVirtualOffset(u64);
 
@@ -160,6 +168,7 @@ pub fn is_bgzf_header(prefix: &[u8]) -> bool {
 
 pub struct BgzfReader<R> {
     inner: R,
+    backend: BgzfInflateBackend,
     decoded: Vec<u8>,
     pos: usize,
     eof: bool,
@@ -190,8 +199,13 @@ enum ParallelMsg {
 
 impl<R: Read> BgzfReader<R> {
     pub fn new(inner: R) -> Self {
+        Self::with_inflate_backend(inner, BgzfInflateBackend::default())
+    }
+
+    pub fn with_inflate_backend(inner: R, backend: BgzfInflateBackend) -> Self {
         Self {
             inner,
+            backend,
             decoded: Vec::new(),
             pos: 0,
             eof: false,
@@ -210,7 +224,7 @@ impl<R: Read> BgzfReader<R> {
                 self.eof = true;
                 return Ok(());
             }
-            self.decoded = decode_block(&block)
+            self.decoded = decode_block_with_backend(&block, self.backend)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             if !self.decoded.is_empty() {
                 return Ok(());
@@ -245,6 +259,17 @@ impl BgzfParallelReader {
     where
         R: Read + Send + 'static,
     {
+        Self::with_inflate_backend(inner, workers, BgzfInflateBackend::default())
+    }
+
+    pub fn with_inflate_backend<R>(
+        inner: R,
+        workers: usize,
+        backend: BgzfInflateBackend,
+    ) -> Result<Self>
+    where
+        R: Read + Send + 'static,
+    {
         let worker_count = workers.max(1);
         let cancel = Arc::new(AtomicBool::new(false));
         let (result_tx, result_rx) = sync_channel(worker_count.saturating_mul(2).max(2));
@@ -263,7 +288,7 @@ impl BgzfParallelReader {
             let cancel_worker = Arc::clone(&cancel);
             let handle = thread::Builder::new()
                 .name(format!("microraptor-bgzf-decode-{worker_id}"))
-                .spawn(move || bgzf_worker_loop(rx, tx, cancel_worker))?;
+                .spawn(move || bgzf_worker_loop(rx, tx, cancel_worker, backend))?;
             handles.push(handle);
         }
 
@@ -435,7 +460,15 @@ impl<W: Write> Write for BgzfWriter<W> {
     }
 }
 
-pub fn decompress_bgzf_parallel<R: Read>(mut reader: R, workers: usize) -> Result<Vec<u8>> {
+pub fn decompress_bgzf_parallel<R: Read>(reader: R, workers: usize) -> Result<Vec<u8>> {
+    decompress_bgzf_parallel_with_inflate_backend(reader, workers, BgzfInflateBackend::default())
+}
+
+pub fn decompress_bgzf_parallel_with_inflate_backend<R: Read>(
+    mut reader: R,
+    workers: usize,
+    backend: BgzfInflateBackend,
+) -> Result<Vec<u8>> {
     let mut blocks = Vec::new();
     while let Some(block) = read_block(&mut reader)? {
         if block.is_eof() {
@@ -443,7 +476,9 @@ pub fn decompress_bgzf_parallel<R: Read>(mut reader: R, workers: usize) -> Resul
         }
         blocks.push(block);
     }
-    let decoded = parallel_map(blocks, workers, |block| decode_block(&block))?;
+    let decoded = parallel_map(blocks, workers, |block| {
+        decode_block_with_backend(&block, backend)
+    })?;
     let total = decoded.iter().map(Vec::len).sum();
     let mut out = Vec::with_capacity(total);
     for chunk in decoded {
@@ -549,11 +584,12 @@ fn bgzf_worker_loop(
     rx: Receiver<Job>,
     result_tx: SyncSender<ParallelMsg>,
     cancel: Arc<AtomicBool>,
+    backend: BgzfInflateBackend,
 ) {
     while !cancel.load(Ordering::Acquire) {
         match rx.recv_timeout(Duration::from_millis(10)) {
             Ok(Job::Block(index, block)) => {
-                let decoded = decode_block(&block);
+                let decoded = decode_block_with_backend(&block, backend);
                 if !send_result(&result_tx, ParallelMsg::Data(index, decoded), &cancel) {
                     return;
                 }
@@ -658,14 +694,18 @@ fn read_block<R: Read>(reader: &mut R) -> std::io::Result<Option<CompressedBlock
 }
 
 fn decode_block(block: &CompressedBlock) -> Result<Vec<u8>> {
+    decode_block_with_backend(block, BgzfInflateBackend::default())
+}
+
+fn decode_block_with_backend(
+    block: &CompressedBlock,
+    backend: BgzfInflateBackend,
+) -> Result<Vec<u8>> {
     let bytes = &block.bytes;
     if bytes.len() < BGZF_HEADER_LEN + GZIP_TRAILER_LEN {
         return Err(FastqError::Bgzf("short block".into()));
     }
     let compressed_end = bytes.len() - GZIP_TRAILER_LEN;
-    let mut decoder = DeflateDecoder::new(&bytes[BGZF_HEADER_LEN..compressed_end]);
-    let mut out = Vec::new();
-    decoder.read_to_end(&mut out)?;
 
     let expected_crc = u32::from_le_bytes([
         bytes[compressed_end],
@@ -679,6 +719,13 @@ fn decode_block(block: &CompressedBlock) -> Result<Vec<u8>> {
         bytes[compressed_end + 6],
         bytes[compressed_end + 7],
     ]) as usize;
+
+    let deflate = &bytes[BGZF_HEADER_LEN..compressed_end];
+    let out = match backend {
+        BgzfInflateBackend::Flate2 => inflate_block_flate2(deflate)?,
+        #[cfg(feature = "libdeflate")]
+        BgzfInflateBackend::Libdeflate => inflate_block_libdeflate(deflate, expected_len)?,
+    };
     if out.len() != expected_len {
         return Err(FastqError::Bgzf("uncompressed size mismatch".into()));
     }
@@ -687,6 +734,24 @@ fn decode_block(block: &CompressedBlock) -> Result<Vec<u8>> {
     if hasher.finalize() != expected_crc {
         return Err(FastqError::Bgzf("CRC32 mismatch".into()));
     }
+    Ok(out)
+}
+
+fn inflate_block_flate2(deflate: &[u8]) -> Result<Vec<u8>> {
+    let mut decoder = DeflateDecoder::new(deflate);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out)?;
+    Ok(out)
+}
+
+#[cfg(feature = "libdeflate")]
+fn inflate_block_libdeflate(deflate: &[u8], expected_len: usize) -> Result<Vec<u8>> {
+    let mut out = vec![0_u8; expected_len];
+    let mut decompressor = libdeflater::Decompressor::new();
+    let actual = decompressor
+        .deflate_decompress(deflate, &mut out)
+        .map_err(|e| FastqError::Bgzf(format!("libdeflate inflate failed: {e}")))?;
+    out.truncate(actual);
     Ok(out)
 }
 
@@ -771,6 +836,45 @@ mod tests {
             }
             decoded.extend_from_slice(&scratch[..n]);
         }
+        assert_eq!(decoded, input);
+    }
+
+    #[test]
+    #[cfg(feature = "libdeflate")]
+    fn libdeflate_reader_matches_flate2_reader() {
+        let mut input = Vec::new();
+        for i in 0..2000 {
+            input.extend_from_slice(format!("@r{i}\nACGTACGT\n+\nIIIIIIII\n").as_bytes());
+        }
+        let encoded = compress_bgzf_parallel(&input, 4).unwrap();
+
+        let mut flate2_reader = BgzfReader::new(&encoded[..]);
+        let mut flate2_out = Vec::new();
+        flate2_reader.read_to_end(&mut flate2_out).unwrap();
+
+        let mut libdeflate_reader =
+            BgzfReader::with_inflate_backend(&encoded[..], BgzfInflateBackend::Libdeflate);
+        let mut libdeflate_out = Vec::new();
+        libdeflate_reader.read_to_end(&mut libdeflate_out).unwrap();
+
+        assert_eq!(flate2_out, input);
+        assert_eq!(libdeflate_out, input);
+    }
+
+    #[test]
+    #[cfg(feature = "libdeflate")]
+    fn libdeflate_parallel_round_trip_preserves_order() {
+        let mut input = Vec::new();
+        for i in 0..10_000 {
+            input.extend_from_slice(format!("@r{i}\nACGT\n+\nIIII\n").as_bytes());
+        }
+        let encoded = compress_bgzf_parallel(&input, 4).unwrap();
+        let decoded = decompress_bgzf_parallel_with_inflate_backend(
+            &encoded[..],
+            4,
+            BgzfInflateBackend::Libdeflate,
+        )
+        .unwrap();
         assert_eq!(decoded, input);
     }
 
