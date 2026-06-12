@@ -12,6 +12,10 @@ The benchmark binary generates deterministic synthetic FASTQ in memory, then
 measures the same parser and side-channel APIs used by downstream crates. It
 reports best-of-N wall time to reduce noise from scheduler spikes.
 
+For real input files, pass `--input PATH` or set `MICRORAPTOR_INPUT`. The file
+path goes through `open_fastq_with_config`, so raw FASTQ, gzip FASTQ, and BGZF
+FASTQ use the same auto-detection path as library callers.
+
 ## Fast Commands
 
 ```bash
@@ -25,6 +29,13 @@ For machine-readable output:
 
 ```bash
 cargo run --release --bin microraptor-bench -- --records 500000 --iters 7 --json
+```
+
+For a real dataset:
+
+```bash
+cargo run --release --bin microraptor-bench -- --input reads.fastq.gz --iters 5
+MICRORAPTOR_INPUT=reads.fastq.gz scripts/bench.sh
 ```
 
 ## Profiling
@@ -43,6 +54,12 @@ behavior:
 
 ```bash
 MICRORAPTOR_RECORDS=2000000 MICRORAPTOR_ITERS=3 scripts/profile-perf.sh
+```
+
+Profile a real input file with the same perf commands:
+
+```bash
+MICRORAPTOR_INPUT=reads.fastq.gz MICRORAPTOR_ITERS=3 scripts/profile-perf.sh
 ```
 
 ## Interpreting Results
