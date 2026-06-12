@@ -124,12 +124,8 @@ fn run() -> Result<()> {
         measurements.push(measure_fastq("raw", &raw, &config)?);
     }
     if config.mode.includes_pack() {
-        measurements.push(measure_pack("pack-seq-qual", &raw, &config)?);
-        measurements.push(measure_trusted_pack(
-            "trusted-pack-seq-qual",
-            &raw,
-            &config,
-        )?);
+        measurements.push(measure_trusted_pack("pack-seq-qual", &raw, &config)?);
+        measurements.push(measure_pack("reader-pack-seq-qual", &raw, &config)?);
     }
 
     #[cfg(feature = "gzip")]
@@ -231,14 +227,14 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
         }
     }
     if config.mode.includes_pack() {
-        measurements.push(measure_path_pack(
+        measurements.push(measure_path_trusted_pack(
             "file-pack-seq-qual",
             path,
             input_bytes,
             config,
         )?);
-        measurements.push(measure_path_trusted_pack(
-            "file-trusted-pack-seq-qual",
+        measurements.push(measure_path_pack(
+            "file-reader-pack-seq-qual",
             path,
             input_bytes,
             config,

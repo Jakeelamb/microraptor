@@ -46,10 +46,10 @@ cargo run --release --bin microraptor-bench -- --records 500000 --mode parse --j
 cargo run --release --bin microraptor-bench -- --records 500000 --mode pack --json
 ```
 
-Synthetic `--mode pack` reports both the safe parser-backed `pack-seq-qual`
-row and the `trusted-pack-seq-qual` row. The trusted row uses a streaming
-four-line FASTQ path that reuses the SIMD newline scanner, handles slab carry
-and CRLF trimming, and skips batch record construction before packing.
+Synthetic `--mode pack` uses the trusted streaming pack path for `pack-seq-qual`
+and reports the safe parser-backed reference as `reader-pack-seq-qual`. The
+trusted path reuses the SIMD newline scanner, handles slab carry and CRLF
+trimming, and skips batch record construction before packing.
 
 For a real dataset:
 
