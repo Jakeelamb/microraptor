@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::error::Result;
 use crate::fastq::{FastqConfig, FastqReader};
 #[cfg(feature = "bgzf")]
-use crate::{BgzfReader, bgzf::is_bgzf_header, decompress_bgzf_parallel};
+use crate::{BgzfParallelReader, BgzfReader, bgzf::is_bgzf_header};
 
 pub fn open_fastq(path: impl AsRef<Path>) -> Result<FastqReader<Box<dyn Read + Send>>> {
     open_fastq_with_config(path, FastqConfig::default())
@@ -49,7 +49,7 @@ pub fn open_fastq_with_config(
 pub fn open_fastq_bgzf_parallel(
     path: impl AsRef<Path>,
     workers: usize,
-) -> Result<FastqReader<std::io::Cursor<Vec<u8>>>> {
+) -> Result<FastqReader<BgzfParallelReader>> {
     open_fastq_bgzf_parallel_with_config(path, workers, FastqConfig::default())
 }
 
@@ -58,11 +58,10 @@ pub fn open_fastq_bgzf_parallel_with_config(
     path: impl AsRef<Path>,
     workers: usize,
     config: FastqConfig,
-) -> Result<FastqReader<std::io::Cursor<Vec<u8>>>> {
+) -> Result<FastqReader<BgzfParallelReader>> {
     let file = File::open(path)?;
-    let decoded = decompress_bgzf_parallel(file, workers)?;
     Ok(FastqReader::with_config(
-        std::io::Cursor::new(decoded),
+        BgzfParallelReader::new(file, workers)?,
         config,
     ))
 }

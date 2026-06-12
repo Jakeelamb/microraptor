@@ -1,6 +1,8 @@
 use std::fmt::Write as _;
 #[cfg(feature = "gzip")]
 use std::io::Write;
+#[cfg(feature = "bgzf")]
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use microraptor::benchutil::{StreamStats, consume_fastq, synthetic_fastq};
@@ -126,10 +128,14 @@ fn measure_bgzf_serial(name: &str, input: &[u8], config: &Config) -> Result<Meas
 
 #[cfg(feature = "bgzf")]
 fn measure_bgzf_parallel(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
+    let owned: Arc<[u8]> = Arc::from(input);
     measure(name, input.len(), config.iters, || {
-        let decoded = microraptor::decompress_bgzf_parallel(input, config.workers)?;
+        let source = microraptor::BgzfParallelReader::new(
+            std::io::Cursor::new(Arc::clone(&owned)),
+            config.workers,
+        )?;
         let mut reader = FastqReader::with_config(
-            std::io::Cursor::new(decoded),
+            source,
             FastqConfig {
                 slab_size: config.slab_size,
                 validate: true,

@@ -11,7 +11,8 @@ mod source;
 
 #[cfg(feature = "bgzf")]
 pub use bgzf::{
-    BGZF_EOF_BLOCK, BgzfReader, BgzfWriter, compress_bgzf_parallel, decompress_bgzf_parallel,
+    BGZF_EOF_BLOCK, BgzfParallelReader, BgzfReader, BgzfWriter, compress_bgzf_parallel,
+    decompress_bgzf_parallel,
 };
 pub use error::{FastqError, Result};
 pub use fastq::{FastqBatch, FastqConfig, FastqReader, FastqRecord, RecordRef};

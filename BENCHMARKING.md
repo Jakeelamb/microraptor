@@ -57,3 +57,6 @@ The benchmark table reports:
 
 Do not compare raw and compressed `input_mib_s` directly. For biological
 pipeline planning, `records_s` and `bases_s` are the more useful common units.
+
+The `bgzf-parallel` row uses the bounded streaming `BgzfParallelReader`, not the
+older whole-input decompression helper.

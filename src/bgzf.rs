@@ -1,4 +1,10 @@
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use crc32fast::Hasher;
 use flate2::Compression;
@@ -45,6 +51,29 @@ pub struct BgzfReader<R> {
     decoded: Vec<u8>,
     pos: usize,
     eof: bool,
+}
+
+pub struct BgzfParallelReader {
+    result_rx: Receiver<ParallelMsg>,
+    current: Vec<u8>,
+    pos: usize,
+    pending: BTreeMap<usize, Vec<u8>>,
+    next_index: usize,
+    total_blocks: Option<usize>,
+    finished: bool,
+    cancel: Arc<AtomicBool>,
+    handles: Vec<JoinHandle<()>>,
+}
+
+enum Job {
+    Block(usize, CompressedBlock),
+    End,
+}
+
+enum ParallelMsg {
+    Data(usize, Result<Vec<u8>>),
+    End(usize),
+    Fatal(String),
 }
 
 impl<R: Read> BgzfReader<R> {
@@ -96,6 +125,133 @@ impl<R: Read> Read for BgzfReader<R> {
         out[..n].copy_from_slice(&self.decoded[self.pos..self.pos + n]);
         self.pos += n;
         Ok(n)
+    }
+}
+
+impl BgzfParallelReader {
+    pub fn new<R>(inner: R, workers: usize) -> Result<Self>
+    where
+        R: Read + Send + 'static,
+    {
+        let worker_count = workers.max(1);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (result_tx, result_rx) = sync_channel(worker_count.saturating_mul(2).max(2));
+
+        let mut job_txs = Vec::with_capacity(worker_count);
+        let mut job_rxs = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let (tx, rx) = sync_channel(2);
+            job_txs.push(tx);
+            job_rxs.push(rx);
+        }
+
+        let mut handles = Vec::with_capacity(worker_count + 1);
+        for (worker_id, rx) in job_rxs.into_iter().enumerate() {
+            let tx = result_tx.clone();
+            let cancel_worker = Arc::clone(&cancel);
+            let handle = thread::Builder::new()
+                .name(format!("microraptor-bgzf-decode-{worker_id}"))
+                .spawn(move || bgzf_worker_loop(rx, tx, cancel_worker))?;
+            handles.push(handle);
+        }
+
+        let cancel_reader = Arc::clone(&cancel);
+        let handle = thread::Builder::new()
+            .name("microraptor-bgzf-read".into())
+            .spawn(move || bgzf_reader_loop(inner, job_txs, result_tx, cancel_reader))?;
+        handles.push(handle);
+
+        Ok(Self {
+            result_rx,
+            current: Vec::new(),
+            pos: 0,
+            pending: BTreeMap::new(),
+            next_index: 0,
+            total_blocks: None,
+            finished: false,
+            cancel,
+            handles,
+        })
+    }
+
+    fn refill_ordered(&mut self) -> std::io::Result<bool> {
+        loop {
+            if let Some(buf) = self.pending.remove(&self.next_index) {
+                self.current = buf;
+                self.pos = 0;
+                self.next_index += 1;
+                if !self.current.is_empty() {
+                    return Ok(true);
+                }
+                continue;
+            }
+
+            if self.total_blocks == Some(self.next_index) {
+                self.finished = true;
+                return Ok(false);
+            }
+
+            match self.result_rx.recv() {
+                Ok(ParallelMsg::Data(index, Ok(buf))) => {
+                    if index == self.next_index {
+                        self.current = buf;
+                        self.pos = 0;
+                        self.next_index += 1;
+                        if !self.current.is_empty() {
+                            return Ok(true);
+                        }
+                    } else {
+                        self.pending.insert(index, buf);
+                    }
+                }
+                Ok(ParallelMsg::Data(_, Err(err))) => {
+                    self.finished = true;
+                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, err));
+                }
+                Ok(ParallelMsg::End(total)) => {
+                    self.total_blocks = Some(total);
+                }
+                Ok(ParallelMsg::Fatal(msg)) => {
+                    self.finished = true;
+                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
+                }
+                Err(_) => {
+                    self.finished = true;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "BGZF parallel pipeline ended before EOF",
+                    ));
+                }
+            }
+        }
+    }
+}
+
+impl Read for BgzfParallelReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        if out.is_empty() {
+            return Ok(0);
+        }
+        if self.pos >= self.current.len() {
+            self.current.clear();
+            self.pos = 0;
+            if self.finished || !self.refill_ordered()? {
+                return Ok(0);
+            }
+        }
+        let n = out.len().min(self.current.len() - self.pos);
+        out[..n].copy_from_slice(&self.current[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+}
+
+impl Drop for BgzfParallelReader {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Release);
+        for handle in self.handles.drain(..) {
+            let _ = handle.join();
+        }
     }
 }
 
@@ -196,6 +352,87 @@ pub fn compress_bgzf_parallel(input: &[u8], workers: usize) -> Result<Vec<u8>> {
     }
     out.extend_from_slice(BGZF_EOF_BLOCK);
     Ok(out)
+}
+
+fn bgzf_reader_loop<R>(
+    mut inner: R,
+    job_txs: Vec<SyncSender<Job>>,
+    result_tx: SyncSender<ParallelMsg>,
+    cancel: Arc<AtomicBool>,
+) where
+    R: Read,
+{
+    let mut index = 0;
+    let mut fatal = None;
+    while !cancel.load(Ordering::Acquire) {
+        match read_block(&mut inner) {
+            Ok(Some(block)) if block.is_eof() => break,
+            Ok(Some(block)) => {
+                let worker = index % job_txs.len();
+                if !send_job(&job_txs[worker], Job::Block(index, block), &cancel) {
+                    return;
+                }
+                index += 1;
+            }
+            Ok(None) => break,
+            Err(err) => {
+                fatal = Some(err.to_string());
+                break;
+            }
+        }
+    }
+
+    for tx in &job_txs {
+        let _ = send_job(tx, Job::End, &cancel);
+    }
+
+    if let Some(msg) = fatal {
+        let _ = send_result(&result_tx, ParallelMsg::Fatal(msg), &cancel);
+    } else {
+        let _ = send_result(&result_tx, ParallelMsg::End(index), &cancel);
+    }
+}
+
+fn bgzf_worker_loop(
+    rx: Receiver<Job>,
+    result_tx: SyncSender<ParallelMsg>,
+    cancel: Arc<AtomicBool>,
+) {
+    while !cancel.load(Ordering::Acquire) {
+        match rx.recv_timeout(Duration::from_millis(10)) {
+            Ok(Job::Block(index, block)) => {
+                let decoded = decode_block(&block);
+                if !send_result(&result_tx, ParallelMsg::Data(index, decoded), &cancel) {
+                    return;
+                }
+            }
+            Ok(Job::End) => return,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
+fn send_job(tx: &SyncSender<Job>, msg: Job, cancel: &AtomicBool) -> bool {
+    send_bounded(tx, msg, cancel)
+}
+
+fn send_result(tx: &SyncSender<ParallelMsg>, msg: ParallelMsg, cancel: &AtomicBool) -> bool {
+    send_bounded(tx, msg, cancel)
+}
+
+fn send_bounded<T>(tx: &SyncSender<T>, mut msg: T, cancel: &AtomicBool) -> bool {
+    while !cancel.load(Ordering::Acquire) {
+        match tx.try_send(msg) {
+            Ok(()) => return true,
+            Err(TrySendError::Full(returned)) => {
+                msg = returned;
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(TrySendError::Disconnected(_)) => return false,
+        }
+    }
+    false
 }
 
 fn parallel_map<T, F>(items: Vec<T>, workers: usize, f: F) -> Result<Vec<Vec<u8>>>
@@ -362,6 +599,26 @@ mod tests {
         }
         let encoded = compress_bgzf_parallel(&input, 4).unwrap();
         let decoded = decompress_bgzf_parallel(&encoded[..], 4).unwrap();
+        assert_eq!(decoded, input);
+    }
+
+    #[test]
+    fn streaming_parallel_reader_round_trip_with_tiny_reads() {
+        let mut input = Vec::new();
+        for i in 0..1000 {
+            input.extend_from_slice(format!("@r{i}\nACGT\n+\nIIII\n").as_bytes());
+        }
+        let encoded = compress_bgzf_parallel(&input, 4).unwrap();
+        let mut reader = BgzfParallelReader::new(std::io::Cursor::new(encoded), 4).unwrap();
+        let mut decoded = Vec::new();
+        let mut scratch = [0_u8; 37];
+        loop {
+            let n = reader.read(&mut scratch).unwrap();
+            if n == 0 {
+                break;
+            }
+            decoded.extend_from_slice(&scratch[..n]);
+        }
         assert_eq!(decoded, input);
     }
 }

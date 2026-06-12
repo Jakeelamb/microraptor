@@ -23,7 +23,7 @@ Backend boundary:
 - ordinary gzip currently uses `flate2`; the decoder stage is isolated so ISA-L
   can replace it without touching FASTQ framing
 - BGZF is already block-aware and has parallel whole-input compression and
-  decompression helpers
+  decompression helpers, plus a bounded streaming parallel reader
 - output compression currently uses Rust deflate through `flate2`; libdeflate or
   ISA-L can replace block compression later
 
