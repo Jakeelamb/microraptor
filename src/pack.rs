@@ -1,5 +1,7 @@
 use std::fmt;
 use std::io::Read;
+#[cfg(feature = "simd")]
+use std::simd::{Simd, cmp::SimdPartialOrd};
 
 use crate::scan::scan_newlines;
 use crate::{FastqConfig, FastqError, FastqPosition, Result as FastqResult};
@@ -131,7 +133,57 @@ pub struct TrustedPackedRecord<'a> {
     pub name: &'a [u8],
     pub seq: &'a [u8],
     pub qual: &'a [u8],
+    pub bases: &'a [u8],
+    pub n_mask: &'a [u8],
     pub summary: PackedRecordSummary,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TrustedPackedPair<'a> {
+    pub first: TrustedPackedRecord<'a>,
+    pub second: TrustedPackedRecord<'a>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackKernel {
+    Scalar,
+    PortableSimd,
+}
+
+pub fn selected_pack_kernel() -> PackKernel {
+    select_pack_kernel()
+}
+
+#[cfg(feature = "simd")]
+fn select_pack_kernel() -> PackKernel {
+    PackKernel::PortableSimd
+}
+
+#[cfg(not(feature = "simd"))]
+fn select_pack_kernel() -> PackKernel {
+    PackKernel::Scalar
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TrustedPackSlab {
+    pub records: u64,
+}
+
+pub trait TrustedPackSink {
+    fn record(&mut self, record: TrustedPackedRecord<'_>) -> FastqResult<()>;
+
+    fn slab(&mut self, _slab: TrustedPackSlab) -> FastqResult<()> {
+        Ok(())
+    }
+}
+
+impl<F> TrustedPackSink for F
+where
+    F: FnMut(TrustedPackedRecord<'_>) -> FastqResult<()>,
+{
+    fn record(&mut self, record: TrustedPackedRecord<'_>) -> FastqResult<()> {
+        self(record)
+    }
 }
 
 impl fmt::Display for PackError {
@@ -164,11 +216,14 @@ pub fn pack_trusted_fastq(
     input: &[u8],
     on_record: impl FnMut(TrustedPackedRecord<'_>) -> FastqResult<()>,
 ) -> FastqResult<()> {
+    pack_trusted_fastq_sink(input, on_record)
+}
+
+pub fn pack_trusted_fastq_sink(input: &[u8], mut sink: impl TrustedPackSink) -> FastqResult<()> {
     let mut bases = Vec::new();
     let mut n_mask = Vec::new();
     let mut newlines = Vec::with_capacity(input.len() / 48);
-    let mut on_record = on_record;
-    let next_start = pack_trusted_fastq_slab(
+    let slab = pack_trusted_fastq_slab(
         input,
         SlabContext {
             base_offset: 0,
@@ -178,9 +233,9 @@ pub fn pack_trusted_fastq(
         &mut newlines,
         &mut bases,
         &mut n_mask,
-        &mut on_record,
+        &mut sink,
     )?;
-    debug_assert_eq!(next_start, input.len());
+    debug_assert_eq!(slab.next_start, input.len());
     Ok(())
 }
 
@@ -188,6 +243,14 @@ pub fn pack_trusted_fastq_read<R: Read>(
     mut reader: R,
     config: FastqConfig,
     on_record: impl FnMut(TrustedPackedRecord<'_>) -> FastqResult<()>,
+) -> FastqResult<()> {
+    pack_trusted_fastq_read_sink(&mut reader, config, on_record)
+}
+
+pub fn pack_trusted_fastq_read_sink<R: Read>(
+    mut reader: R,
+    config: FastqConfig,
+    mut sink: impl TrustedPackSink,
 ) -> FastqResult<()> {
     let slab_size = config.slab_size.max(1024);
     let mut buf = vec![0_u8; slab_size];
@@ -198,7 +261,6 @@ pub fn pack_trusted_fastq_read<R: Read>(
     let mut newlines = Vec::with_capacity(slab_size / 48);
     let mut bases = Vec::new();
     let mut n_mask = Vec::new();
-    let mut on_record = on_record;
 
     loop {
         while !eof && len < slab_size {
@@ -210,8 +272,7 @@ pub fn pack_trusted_fastq_read<R: Read>(
             len += n;
         }
 
-        let mut processed_records = 0_u64;
-        let next_start = pack_trusted_fastq_slab(
+        let slab = pack_trusted_fastq_slab(
             &buf[..len],
             SlabContext {
                 base_offset,
@@ -221,23 +282,25 @@ pub fn pack_trusted_fastq_read<R: Read>(
             &mut newlines,
             &mut bases,
             &mut n_mask,
-            &mut |record| {
-                processed_records += 1;
-                on_record(record)
-            },
+            &mut sink,
         )?;
-        record_index += processed_records;
+        if slab.records != 0 {
+            sink.slab(TrustedPackSlab {
+                records: slab.records,
+            })?;
+        }
+        record_index += slab.records;
 
-        if next_start == len {
+        if slab.next_start == len {
             base_offset += len as u64;
             len = 0;
         } else {
-            let carry = len - next_start;
-            if next_start == 0 && carry == slab_size && !eof {
+            let carry = len - slab.next_start;
+            if slab.next_start == 0 && carry == slab_size && !eof {
                 return Err(FastqError::RecordTooLarge { slab_size });
             }
-            buf.copy_within(next_start..len, 0);
-            base_offset += next_start as u64;
+            buf.copy_within(slab.next_start..len, 0);
+            base_offset += slab.next_start as u64;
             len = carry;
         }
 
@@ -248,6 +311,48 @@ pub fn pack_trusted_fastq_read<R: Read>(
             return Err(FastqError::RecordTooLarge { slab_size });
         }
     }
+}
+
+pub fn pack_trusted_paired_fastq_read<R1: Read, R2: Read>(
+    first: R1,
+    second: R2,
+    config: FastqConfig,
+    pair_validation: crate::PairValidation,
+    mut on_pair: impl FnMut(TrustedPackedPair<'_>) -> FastqResult<()>,
+) -> FastqResult<()> {
+    let mut first_records = Vec::new();
+    let mut second_records = Vec::new();
+    pack_trusted_fastq_read(first, config.clone(), |record| {
+        first_records.push(OwnedPackedRecord::from(record));
+        Ok(())
+    })?;
+    pack_trusted_fastq_read(second, config, |record| {
+        second_records.push(OwnedPackedRecord::from(record));
+        Ok(())
+    })?;
+
+    if first_records.len() != second_records.len() {
+        return Err(FastqError::Format(
+            "paired FASTQ inputs have different record counts".into(),
+        ));
+    }
+
+    for (index, (first, second)) in first_records.iter().zip(&second_records).enumerate() {
+        if pair_validation != crate::PairValidation::None
+            && !trusted_pair_ids_match(&first.name, &second.name, pair_validation)
+        {
+            return Err(FastqError::FormatAt {
+                message: "paired FASTQ record identifiers do not match".into(),
+                position: FastqPosition::new(0, index as u64, 0),
+            });
+        }
+        on_pair(TrustedPackedPair {
+            first: first.as_borrowed(),
+            second: second.as_borrowed(),
+        })?;
+    }
+
+    Ok(())
 }
 
 pub const fn packed_base_len(base_count: usize) -> usize {
@@ -365,10 +470,56 @@ pub fn is_masked(n_mask: &[u8], index: usize) -> Option<bool> {
 }
 
 pub fn summarize_qualities(qualities: &[u8]) -> Result<QualitySummary, PackError> {
+    #[cfg(feature = "simd")]
+    if qualities.len() >= 32 {
+        return summarize_qualities_simd(qualities);
+    }
     let mut summary = QualityAccumulator::default();
     for (offset, &byte) in qualities.iter().enumerate() {
         summary.observe(byte, offset)?;
     }
+    Ok(summary.finish())
+}
+
+#[cfg(feature = "simd")]
+fn summarize_qualities_simd(qualities: &[u8]) -> Result<QualitySummary, PackError> {
+    const LANES: usize = 32;
+    type Chunk = Simd<u8, LANES>;
+
+    let low = Chunk::splat(33);
+    let high = Chunk::splat(126);
+    let offset = Chunk::splat(33);
+    let q20 = Chunk::splat(20);
+    let q30 = Chunk::splat(30);
+
+    let mut summary = QualityAccumulator::default();
+    let mut i = 0;
+    while i + LANES <= qualities.len() {
+        let bytes = Chunk::from_slice(&qualities[i..i + LANES]);
+        if (bytes.simd_lt(low) | bytes.simd_gt(high)).any() {
+            let mut j = 0;
+            while j < LANES {
+                phred33(qualities[i + j], i + j)?;
+                j += 1;
+            }
+        }
+        let phreds = bytes - offset;
+        for phred in phreds.to_array() {
+            summary.min_phred = summary.min_phred.min(phred);
+            summary.max_phred = summary.max_phred.max(phred);
+            summary.sum_phred += u64::from(phred);
+        }
+        summary.len += LANES;
+        summary.q20_bases += phreds.simd_ge(q20).to_bitmask().count_ones() as usize;
+        summary.q30_bases += phreds.simd_ge(q30).to_bitmask().count_ones() as usize;
+        i += LANES;
+    }
+
+    while i < qualities.len() {
+        summary.observe(qualities[i], i)?;
+        i += 1;
+    }
+
     Ok(summary.finish())
 }
 
@@ -423,9 +574,10 @@ fn pack_trusted_fastq_slab(
     newlines: &mut Vec<usize>,
     bases: &mut Vec<u8>,
     n_mask: &mut Vec<u8>,
-    on_record: &mut impl FnMut(TrustedPackedRecord<'_>) -> FastqResult<()>,
-) -> FastqResult<usize> {
+    sink: &mut impl TrustedPackSink,
+) -> FastqResult<SlabResult> {
     scan_newlines(input, newlines);
+    let mut records = 0_u64;
 
     let has_final_line = context.eof
         && newlines
@@ -460,18 +612,28 @@ fn pack_trusted_fastq_slab(
             record_index,
             bases,
             n_mask,
-            on_record,
+            sink,
         )?;
+        records += 1;
     }
 
     if complete_lines == line_count && context.eof {
-        Ok(input.len())
+        Ok(SlabResult {
+            next_start: input.len(),
+            records,
+        })
     } else {
         let next_start = line_start(newlines, complete_lines);
         if complete_lines == line_count && next_start == input.len() {
-            return Ok(input.len());
+            return Ok(SlabResult {
+                next_start: input.len(),
+                records,
+            });
         }
-        Ok(next_start)
+        Ok(SlabResult {
+            next_start,
+            records,
+        })
     }
 }
 
@@ -480,6 +642,12 @@ struct SlabContext {
     base_offset: u64,
     first_record_index: u64,
     eof: bool,
+}
+
+#[derive(Clone, Copy)]
+struct SlabResult {
+    next_start: usize,
+    records: u64,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -492,7 +660,7 @@ fn observe_trusted_packed_record(
     record_index: u64,
     bases: &mut Vec<u8>,
     n_mask: &mut Vec<u8>,
-    on_record: &mut impl FnMut(TrustedPackedRecord<'_>) -> FastqResult<()>,
+    sink: &mut impl TrustedPackSink,
 ) -> FastqResult<()> {
     if name.bytes.first() != Some(&b'@') {
         return Err(format_fastq_at(
@@ -530,12 +698,97 @@ fn observe_trusted_packed_record(
         .map_err(|err| {
             format_fastq_at(err.to_string(), base_offset, qual.start, record_index, 3)
         })?;
-    on_record(TrustedPackedRecord {
+    sink.record(TrustedPackedRecord {
         name: name.bytes,
         seq: seq.bytes,
         qual: qual.bytes,
+        bases: &bases[..],
+        n_mask: &n_mask[..],
         summary,
     })
+}
+
+#[derive(Debug, Clone)]
+struct OwnedPackedRecord {
+    name: Vec<u8>,
+    seq: Vec<u8>,
+    qual: Vec<u8>,
+    bases: Vec<u8>,
+    n_mask: Vec<u8>,
+    summary: PackedRecordSummary,
+}
+
+impl OwnedPackedRecord {
+    fn from(record: TrustedPackedRecord<'_>) -> Self {
+        Self {
+            name: record.name.to_vec(),
+            seq: record.seq.to_vec(),
+            qual: record.qual.to_vec(),
+            bases: record.bases.to_vec(),
+            n_mask: record.n_mask.to_vec(),
+            summary: record.summary,
+        }
+    }
+
+    fn as_borrowed(&self) -> TrustedPackedRecord<'_> {
+        TrustedPackedRecord {
+            name: &self.name,
+            seq: &self.seq,
+            qual: &self.qual,
+            bases: &self.bases,
+            n_mask: &self.n_mask,
+            summary: self.summary,
+        }
+    }
+}
+
+fn trusted_pair_ids_match(
+    first_name: &[u8],
+    second_name: &[u8],
+    mode: crate::PairValidation,
+) -> bool {
+    match mode {
+        crate::PairValidation::None => true,
+        crate::PairValidation::FastSlash => fast_slash_pair_ids_match(first_name, second_name)
+            .unwrap_or_else(|| normalized_pair_id(first_name) == normalized_pair_id(second_name)),
+        crate::PairValidation::Full => {
+            normalized_pair_id(first_name) == normalized_pair_id(second_name)
+        }
+    }
+}
+
+fn fast_slash_pair_ids_match(first_name: &[u8], second_name: &[u8]) -> Option<bool> {
+    let first = first_name.strip_prefix(b"@").unwrap_or(first_name);
+    let second = second_name.strip_prefix(b"@").unwrap_or(second_name);
+    let first_end = token_end(first);
+    let second_end = token_end(second);
+    let first = &first[..first_end];
+    let second = &second[..second_end];
+    if first.len() < 3 || second.len() < 3 || first.len() != second.len() {
+        return None;
+    }
+    if !first.ends_with(b"/1") || !second.ends_with(b"/2") {
+        return None;
+    }
+    Some(first[..first.len() - 2] == second[..second.len() - 2])
+}
+
+fn normalized_pair_id(name: &[u8]) -> &[u8] {
+    let name = name.strip_prefix(b"@").unwrap_or(name);
+    let token = &name[..token_end(name)];
+    if token.len() >= 2 && (token.ends_with(b"/1") || token.ends_with(b"/2")) {
+        &token[..token.len() - 2]
+    } else {
+        token
+    }
+}
+
+fn token_end(bytes: &[u8]) -> usize {
+    let mut end = 0;
+    while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
+        end += 1;
+    }
+    end
 }
 
 fn pack_bases_exact(seq: &[u8], bases: &mut [u8], n_mask: &mut [u8]) -> BaseSummary {
@@ -613,7 +866,6 @@ fn pack_bases_and_qualities_exact(
         len: seq.len(),
         ..BaseSummary::default()
     };
-    let mut quality = QualityAccumulator::default();
 
     let full_chunks = seq.len() / 4;
     let mut chunk_index = 0;
@@ -629,10 +881,6 @@ fn pack_bases_and_qualities_exact(
         packed |= pack_code(c1, base_index, 1, &mut bases_summary, n_mask);
         packed |= pack_code(c2, base_index, 2, &mut bases_summary, n_mask);
         packed |= pack_code(c3, base_index, 3, &mut bases_summary, n_mask);
-        quality.observe(qualities[base_index], base_index)?;
-        quality.observe(qualities[base_index + 1], base_index + 1)?;
-        quality.observe(qualities[base_index + 2], base_index + 2)?;
-        quality.observe(qualities[base_index + 3], base_index + 3)?;
         bases[chunk_index] = packed;
         chunk_index += 1;
         base_index += 4;
@@ -650,13 +898,12 @@ fn pack_bases_and_qualities_exact(
             bases_summary.n += 1;
             n_mask[index / 8] |= 1 << (index % 8);
         }
-        quality.observe(qualities[index], index)?;
         index += 1;
     }
 
     Ok(PackedRecordSummary {
         bases: bases_summary,
-        qualities: quality.finish(),
+        qualities: summarize_qualities(qualities)?,
     })
 }
 
@@ -1047,5 +1294,68 @@ mod tests {
         let err = bin_qualities_into(b"IIII", &[20, 10], &mut bins).unwrap_err();
         assert_eq!(err, PackError::UnsortedQualityThresholds { index: 1 });
         assert!(bins.is_empty());
+    }
+
+    #[test]
+    fn trusted_fastq_exposes_packed_buffers_to_sink() {
+        let mut seen = Vec::new();
+        pack_trusted_fastq(b"@r0\nACGTN\n+\nIIIII\n", |record| {
+            seen.push((
+                record.bases.to_vec(),
+                record.n_mask.to_vec(),
+                record.summary,
+            ));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].0, vec![0b1110_0100, 0]);
+        assert_eq!(seen[0].1, vec![0b0001_0000]);
+        assert_eq!(seen[0].2.bases.n, 1);
+    }
+
+    #[test]
+    fn trusted_paired_fastq_validates_fast_slash_ids() {
+        let r1 = b"@frag/1\nACGT\n+\nIIII\n";
+        let r2 = b"@frag/2\nTGCA\n+\nIIII\n";
+        let mut pairs = 0;
+        pack_trusted_paired_fastq_read(
+            &r1[..],
+            &r2[..],
+            FastqConfig::default(),
+            crate::PairValidation::FastSlash,
+            |pair| {
+                assert_eq!(pair.first.summary.bases.len, 4);
+                assert_eq!(pair.second.summary.bases.len, 4);
+                pairs += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(pairs, 1);
+    }
+
+    #[test]
+    fn trusted_paired_fastq_rejects_mismatched_ids() {
+        let r1 = b"@frag-a/1\nACGT\n+\nIIII\n";
+        let r2 = b"@frag-b/2\nTGCA\n+\nIIII\n";
+        let err = pack_trusted_paired_fastq_read(
+            &r1[..],
+            &r2[..],
+            FastqConfig::default(),
+            crate::PairValidation::FastSlash,
+            |_pair| Ok(()),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("identifiers do not match"));
+    }
+
+    #[test]
+    fn reports_selected_pack_kernel() {
+        #[cfg(feature = "simd")]
+        assert_eq!(selected_pack_kernel(), PackKernel::PortableSimd);
+        #[cfg(not(feature = "simd"))]
+        assert_eq!(selected_pack_kernel(), PackKernel::Scalar);
     }
 }

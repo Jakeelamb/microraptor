@@ -36,6 +36,7 @@ cargo clippy --all-targets --no-default-features -- -D warnings
 cargo bench --all-features
 scripts/bench.sh
 scripts/benchmark-gauntlet.sh
+scripts/check-pack-regression.sh
 ```
 
 For machine-readable output:
@@ -50,6 +51,11 @@ Synthetic `--mode pack` uses the trusted streaming pack path for `pack-seq-qual`
 and reports the safe parser-backed reference as `reader-pack-seq-qual`. The
 trusted path reuses the SIMD newline scanner, handles slab carry and CRLF
 trimming, and skips batch record construction before packing.
+
+Use `scripts/check-pack-regression.sh` as a narrow guard for the default pack
+path. It checks that `pack-seq-qual` and `reader-pack-seq-qual` checksums match
+and fails when the trusted path is more than the configured tolerance slower
+than the reader-backed reference.
 
 For a real dataset:
 

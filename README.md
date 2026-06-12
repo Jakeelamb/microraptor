@@ -22,6 +22,8 @@ Current slice:
 - Phred+33 quality summaries and threshold binning
 - trusted streaming FASTQ pack path for four-line records without batch
   allocation
+- trusted packed-record sink APIs, paired trusted packing, and selected pack
+  kernel reporting
 - structured FASTQ parse errors with byte offset, record index, and line index
 - zero-copy FASTQ record-id helpers for raw names, first tokens, and pair-normalized IDs
 - stateful separate-file paired reader and interleaved FASTQ iterators with

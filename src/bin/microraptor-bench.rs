@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use microraptor::benchutil::{
     StreamStats, consume_fastq, consume_trusted_fastq_read_with_pack, synthetic_fastq,
 };
-use microraptor::pack::pack_bases_and_summarize_qualities_into;
+use microraptor::pack::{TrustedPackedRecord, pack_bases_and_summarize_qualities_into};
 use microraptor::{FastqConfig, FastqReader, PairValidation, Result};
 
 enum BenchRead {
@@ -186,6 +186,13 @@ fn run_paired_input(first: &Path, second: &Path, config: &Config) -> Result<()> 
     if config.mode.includes_pack() {
         measurements.push(measure_paired_path_pack(
             "file-paired-pack-seq-qual",
+            first,
+            second,
+            input_bytes,
+            config,
+        )?);
+        measurements.push(measure_paired_path_trusted_pack(
+            "file-paired-trusted-pack-seq-qual",
             first,
             second,
             input_bytes,
@@ -507,6 +514,38 @@ fn measure_paired_path_pack(
         }
         Ok(ctx.stats)
     })
+}
+
+fn measure_paired_path_trusted_pack(
+    name: &str,
+    first: &Path,
+    second: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let mut stats = StreamStats::default();
+        microraptor::pack::pack_trusted_paired_fastq_read(
+            open_bench_read(first)?,
+            open_bench_read(second)?,
+            fastq_config(config),
+            PairValidation::FastSlash,
+            |pair| {
+                observe_trusted_record(&mut stats, pair.first);
+                observe_trusted_record(&mut stats, pair.second);
+                Ok(())
+            },
+        )?;
+        Ok(stats)
+    })
+}
+
+fn observe_trusted_record(stats: &mut StreamStats, record: TrustedPackedRecord<'_>) {
+    stats.observe_record(record.name, record.seq, record.qual);
+    stats.checksum = stats
+        .checksum
+        .wrapping_add(record.summary.bases.canonical_bases() as u64)
+        .wrapping_add(record.summary.qualities.sum_phred);
 }
 
 #[derive(Default)]
