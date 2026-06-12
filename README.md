@@ -44,6 +44,12 @@ Benchmarking:
 
 See `BENCHMARKING.md` for profiling details and result interpretation.
 
+Robustness:
+
+- `cargo fuzz run fastq_reader`
+- `cargo fuzz run pack`
+- `cargo fuzz run bgzf_roundtrip`
+
 Example:
 
 ```rust
