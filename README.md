@@ -26,6 +26,7 @@ Current slice:
   kernel reporting
 - direct single-pass trusted pack scanner and assembly audit script for pack
   kernel inspection
+- lockstep streaming paired trusted pack path with bounded mate buffering
 - fused base+quality packing with compact quad LUTs, AVX2 quality reductions,
   and slab/BGZF pack benchmark gates
 - canonical A/C/G/T SIMD chunk packing fast path and concrete trusted stats sink

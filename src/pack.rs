@@ -4,6 +4,7 @@ use std::arch::x86_64::{
     _mm256_min_epu8, _mm256_movemask_epi8, _mm256_or_si256, _mm256_sad_epu8, _mm256_set1_epi8,
     _mm256_setzero_si256, _mm256_storeu_si256, _mm256_sub_epi8,
 };
+use std::collections::VecDeque;
 use std::fmt;
 use std::io::Read;
 #[cfg(feature = "simd")]
@@ -324,75 +325,116 @@ pub fn pack_trusted_fastq_read_direct_sink<R: Read>(
 }
 
 fn pack_trusted_fastq_read_sink_with_kernel<R: Read>(
-    mut reader: R,
+    reader: R,
     config: FastqConfig,
     sink: &mut impl TrustedPackSink,
     kernel: TrustedScanKernel,
 ) -> FastqResult<()> {
-    let slab_size = config.slab_size.max(1024);
-    let mut buf = vec![0_u8; slab_size];
-    let mut len = 0;
-    let mut eof = false;
-    let mut base_offset = 0_u64;
-    let mut record_index = 0_u64;
-    let mut newlines = Vec::with_capacity(slab_size / 48);
-    let mut bases = Vec::new();
-    let mut n_mask = Vec::new();
+    let mut reader = TrustedFastqPackReader::new(reader, config, kernel);
+    while reader.next_slab(sink)? {}
+    Ok(())
+}
 
-    loop {
-        while !eof && len < slab_size {
-            let n = reader.read(&mut buf[len..slab_size])?;
+struct TrustedFastqPackReader<R> {
+    reader: R,
+    slab_size: usize,
+    buf: Vec<u8>,
+    len: usize,
+    eof: bool,
+    base_offset: u64,
+    record_index: u64,
+    newlines: Vec<usize>,
+    bases: Vec<u8>,
+    n_mask: Vec<u8>,
+    kernel: TrustedScanKernel,
+}
+
+impl<R: Read> TrustedFastqPackReader<R> {
+    fn new(reader: R, config: FastqConfig, kernel: TrustedScanKernel) -> Self {
+        let slab_size = config.slab_size.max(1024);
+        Self {
+            reader,
+            slab_size,
+            buf: vec![0_u8; slab_size],
+            len: 0,
+            eof: false,
+            base_offset: 0,
+            record_index: 0,
+            newlines: Vec::with_capacity(slab_size / 48),
+            bases: Vec::new(),
+            n_mask: Vec::new(),
+            kernel,
+        }
+    }
+
+    fn next_slab(&mut self, sink: &mut impl TrustedPackSink) -> FastqResult<bool> {
+        if self.eof && self.len == 0 {
+            return Ok(false);
+        }
+
+        while !self.eof && self.len < self.slab_size {
+            let n = self.reader.read(&mut self.buf[self.len..self.slab_size])?;
             if n == 0 {
-                eof = true;
+                self.eof = true;
                 break;
             }
-            len += n;
+            self.len += n;
         }
 
         let context = SlabContext {
-            base_offset,
-            first_record_index: record_index,
-            eof,
+            base_offset: self.base_offset,
+            first_record_index: self.record_index,
+            eof: self.eof,
         };
-        let slab = match kernel {
+        let slab = match self.kernel {
             TrustedScanKernel::Offset => pack_trusted_fastq_slab(
-                &buf[..len],
+                &self.buf[..self.len],
                 context,
-                &mut newlines,
-                &mut bases,
-                &mut n_mask,
+                &mut self.newlines,
+                &mut self.bases,
+                &mut self.n_mask,
                 sink,
             )?,
-            TrustedScanKernel::Direct => {
-                pack_trusted_fastq_direct_slab(&buf[..len], context, &mut bases, &mut n_mask, sink)?
-            }
+            TrustedScanKernel::Direct => pack_trusted_fastq_direct_slab(
+                &self.buf[..self.len],
+                context,
+                &mut self.bases,
+                &mut self.n_mask,
+                sink,
+            )?,
         };
         if slab.records != 0 {
             sink.slab(TrustedPackSlab {
                 records: slab.records,
             })?;
         }
-        record_index += slab.records;
+        self.record_index += slab.records;
 
-        if slab.next_start == len {
-            base_offset += len as u64;
-            len = 0;
+        if slab.next_start == self.len {
+            self.base_offset += self.len as u64;
+            self.len = 0;
         } else {
-            let carry = len - slab.next_start;
-            if slab.next_start == 0 && carry == slab_size && !eof {
-                return Err(FastqError::RecordTooLarge { slab_size });
+            let carry = self.len - slab.next_start;
+            if slab.next_start == 0 && carry == self.slab_size && !self.eof {
+                return Err(FastqError::RecordTooLarge {
+                    slab_size: self.slab_size,
+                });
             }
-            buf.copy_within(slab.next_start..len, 0);
-            base_offset += slab.next_start as u64;
-            len = carry;
+            self.buf.copy_within(slab.next_start..self.len, 0);
+            self.base_offset += slab.next_start as u64;
+            self.len = carry;
         }
 
-        if eof {
-            if len == 0 {
-                return Ok(());
+        if self.eof {
+            if self.len == 0 {
+                return Ok(slab.records != 0);
             }
-            return Err(FastqError::RecordTooLarge { slab_size });
+            return Err(FastqError::RecordTooLarge {
+                slab_size: self.slab_size,
+            });
         }
+
+        Ok(true)
     }
 }
 
@@ -409,39 +451,100 @@ pub fn pack_trusted_paired_fastq_read<R1: Read, R2: Read>(
     pair_validation: crate::PairValidation,
     mut on_pair: impl FnMut(TrustedPackedPair<'_>) -> FastqResult<()>,
 ) -> FastqResult<()> {
-    let mut first_records = Vec::new();
-    let mut second_records = Vec::new();
-    pack_trusted_fastq_read(first, config.clone(), |record| {
-        first_records.push(OwnedPackedRecord::from(record));
-        Ok(())
-    })?;
-    pack_trusted_fastq_read(second, config, |record| {
-        second_records.push(OwnedPackedRecord::from(record));
-        Ok(())
-    })?;
+    let mut first_reader =
+        TrustedFastqPackReader::new(first, config.clone(), TrustedScanKernel::Offset);
+    let mut second_reader = TrustedFastqPackReader::new(second, config, TrustedScanKernel::Offset);
+    let mut first_records = VecDeque::new();
+    let mut first_done = false;
+    let mut pair_index = 0_u64;
 
-    if first_records.len() != second_records.len() {
-        return Err(FastqError::Format(
-            "paired FASTQ inputs have different record counts".into(),
-        ));
+    loop {
+        let mut sink = PairSecondWithFirstQueueSink {
+            first_reader: &mut first_reader,
+            first_records: &mut first_records,
+            first_done: &mut first_done,
+            pair_validation,
+            pair_index: &mut pair_index,
+            on_pair: &mut on_pair,
+        };
+        if !second_reader.next_slab(&mut sink)? {
+            break;
+        }
     }
 
-    for (index, (first, second)) in first_records.iter().zip(&second_records).enumerate() {
-        if pair_validation != crate::PairValidation::None
-            && !trusted_pair_ids_match(&first.name, &second.name, pair_validation)
+    fill_owned_record_queue(&mut first_reader, &mut first_records, &mut first_done)?;
+    if first_done && first_records.is_empty() {
+        return Ok(());
+    }
+    Err(FastqError::Format(
+        "paired FASTQ inputs have different record counts".into(),
+    ))
+}
+
+fn fill_owned_record_queue<R: Read>(
+    reader: &mut TrustedFastqPackReader<R>,
+    records: &mut VecDeque<OwnedPackedRecord>,
+    done: &mut bool,
+) -> FastqResult<()> {
+    while records.is_empty() && !*done {
+        let mut sink = OwnedRecordQueueSink { records };
+        *done = !reader.next_slab(&mut sink)?;
+    }
+    Ok(())
+}
+
+struct OwnedRecordQueueSink<'a> {
+    records: &'a mut VecDeque<OwnedPackedRecord>,
+}
+
+impl TrustedPackSink for OwnedRecordQueueSink<'_> {
+    fn record(&mut self, record: TrustedPackedRecord<'_>) -> FastqResult<()> {
+        self.records.push_back(OwnedPackedRecord::from(record));
+        Ok(())
+    }
+}
+
+struct PairSecondWithFirstQueueSink<'a, R, F>
+where
+    R: Read,
+    F: FnMut(TrustedPackedPair<'_>) -> FastqResult<()>,
+{
+    first_reader: &'a mut TrustedFastqPackReader<R>,
+    first_records: &'a mut VecDeque<OwnedPackedRecord>,
+    first_done: &'a mut bool,
+    pair_validation: crate::PairValidation,
+    pair_index: &'a mut u64,
+    on_pair: &'a mut F,
+}
+
+impl<R, F> TrustedPackSink for PairSecondWithFirstQueueSink<'_, R, F>
+where
+    R: Read,
+    F: FnMut(TrustedPackedPair<'_>) -> FastqResult<()>,
+{
+    fn record(&mut self, second: TrustedPackedRecord<'_>) -> FastqResult<()> {
+        fill_owned_record_queue(self.first_reader, self.first_records, self.first_done)?;
+        let Some(first) = self.first_records.pop_front() else {
+            return Err(FastqError::Format(
+                "paired FASTQ inputs have different record counts".into(),
+            ));
+        };
+
+        if self.pair_validation != crate::PairValidation::None
+            && !trusted_pair_ids_match(&first.name, second.name, self.pair_validation)
         {
             return Err(FastqError::FormatAt {
                 message: "paired FASTQ record identifiers do not match".into(),
-                position: FastqPosition::new(0, index as u64, 0),
+                position: FastqPosition::new(0, *self.pair_index, 0),
             });
         }
-        on_pair(TrustedPackedPair {
+        (self.on_pair)(TrustedPackedPair {
             first: first.as_borrowed(),
-            second: second.as_borrowed(),
+            second,
         })?;
+        *self.pair_index += 1;
+        Ok(())
     }
-
-    Ok(())
 }
 
 pub const fn packed_base_len(base_count: usize) -> usize {
@@ -2022,6 +2125,30 @@ mod tests {
     }
 
     #[test]
+    fn trusted_paired_fastq_streams_across_slab_carry() {
+        let r1 = b"@frag0/1\nACGTACGTACGT\n+\nIIIIIIIIIIII\n@frag1/1\nNNNN\n+\n!!!!\n";
+        let r2 = b"@frag0/2\nTGCATGCATGCA\n+\nJJJJJJJJJJJJ\n@frag1/2\nACGT\n+\n####\n";
+        let mut pairs = 0;
+        pack_trusted_paired_fastq_read(
+            &r1[..],
+            &r2[..],
+            FastqConfig {
+                slab_size: 16,
+                ..FastqConfig::default()
+            },
+            crate::PairValidation::FastSlash,
+            |pair| {
+                assert_eq!(pair.first.summary.bases.len, pair.first.seq.len());
+                assert_eq!(pair.second.summary.bases.len, pair.second.seq.len());
+                pairs += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(pairs, 2);
+    }
+
+    #[test]
     fn trusted_paired_fastq_rejects_mismatched_ids() {
         let r1 = b"@frag-a/1\nACGT\n+\nIIII\n";
         let r2 = b"@frag-b/2\nTGCA\n+\nIIII\n";
@@ -2034,6 +2161,24 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("identifiers do not match"));
+    }
+
+    #[test]
+    fn trusted_paired_fastq_rejects_different_record_counts() {
+        let r1 = b"@frag0/1\nACGT\n+\nIIII\n@frag1/1\nTGCA\n+\nIIII\n";
+        let r2 = b"@frag0/2\nTGCA\n+\nIIII\n";
+        let err = pack_trusted_paired_fastq_read(
+            &r1[..],
+            &r2[..],
+            FastqConfig {
+                slab_size: 16,
+                ..FastqConfig::default()
+            },
+            crate::PairValidation::FastSlash,
+            |_pair| Ok(()),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("different record counts"));
     }
 
     #[test]
