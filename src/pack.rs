@@ -219,11 +219,33 @@ pub fn is_masked(n_mask: &[u8], index: usize) -> Option<bool> {
 }
 
 pub fn summarize_qualities(qualities: &[u8]) -> Result<QualitySummary, PackError> {
-    let mut summary = QualitySummary::default();
-    for (offset, &byte) in qualities.iter().enumerate() {
-        summary.observe(phred33(byte, offset)?);
+    if qualities.is_empty() {
+        return Ok(QualitySummary::default());
     }
-    Ok(summary)
+
+    let mut min_phred = u8::MAX;
+    let mut max_phred = 0_u8;
+    let mut sum_phred = 0_u64;
+    let mut q20_bases = 0_usize;
+    let mut q30_bases = 0_usize;
+
+    for (offset, &byte) in qualities.iter().enumerate() {
+        let phred = phred33(byte, offset)?;
+        min_phred = min_phred.min(phred);
+        max_phred = max_phred.max(phred);
+        sum_phred += u64::from(phred);
+        q20_bases += usize::from(phred >= 20);
+        q30_bases += usize::from(phred >= 30);
+    }
+
+    Ok(QualitySummary {
+        len: qualities.len(),
+        min_phred: Some(min_phred),
+        max_phred: Some(max_phred),
+        sum_phred,
+        q20_bases,
+        q30_bases,
+    })
 }
 
 /// Bin Phred+33 qualities into threshold indexes.
@@ -272,7 +294,6 @@ pub fn bin_qualities_into_slice(
 }
 
 fn pack_bases_exact(seq: &[u8], bases: &mut [u8], n_mask: &mut [u8]) -> BaseSummary {
-    bases.fill(0);
     n_mask.fill(0);
 
     let mut summary = BaseSummary {
@@ -280,34 +301,37 @@ fn pack_bases_exact(seq: &[u8], bases: &mut [u8], n_mask: &mut [u8]) -> BaseSumm
         ..BaseSummary::default()
     };
 
-    for (i, &base) in seq.iter().enumerate() {
-        let (bits, masked) = match base {
-            b'A' | b'a' => {
-                summary.a += 1;
-                (0, false)
-            }
-            b'C' | b'c' => {
-                summary.c += 1;
-                (1, false)
-            }
-            b'G' | b'g' => {
-                summary.g += 1;
-                (2, false)
-            }
-            b'T' | b't' => {
-                summary.t += 1;
-                (3, false)
-            }
-            _ => {
-                summary.n += 1;
-                (0, true)
-            }
-        };
-
-        bases[i / 4] |= bits << ((i % 4) * 2);
-        if masked {
-            n_mask[i / 8] |= 1 << (i % 8);
+    for (chunk_index, chunk) in seq.chunks(4).enumerate() {
+        let mut packed = 0_u8;
+        let base_index = chunk_index * 4;
+        for (offset, &base) in chunk.iter().enumerate() {
+            let bits = match base {
+                b'A' | b'a' => {
+                    summary.a += 1;
+                    0
+                }
+                b'C' | b'c' => {
+                    summary.c += 1;
+                    1
+                }
+                b'G' | b'g' => {
+                    summary.g += 1;
+                    2
+                }
+                b'T' | b't' => {
+                    summary.t += 1;
+                    3
+                }
+                _ => {
+                    summary.n += 1;
+                    let index = base_index + offset;
+                    n_mask[index / 8] |= 1 << (index % 8);
+                    0
+                }
+            };
+            packed |= bits << (offset * 2);
         }
+        bases[chunk_index] = packed;
     }
 
     summary
