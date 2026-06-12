@@ -45,12 +45,16 @@ fn run() -> Result<()> {
     {
         write_gzip(config.out_dir.join("single.fastq.gz"), &single)?;
         write_gzip(config.out_dir.join("interleaved.fastq.gz"), &interleaved)?;
+        write_gzip(config.out_dir.join("r1.fastq.gz"), &r1)?;
+        write_gzip(config.out_dir.join("r2.fastq.gz"), &r2)?;
     }
 
     #[cfg(feature = "bgzf")]
     {
         write_bgzf(config.out_dir.join("single.fastq.bgz"), &single)?;
         write_bgzf(config.out_dir.join("interleaved.fastq.bgz"), &interleaved)?;
+        write_bgzf(config.out_dir.join("r1.fastq.bgz"), &r1)?;
+        write_bgzf(config.out_dir.join("r2.fastq.bgz"), &r2)?;
     }
 
     println!("wrote fixtures to {}", config.out_dir.display());

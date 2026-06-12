@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 
 use microraptor::benchutil::{StreamStats, consume_fastq, synthetic_fastq};
 use microraptor::pack::{pack_bases_into, summarize_qualities};
-use microraptor::{FastqConfig, FastqReader, Result, open_fastq_with_config};
+use microraptor::{
+    FastqConfig, FastqReader, Result, open_fastq_with_config, open_paired_fastq_with_configs,
+};
 
 #[derive(Debug, Clone)]
 struct Config {
@@ -21,6 +23,7 @@ struct Config {
     workers: usize,
     json: bool,
     input: Option<PathBuf>,
+    paired_inputs: Option<(PathBuf, PathBuf)>,
     mode: Mode,
 }
 
@@ -34,6 +37,7 @@ impl Default for Config {
             workers: std::thread::available_parallelism().map_or(1, usize::from),
             json: false,
             input: None,
+            paired_inputs: None,
             mode: Mode::All,
         }
     }
@@ -86,6 +90,9 @@ fn main() {
 
 fn run() -> Result<()> {
     let config = parse_args();
+    if let Some((first, second)) = config.paired_inputs.as_ref() {
+        return run_paired_input(first, second, &config);
+    }
     if let Some(path) = config.input.as_deref() {
         return run_real_input(path, &config);
     }
@@ -141,9 +148,44 @@ fn run() -> Result<()> {
     Ok(())
 }
 
+fn run_paired_input(first: &Path, second: &Path, config: &Config) -> Result<()> {
+    let input_bytes = checked_file_len(first)?
+        .checked_add(checked_file_len(second)?)
+        .ok_or_else(|| microraptor::FastqError::Format("paired input size overflow".into()))?;
+    let mut measurements = Vec::new();
+    if config.mode.includes_parse() {
+        measurements.push(measure_paired_path_fastq(
+            "file-paired-auto",
+            first,
+            second,
+            input_bytes,
+            config,
+        )?);
+    }
+    if config.mode.includes_pack() {
+        measurements.push(measure_paired_path_pack(
+            "file-paired-pack-seq-qual",
+            first,
+            second,
+            input_bytes,
+            config,
+        )?);
+    }
+
+    let source = format!("{}+{}", first.display(), second.display());
+    if config.json {
+        println!(
+            "{}",
+            render_json(config, &source, input_bytes, &measurements)
+        );
+    } else {
+        print_table(&source, input_bytes, &measurements);
+    }
+    Ok(())
+}
+
 fn run_real_input(path: &Path, config: &Config) -> Result<()> {
-    let input_bytes = usize::try_from(std::fs::metadata(path)?.len())
-        .map_err(|_| microraptor::FastqError::Format("input file is too large".into()))?;
+    let input_bytes = checked_file_len(path)?;
     let mut measurements = Vec::new();
     if config.mode.includes_parse() {
         measurements.push(measure_path_fastq("file-auto", path, input_bytes, config)?);
@@ -182,6 +224,11 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
         print_table(&source, input_bytes, &measurements);
     }
     Ok(())
+}
+
+fn checked_file_len(path: &Path) -> Result<usize> {
+    usize::try_from(std::fs::metadata(path)?.len())
+        .map_err(|_| microraptor::FastqError::Format("input file is too large".into()))
 }
 
 fn measure_fastq(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
@@ -371,6 +418,76 @@ fn measure_path_pack(
     })
 }
 
+fn measure_paired_path_fastq(
+    name: &str,
+    first: &Path,
+    second: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let mut reader = open_paired_fastq_with_configs(
+            first,
+            fastq_config(config),
+            second,
+            fastq_config(config),
+        )?;
+        consume_paired_fastq(&mut reader)
+    })
+}
+
+fn measure_paired_path_pack(
+    name: &str,
+    first: &Path,
+    second: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let mut reader = open_paired_fastq_with_configs(
+            first,
+            fastq_config(config),
+            second,
+            fastq_config(config),
+        )?;
+        let mut stats = StreamStats::default();
+        let mut packed = Vec::new();
+        let mut mask = Vec::new();
+        while let Some(batch) = reader.next_pair_batch()? {
+            for pair in batch.pairs() {
+                for record in [pair.first(), pair.second()] {
+                    let seq = record.seq();
+                    let qual = record.qual();
+                    let summary = pack_bases_into(seq, &mut packed, &mut mask);
+                    let q = summarize_qualities(qual)
+                        .map_err(|e| microraptor::FastqError::Format(e.to_string()))?;
+                    stats.observe_record(record.name(), seq, qual);
+                    stats.checksum = stats
+                        .checksum
+                        .wrapping_add(summary.canonical_bases() as u64)
+                        .wrapping_add(q.sum_phred);
+                }
+            }
+        }
+        Ok(stats)
+    })
+}
+
+fn consume_paired_fastq<R1: std::io::Read, R2: std::io::Read>(
+    reader: &mut microraptor::PairedFastqReader<R1, R2>,
+) -> Result<StreamStats> {
+    let mut stats = StreamStats::default();
+    while let Some(batch) = reader.next_pair_batch()? {
+        for pair in batch.pairs() {
+            let first = pair.first();
+            stats.observe_record(first.name(), first.seq(), first.qual());
+            let second = pair.second();
+            stats.observe_record(second.name(), second.seq(), second.qual());
+        }
+    }
+    Ok(stats)
+}
+
 #[cfg(all(feature = "bgzf", feature = "libdeflate"))]
 fn measure_path_bgzf_libdeflate_serial(
     name: &str,
@@ -548,6 +665,11 @@ fn parse_args() -> Config {
             "--slab-size" => config.slab_size = parse_next(&mut args, "--slab-size"),
             "--workers" => config.workers = parse_next(&mut args, "--workers"),
             "--input" => config.input = Some(parse_path(&mut args, "--input")),
+            "--paired-inputs" => {
+                let first = parse_path(&mut args, "--paired-inputs");
+                let second = parse_path(&mut args, "--paired-inputs");
+                config.paired_inputs = Some((first, second));
+            }
             "--mode" => config.mode = parse_mode(&mut args, "--mode"),
             "--json" => config.json = true,
             "--help" | "-h" => {
@@ -560,6 +682,10 @@ fn parse_args() -> Config {
                 std::process::exit(2);
             }
         }
+    }
+    if config.input.is_some() && config.paired_inputs.is_some() {
+        eprintln!("--input and --paired-inputs are mutually exclusive");
+        std::process::exit(2);
     }
     config
 }
@@ -604,7 +730,7 @@ fn parse_mode(args: &mut impl Iterator<Item = String>, flag: &str) -> Mode {
 
 fn print_help() {
     eprintln!(
-        "microraptor-bench [--input PATH] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--json]"
+        "microraptor-bench [--input PATH | --paired-inputs R1 R2] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--json]"
     );
 }
 
@@ -633,6 +759,27 @@ mod tests {
         let result = run_real_input(&path, &config);
 
         std::fs::remove_file(path).unwrap();
+        result.unwrap();
+    }
+
+    #[test]
+    fn paired_input_benchmark_reads_paths() {
+        let r1_path =
+            std::env::temp_dir().join(format!("microraptor-bench-r1-{}.fastq", std::process::id()));
+        let r2_path =
+            std::env::temp_dir().join(format!("microraptor-bench-r2-{}.fastq", std::process::id()));
+        std::fs::write(&r1_path, b"@frag/1\nACGT\n+\nIIII\n").unwrap();
+        std::fs::write(&r2_path, b"@frag/2\nTGCA\n+\nJJJJ\n").unwrap();
+
+        let config = Config {
+            iters: 1,
+            paired_inputs: Some((r1_path.clone(), r2_path.clone())),
+            ..Config::default()
+        };
+        let result = run_paired_input(&r1_path, &r2_path, &config);
+
+        std::fs::remove_file(r1_path).unwrap();
+        std::fs::remove_file(r2_path).unwrap();
         result.unwrap();
     }
 

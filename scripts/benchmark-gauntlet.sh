@@ -52,6 +52,30 @@ run_microraptor() {
   } >> "${md}"
 }
 
+run_microraptor_paired() {
+  local label="$1"
+  local first="$2"
+  local second="$3"
+  [[ -f "${first}" && -f "${second}" ]] || return 0
+
+  printf 'running microraptor %s: %s %s\n' "${label}" "${first}" "${second}"
+  target/release/microraptor-bench \
+    --paired-inputs "${first}" "${second}" \
+    --iters "${iters}" \
+    --workers "${workers}" \
+    --json >> "${jsonl}"
+
+  {
+    printf '### %s\n\n' "${label}"
+    printf '```text\n'
+    target/release/microraptor-bench \
+      --paired-inputs "${first}" "${second}" \
+      --iters 1 \
+      --workers "${workers}"
+    printf '```\n\n'
+  } >> "${md}"
+}
+
 run_external() {
   local label="$1"
   local command_name="$2"
@@ -77,6 +101,9 @@ run_microraptor "interleaved/gzip" "${input_dir}/interleaved.fastq.gz"
 run_microraptor "interleaved/bgzf" "${input_dir}/interleaved.fastq.bgz"
 run_microraptor "paired/r1/raw" "${input_dir}/r1.fastq"
 run_microraptor "paired/r2/raw" "${input_dir}/r2.fastq"
+run_microraptor_paired "paired/raw" "${input_dir}/r1.fastq" "${input_dir}/r2.fastq"
+run_microraptor_paired "paired/gzip" "${input_dir}/r1.fastq.gz" "${input_dir}/r2.fastq.gz"
+run_microraptor_paired "paired/bgzf" "${input_dir}/r1.fastq.bgz" "${input_dir}/r2.fastq.bgz"
 
 {
   printf '## external tools\n\n'
@@ -84,14 +111,49 @@ run_microraptor "paired/r2/raw" "${input_dir}/r2.fastq"
 
 run_external "seqkit stats single/raw" seqkit seqkit stats "${input_dir}/single.fastq"
 run_external "seqkit stats single/gzip" seqkit seqkit stats "${input_dir}/single.fastq.gz"
-run_external "fastp paired/raw" fastp fastp \
-  --in1 "${input_dir}/r1.fastq" \
-  --in2 "${input_dir}/r2.fastq" \
-  --stdout \
-  --disable_adapter_trimming \
-  --disable_quality_filtering \
-  --disable_length_filtering \
-  --thread "${workers}"
+run_external "seqkit stats single/bgzf" seqkit seqkit stats "${input_dir}/single.fastq.bgz"
+run_external "seqkit stats paired/r1/raw" seqkit seqkit stats "${input_dir}/r1.fastq"
+run_external "seqkit stats paired/r2/raw" seqkit seqkit stats "${input_dir}/r2.fastq"
+run_external "seqkit stats paired/r1/gzip" seqkit seqkit stats "${input_dir}/r1.fastq.gz"
+run_external "seqkit stats paired/r2/gzip" seqkit seqkit stats "${input_dir}/r2.fastq.gz"
+run_external "seqkit stats paired/r1/bgzf" seqkit seqkit stats "${input_dir}/r1.fastq.bgz"
+run_external "seqkit stats paired/r2/bgzf" seqkit seqkit stats "${input_dir}/r2.fastq.bgz"
+run_external "seqtk size single/raw" seqtk seqtk size "${input_dir}/single.fastq"
+run_external "seqtk size single/gzip" seqtk seqtk size "${input_dir}/single.fastq.gz"
+run_external "seqtk size single/bgzf" seqtk seqtk size "${input_dir}/single.fastq.bgz"
+run_external "seqtk fqchk single/raw" seqtk seqtk fqchk "${input_dir}/single.fastq"
+run_external "bgzip test single/bgzf" bgzip bgzip -t "${input_dir}/single.fastq.bgz"
+run_external "bgzip decompress single/bgzf" bgzip bash -lc \
+  "bgzip -dc '${input_dir}/single.fastq.bgz' >/dev/null"
+run_external "samtools import single/raw" samtools samtools import \
+  -0 "${input_dir}/single.fastq" \
+  -o /dev/null \
+  -O BAM \
+  -@ "${workers}"
+run_external "samtools import paired/raw" samtools samtools import \
+  -1 "${input_dir}/r1.fastq" \
+  -2 "${input_dir}/r2.fastq" \
+  -o /dev/null \
+  -O BAM \
+  -@ "${workers}"
+run_external "samtools import paired/gzip" samtools samtools import \
+  -1 "${input_dir}/r1.fastq.gz" \
+  -2 "${input_dir}/r2.fastq.gz" \
+  -o /dev/null \
+  -O BAM \
+  -@ "${workers}"
+run_external "samtools import paired/bgzf" samtools samtools import \
+  -1 "${input_dir}/r1.fastq.bgz" \
+  -2 "${input_dir}/r2.fastq.bgz" \
+  -o /dev/null \
+  -O BAM \
+  -@ "${workers}"
+run_external "fastp paired/raw" fastp bash -lc \
+  "fastp --in1 '${input_dir}/r1.fastq' --in2 '${input_dir}/r2.fastq' --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread '${workers}' --json '${result_dir}/fastp.json' --html '${result_dir}/fastp.html' >/dev/null"
+run_external "fastp paired/gzip" fastp bash -lc \
+  "fastp --in1 '${input_dir}/r1.fastq.gz' --in2 '${input_dir}/r2.fastq.gz' --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread '${workers}' --json '${result_dir}/fastp-gzip.json' --html '${result_dir}/fastp-gzip.html' >/dev/null"
+run_external "fastp paired/bgzf" fastp bash -lc \
+  "fastp --in1 '${input_dir}/r1.fastq.bgz' --in2 '${input_dir}/r2.fastq.bgz' --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread '${workers}' --json '${result_dir}/fastp-bgzf.json' --html '${result_dir}/fastp-bgzf.html' >/dev/null"
 
 printf 'wrote %s\n' "${jsonl}"
 printf 'wrote %s\n' "${md}"
