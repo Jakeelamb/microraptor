@@ -9,11 +9,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use microraptor::benchutil::{
-    StreamStats, consume_fastq, consume_trusted_fastq_read_with_pack, synthetic_fastq,
+    StreamStats, consume_fastq, consume_trusted_fastq_read_direct_with_pack,
+    consume_trusted_fastq_read_with_pack, synthetic_fastq,
 };
-use microraptor::pack::{
-    TrustedPackedRecord, pack_bases_and_summarize_qualities_into, pack_trusted_fastq_read_direct,
-};
+use microraptor::pack::{TrustedPackedRecord, pack_bases_and_summarize_qualities_into};
 use microraptor::{FastqConfig, FastqReader, PairValidation, Result};
 
 enum BenchRead {
@@ -531,20 +530,14 @@ fn measure_trusted_pack(name: &str, input: &[u8], config: &Config) -> Result<Mea
 
 fn measure_direct_pack(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
     measure(name, input.len(), config.iters, || {
-        let mut stats = StreamStats::default();
-        pack_trusted_fastq_read_direct(
+        consume_trusted_fastq_read_direct_with_pack(
             std::io::Cursor::new(input),
             FastqConfig {
                 slab_size: config.slab_size,
                 validate: true,
                 ..FastqConfig::default()
             },
-            |record| {
-                observe_trusted_record(&mut stats, record);
-                Ok(())
-            },
-        )?;
-        Ok(stats)
+        )
     })
 }
 
@@ -590,12 +583,7 @@ fn measure_path_direct_pack(
     config: &Config,
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
-        let mut stats = StreamStats::default();
-        pack_trusted_fastq_read_direct(open_bench_read(path)?, fastq_config(config), |record| {
-            observe_trusted_record(&mut stats, record);
-            Ok(())
-        })?;
-        Ok(stats)
+        consume_trusted_fastq_read_direct_with_pack(open_bench_read(path)?, fastq_config(config))
     })
 }
 

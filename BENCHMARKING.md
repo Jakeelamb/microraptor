@@ -70,7 +70,9 @@ instructions/base from `perf stat`; set
 `MICRORAPTOR_MAX_PACK_INSTRUCTIONS_PER_BASE` to turn it into a threshold gate.
 Use `scripts/check-slab-autotune.sh` to compare the default pack path across
 candidate slab sizes. Set `MICRORAPTOR_SLAB_INPUT=/path/to/file.fastq` to tune a
-real workload instead of the synthetic fixture.
+real workload instead of the synthetic fixture. Treat this as workload evidence,
+not an automatic default change; slab winners are sensitive to input size,
+compression, and cache state.
 
 For a real dataset:
 

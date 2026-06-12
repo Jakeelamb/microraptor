@@ -1303,25 +1303,27 @@ unsafe fn pack_bases_and_qualities_exact_avx2(
 
     while base_index + 32 <= seq.len() {
         let block_start = base_index;
-        let block_end = base_index + 32;
-        while base_index < block_end {
-            let c0 = BASE_LUT[usize::from(seq[base_index])];
-            let c1 = BASE_LUT[usize::from(seq[base_index + 1])];
-            let c2 = BASE_LUT[usize::from(seq[base_index + 2])];
-            let c3 = BASE_LUT[usize::from(seq[base_index + 3])];
-            pack_quad_from_codes(
-                c0,
-                c1,
-                c2,
-                c3,
-                base_index,
-                &mut bases[chunk_index],
-                &mut bases_summary,
-                n_mask,
-            );
-            chunk_index += 1;
-            base_index += 4;
-        }
+        let first_codes = base_codes_16(&seq[base_index..base_index + 16]);
+        pack_code_quads(
+            &first_codes,
+            base_index,
+            &mut bases[chunk_index..chunk_index + 4],
+            &mut bases_summary,
+            n_mask,
+        );
+        base_index += 16;
+        chunk_index += 4;
+
+        let second_codes = base_codes_16(&seq[base_index..base_index + 16]);
+        pack_code_quads(
+            &second_codes,
+            base_index,
+            &mut bases[chunk_index..chunk_index + 4],
+            &mut bases_summary,
+            n_mask,
+        );
+        base_index += 16;
+        chunk_index += 4;
 
         let bytes =
             unsafe { _mm256_loadu_si256(qualities.as_ptr().add(block_start).cast::<__m256i>()) };
@@ -1423,6 +1425,11 @@ fn pack_code_quads(
     summary: &mut BaseSummary,
     n_mask: &mut [u8],
 ) {
+    if codes_are_canonical(codes) {
+        pack_canonical_code_quads(codes, bases, summary);
+        return;
+    }
+
     let mut quad = 0;
     while quad < 4 {
         let code_index = quad * 4;
@@ -1438,6 +1445,35 @@ fn pack_code_quads(
             n_mask,
         );
         quad += 1;
+    }
+}
+
+#[cfg(feature = "simd")]
+#[inline(always)]
+fn codes_are_canonical(codes: &[u8; 16]) -> bool {
+    let mut combined = 0_u8;
+    let mut i = 0;
+    while i < 16 {
+        combined |= codes[i];
+        i += 1;
+    }
+    combined < BASE_N
+}
+
+#[cfg(feature = "simd")]
+#[inline(always)]
+fn pack_canonical_code_quads(codes: &[u8; 16], bases: &mut [u8], summary: &mut BaseSummary) {
+    let mut quad = 0;
+    while quad < 4 {
+        let i = quad * 4;
+        bases[quad] = codes[i] | (codes[i + 1] << 2) | (codes[i + 2] << 4) | (codes[i + 3] << 6);
+        quad += 1;
+    }
+
+    let mut i = 0;
+    while i < 16 {
+        add_base_count(summary, codes[i]);
+        i += 1;
     }
 }
 
@@ -1805,6 +1841,25 @@ mod tests {
                 q30_bases: 4,
             }
         );
+    }
+
+    #[test]
+    fn fused_pack_handles_long_canonical_mixed_case_read() {
+        let seq = b"ACGTacgtACGTacgtACGTacgtACGTacgtACGTacgt";
+        let qual = vec![b'I'; seq.len()];
+        let mut bases = Vec::new();
+        let mut n_mask = Vec::new();
+        let summary =
+            pack_bases_and_summarize_qualities_into(seq, &qual, &mut bases, &mut n_mask).unwrap();
+
+        assert_eq!(summary.bases.len, seq.len());
+        assert_eq!(summary.bases.n, 0);
+        assert_eq!(summary.bases.a, 10);
+        assert_eq!(summary.bases.c, 10);
+        assert_eq!(summary.bases.g, 10);
+        assert_eq!(summary.bases.t, 10);
+        assert!(n_mask.iter().all(|&byte| byte == 0));
+        assert_eq!(summary.qualities.sum_phred, 40 * seq.len() as u64);
     }
 
     #[test]

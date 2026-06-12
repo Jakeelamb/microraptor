@@ -28,6 +28,8 @@ Current slice:
   kernel inspection
 - fused base+quality packing with compact quad LUTs, AVX2 quality reductions,
   and slab/BGZF pack benchmark gates
+- canonical A/C/G/T SIMD chunk packing fast path and concrete trusted stats sink
+  for low-overhead pack benchmarks
 - structured FASTQ parse errors with byte offset, record index, and line index
 - zero-copy FASTQ record-id helpers for raw names, first tokens, and pair-normalized IDs
 - stateful separate-file paired reader and interleaved FASTQ iterators with

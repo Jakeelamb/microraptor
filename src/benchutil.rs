@@ -1,4 +1,7 @@
-use crate::pack::{TrustedPackedRecord, pack_trusted_fastq, pack_trusted_fastq_read};
+use crate::pack::{
+    TrustedPackSink, TrustedPackedRecord, pack_trusted_fastq, pack_trusted_fastq_read_direct_sink,
+    pack_trusted_fastq_read_sink,
+};
 use crate::{FastqConfig, FastqReader, Result};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -47,12 +50,18 @@ pub fn consume_trusted_fastq_read_with_pack<R: std::io::Read>(
     reader: R,
     config: FastqConfig,
 ) -> Result<StreamStats> {
-    let mut stats = StreamStats::default();
-    pack_trusted_fastq_read(reader, config, |record| {
-        observe_trusted_packed_record(&mut stats, record);
-        Ok(())
-    })?;
-    Ok(stats)
+    let mut sink = StreamStatsSink::default();
+    pack_trusted_fastq_read_sink(reader, config, &mut sink)?;
+    Ok(sink.stats)
+}
+
+pub fn consume_trusted_fastq_read_direct_with_pack<R: std::io::Read>(
+    reader: R,
+    config: FastqConfig,
+) -> Result<StreamStats> {
+    let mut sink = StreamStatsSink::default();
+    pack_trusted_fastq_read_direct_sink(reader, config, &mut sink)?;
+    Ok(sink.stats)
 }
 
 fn observe_trusted_packed_record(stats: &mut StreamStats, record: TrustedPackedRecord<'_>) {
@@ -61,6 +70,18 @@ fn observe_trusted_packed_record(stats: &mut StreamStats, record: TrustedPackedR
         .checksum
         .wrapping_add(record.summary.bases.canonical_bases() as u64)
         .wrapping_add(record.summary.qualities.sum_phred);
+}
+
+#[derive(Default)]
+struct StreamStatsSink {
+    stats: StreamStats,
+}
+
+impl TrustedPackSink for &mut StreamStatsSink {
+    fn record(&mut self, record: TrustedPackedRecord<'_>) -> Result<()> {
+        observe_trusted_packed_record(&mut self.stats, record);
+        Ok(())
+    }
 }
 
 pub fn synthetic_fastq(records: usize, read_len: usize) -> Vec<u8> {
