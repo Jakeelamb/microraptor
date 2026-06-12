@@ -75,6 +75,7 @@ struct BgzfPackCheck {
     label: String,
     min_input_bytes: usize,
     tolerance_pct: u128,
+    check_timing: bool,
 }
 
 impl Default for BgzfPackCheck {
@@ -83,6 +84,7 @@ impl Default for BgzfPackCheck {
             label: "bgzf".into(),
             min_input_bytes: 0,
             tolerance_pct: 15,
+            check_timing: true,
         }
     }
 }
@@ -120,6 +122,7 @@ struct Measurement {
     bases: u64,
     best: Duration,
     checksum: u64,
+    extras: Vec<(&'static str, u64)>,
 }
 
 fn main() {
@@ -379,33 +382,35 @@ fn check_bgzf_pack_regression(check: &BgzfPackCheck, rows: &[Measurement]) -> Re
         }
     }
 
-    let reader_limit = tolerance_limit(reader.best.as_nanos(), check.tolerance_pct);
-    if adaptive.best.as_nanos() > reader_limit {
-        return Err(microraptor::FastqError::Format(format!(
-            "BGZF {} adaptive pack regression: {} ns > {} ns",
-            check.label,
-            adaptive.best.as_nanos(),
-            reader_limit
-        )));
-    }
+    if check.check_timing {
+        let reader_limit = tolerance_limit(reader.best.as_nanos(), check.tolerance_pct);
+        if adaptive.best.as_nanos() > reader_limit {
+            return Err(microraptor::FastqError::Format(format!(
+                "BGZF {} adaptive pack regression: {} ns > {} ns",
+                check.label,
+                adaptive.best.as_nanos(),
+                reader_limit
+            )));
+        }
 
-    let adaptive_limit = tolerance_limit(adaptive.best.as_nanos(), check.tolerance_pct);
-    if default.best.as_nanos() > adaptive_limit {
-        return Err(microraptor::FastqError::Format(format!(
-            "BGZF {} default pack is slower than adaptive: {} ns > {} ns",
-            check.label,
-            default.best.as_nanos(),
-            adaptive_limit
-        )));
-    }
+        let adaptive_limit = tolerance_limit(adaptive.best.as_nanos(), check.tolerance_pct);
+        if default.best.as_nanos() > adaptive_limit {
+            return Err(microraptor::FastqError::Format(format!(
+                "BGZF {} default pack is slower than adaptive: {} ns > {} ns",
+                check.label,
+                default.best.as_nanos(),
+                adaptive_limit
+            )));
+        }
 
-    if libdeflate_adaptive.best.as_nanos() > reader_limit {
-        return Err(microraptor::FastqError::Format(format!(
-            "BGZF {} libdeflate adaptive pack regression: {} ns > {} ns",
-            check.label,
-            libdeflate_adaptive.best.as_nanos(),
-            reader_limit
-        )));
+        if libdeflate_adaptive.best.as_nanos() > reader_limit {
+            return Err(microraptor::FastqError::Format(format!(
+                "BGZF {} libdeflate adaptive pack regression: {} ns > {} ns",
+                check.label,
+                libdeflate_adaptive.best.as_nanos(),
+                reader_limit
+            )));
+        }
     }
 
     println!("{}_input_bytes\t{}", check.label, default.bytes);
@@ -434,6 +439,7 @@ fn check_bgzf_pack_regression(check: &BgzfPackCheck, rows: &[Measurement]) -> Re
         check.label,
         libdeflate_adaptive.best.as_nanos()
     );
+    println!("{}_timing_checks\t{}", check.label, check.check_timing);
     Ok(())
 }
 
@@ -572,11 +578,11 @@ fn measure_bgzf_adaptive_trusted_pack(
     config: &Config,
 ) -> Result<Measurement> {
     let owned: Arc<[u8]> = Arc::from(input);
-    measure(name, input.len(), config.iters, || {
+    measure_with_bgzf_metrics(name, input.len(), config.iters, |metrics| {
         let source = microraptor::BgzfAutoReader::with_config(
             std::io::Cursor::new(Arc::clone(&owned)),
             input.len() as u64,
-            bgzf_config(config),
+            bgzf_config(config).with_metrics(metrics),
         )?;
         consume_trusted_fastq_read_with_pack(source, fastq_config(config))
     })
@@ -652,11 +658,13 @@ fn measure_bgzf_libdeflate_adaptive_trusted_pack(
     config: &Config,
 ) -> Result<Measurement> {
     let owned: Arc<[u8]> = Arc::from(input);
-    measure(name, input.len(), config.iters, || {
+    measure_with_bgzf_metrics(name, input.len(), config.iters, |metrics| {
         let source = microraptor::BgzfAutoReader::with_config(
             std::io::Cursor::new(Arc::clone(&owned)),
             input.len() as u64,
-            bgzf_config(config).with_inflate_backend(microraptor::BgzfInflateBackend::Libdeflate),
+            bgzf_config(config)
+                .with_inflate_backend(microraptor::BgzfInflateBackend::Libdeflate)
+                .with_metrics(metrics),
         )?;
         consume_trusted_fastq_read_with_pack(source, fastq_config(config))
     })
@@ -922,12 +930,12 @@ fn measure_path_bgzf_adaptive_trusted_pack(
     input_bytes: usize,
     config: &Config,
 ) -> Result<Measurement> {
-    measure(name, input_bytes, config.iters, || {
+    measure_with_bgzf_metrics(name, input_bytes, config.iters, |metrics| {
         let file = std::fs::File::open(path)?;
         let source = microraptor::BgzfAutoReader::with_config(
             file,
             input_bytes as u64,
-            bgzf_config(config),
+            bgzf_config(config).with_metrics(metrics),
         )?;
         consume_trusted_fastq_read_with_pack(source, fastq_config(config))
     })
@@ -940,9 +948,12 @@ fn measure_path_bgzf_direct_parallel_trusted_pack(
     input_bytes: usize,
     config: &Config,
 ) -> Result<Measurement> {
-    measure(name, input_bytes, config.iters, || {
+    measure_with_bgzf_metrics(name, input_bytes, config.iters, |metrics| {
         let file = std::fs::File::open(path)?;
-        let source = microraptor::BgzfParallelReader::new(file, config.workers)?;
+        let source = microraptor::BgzfParallelReader::with_config(
+            file,
+            bgzf_config(config).with_metrics(metrics),
+        )?;
         consume_trusted_fastq_read_with_pack(source, fastq_config(config))
     })
 }
@@ -971,12 +982,14 @@ fn measure_path_bgzf_libdeflate_adaptive_trusted_pack(
     input_bytes: usize,
     config: &Config,
 ) -> Result<Measurement> {
-    measure(name, input_bytes, config.iters, || {
+    measure_with_bgzf_metrics(name, input_bytes, config.iters, |metrics| {
         let file = std::fs::File::open(path)?;
         let source = microraptor::BgzfAutoReader::with_config(
             file,
             input_bytes as u64,
-            bgzf_config(config).with_inflate_backend(microraptor::BgzfInflateBackend::Libdeflate),
+            bgzf_config(config)
+                .with_inflate_backend(microraptor::BgzfInflateBackend::Libdeflate)
+                .with_metrics(metrics),
         )?;
         consume_trusted_fastq_read_with_pack(source, fastq_config(config))
     })
@@ -1014,6 +1027,28 @@ fn bgzf_config(config: &Config) -> microraptor::BgzfParallelConfig {
         .with_parallel_min_compressed_bytes(config.bgzf_parallel_min_bytes)
 }
 
+#[cfg(feature = "bgzf")]
+fn measure_with_bgzf_metrics<F>(
+    name: &str,
+    bytes: usize,
+    iters: usize,
+    mut f: F,
+) -> Result<Measurement>
+where
+    F: FnMut(Arc<microraptor::BgzfPipelineMetrics>) -> Result<StreamStats>,
+{
+    let metrics = Arc::new(microraptor::BgzfPipelineMetrics::default());
+    let mut measurement = measure(name, bytes, iters, || f(Arc::clone(&metrics)))?;
+    let snapshot = metrics.snapshot();
+    measurement
+        .extras
+        .push(("bgzf_job_queue_full", snapshot.job_queue_full));
+    measurement
+        .extras
+        .push(("bgzf_result_queue_full", snapshot.result_queue_full));
+    Ok(measurement)
+}
+
 fn measure<F>(name: &str, bytes: usize, iters: usize, mut f: F) -> Result<Measurement>
 where
     F: FnMut() -> Result<StreamStats>,
@@ -1032,6 +1067,7 @@ where
         bases: last.bases,
         best,
         checksum: last.checksum,
+        extras: Vec::new(),
     })
 }
 
@@ -1085,7 +1121,7 @@ fn render_json(config: &Config, source: &str, input_bytes: usize, rows: &[Measur
         let nanos = row.best.as_nanos();
         let _ = write!(
             out,
-            "{{\"name\":{},\"input_bytes\":{},\"records\":{},\"bases\":{},\"best_ns\":{},\"checksum\":{}}}",
+            "{{\"name\":{},\"input_bytes\":{},\"records\":{},\"bases\":{},\"best_ns\":{},\"checksum\":{}",
             JsonStr(&row.name),
             row.bytes,
             row.records,
@@ -1093,6 +1129,10 @@ fn render_json(config: &Config, source: &str, input_bytes: usize, rows: &[Measur
             nanos,
             row.checksum
         );
+        for (key, value) in &row.extras {
+            let _ = write!(out, ",{}:{}", JsonStr(key), value);
+        }
+        out.push('}');
     }
     out.push_str("]}");
     out
@@ -1160,6 +1200,12 @@ fn parse_args() -> Config {
                     .bgzf_pack_check
                     .get_or_insert_with(BgzfPackCheck::default)
                     .tolerance_pct = parse_next::<u128>(&mut args, "--tolerance-pct");
+            }
+            "--skip-timing-checks" => {
+                config
+                    .bgzf_pack_check
+                    .get_or_insert_with(BgzfPackCheck::default)
+                    .check_timing = false;
             }
             "--profile-bgzf-parallel" => config.profile_bgzf_parallel = true,
             "--json" => config.json = true,
@@ -1232,7 +1278,7 @@ fn parse_mode(args: &mut impl Iterator<Item = String>, flag: &str) -> Mode {
 
 fn print_help() {
     eprintln!(
-        "microraptor-bench [--input PATH | --paired-inputs R1 R2] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--bgzf-parallel-min-bytes N] [--json] [--check-bgzf-pack-regression] [--check-label NAME] [--min-input-bytes N] [--tolerance-pct N] [--profile-bgzf-parallel]"
+        "microraptor-bench [--input PATH | --paired-inputs R1 R2] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--bgzf-parallel-min-bytes N] [--json] [--check-bgzf-pack-regression] [--check-label NAME] [--min-input-bytes N] [--tolerance-pct N] [--skip-timing-checks] [--profile-bgzf-parallel]"
     );
 }
 
@@ -1298,5 +1344,22 @@ mod tests {
         };
         let json = render_json(&config, "synthetic", 0, &[]);
         assert!(json.contains("\"mode\":\"pack\""));
+    }
+
+    #[test]
+    fn render_json_includes_measurement_extras() {
+        let row = Measurement {
+            name: "bgzf".into(),
+            bytes: 1,
+            records: 2,
+            bases: 3,
+            best: Duration::from_nanos(4),
+            checksum: 5,
+            extras: vec![("bgzf_job_queue_full", 6)],
+        };
+
+        let json = render_json(&Config::default(), "synthetic", 1, &[row]);
+
+        assert!(json.contains("\"bgzf_job_queue_full\":6"));
     }
 }

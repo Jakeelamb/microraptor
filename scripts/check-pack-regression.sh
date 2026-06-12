@@ -5,6 +5,10 @@ records="${MICRORAPTOR_PACK_REGRESSION_RECORDS:-500000}"
 read_len="${MICRORAPTOR_PACK_REGRESSION_READ_LEN:-150}"
 iters="${MICRORAPTOR_PACK_REGRESSION_ITERS:-7}"
 tolerance_pct="${MICRORAPTOR_PACK_REGRESSION_TOLERANCE_PCT:-15}"
+check_timing=1
+if [[ "${CI:-}" == "true" && "${MICRORAPTOR_ENFORCE_TIMING:-0}" != "1" ]]; then
+  check_timing=0
+fi
 
 json="$(
   cargo run --release --bin microraptor-bench -- \
@@ -45,8 +49,9 @@ printf 'pack-seq-qual_ns\t%s\n' "${fast_ns}"
 printf 'direct-pack-seq-qual_ns\t%s\n' "${direct_ns}"
 printf 'reader-pack-seq-qual_ns\t%s\n' "${reference_ns}"
 printf 'tolerance_pct\t%s\n' "${tolerance_pct}"
+printf 'timing_checks\t%s\n' "${check_timing}"
 
-if (( fast_ns > limit_ns )); then
+if (( check_timing && fast_ns > limit_ns )); then
   printf 'pack regression: %s ns > %s ns\n' "${fast_ns}" "${limit_ns}" >&2
   exit 1
 fi

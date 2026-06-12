@@ -53,6 +53,37 @@ run_microraptor() {
   } >> "${md}"
 }
 
+run_microraptor_optional() {
+  local label="$1"
+  local path="$2"
+  [[ -f "${path}" ]] || return 0
+
+  printf 'running microraptor %s: %s\n' "${label}" "${path}"
+  set +e
+  local json_output
+  json_output="$(
+    target/release/microraptor-bench \
+      --input "${path}" \
+      --iters "${iters}" \
+      --workers "${workers}" \
+      --json 2>&1
+  )"
+  local json_status="$?"
+  set -e
+
+  {
+    printf '### %s\n\n' "${label}"
+    printf '```text\n'
+    printf '%s\n' "${json_output}"
+    printf 'exit_status\t%s\n' "${json_status}"
+    printf '```\n\n'
+  } >> "${md}"
+
+  if [[ "${json_status}" -eq 0 ]]; then
+    printf '%s\n' "${json_output}" >> "${jsonl}"
+  fi
+}
+
 run_microraptor_paired() {
   local label="$1"
   local first="$2"
@@ -114,7 +145,7 @@ run_microraptor_paired "paired/bgzf" "${input_dir}/r1.fastq.bgz" "${input_dir}/r
 
 if [[ -n "${corpus_inputs}" ]]; then
   for corpus_input in ${corpus_inputs}; do
-    run_microraptor "corpus/$(basename "${corpus_input}")" "${corpus_input}"
+    run_microraptor_optional "corpus/$(basename "${corpus_input}")" "${corpus_input}"
   done
 fi
 

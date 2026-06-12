@@ -13,10 +13,10 @@ mod stream;
 #[cfg(feature = "bgzf")]
 pub use bgzf::{
     BGZF_EOF_BLOCK, BgzfAutoReader, BgzfDeflateBackend, BgzfIndex, BgzfIndexEntry,
-    BgzfInflateBackend, BgzfParallelConfig, BgzfParallelReader, BgzfReader, BgzfSeekReader,
-    BgzfVirtualOffset, BgzfWriter, build_bgzf_index, compress_bgzf_parallel,
-    compress_bgzf_parallel_with_deflate_backend, decompress_bgzf_parallel,
-    decompress_bgzf_parallel_with_inflate_backend,
+    BgzfInflateBackend, BgzfParallelConfig, BgzfParallelReader, BgzfPipelineMetrics,
+    BgzfPipelineMetricsSnapshot, BgzfReader, BgzfSeekReader, BgzfVirtualOffset, BgzfWriter,
+    build_bgzf_index, compress_bgzf_parallel, compress_bgzf_parallel_with_deflate_backend,
+    decompress_bgzf_parallel, decompress_bgzf_parallel_with_inflate_backend,
 };
 pub use error::{FastqError, FastqPosition, Result};
 pub use fastq::{

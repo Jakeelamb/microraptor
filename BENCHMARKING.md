@@ -62,7 +62,9 @@ Use `scripts/check-pack-regression.sh` as a narrow guard for the default pack
 path. It checks that `pack-seq-qual` and `reader-pack-seq-qual` checksums match
 and fails when the trusted path is more than the configured tolerance slower
 than the reader-backed reference. It also checks that the direct scanner emits
-the same checksum.
+the same checksum. In CI (`CI=true`), timing failures are disabled by default so
+the gate remains checksum/shape stable on noisy runners; set
+`MICRORAPTOR_ENFORCE_TIMING=1` to make CI enforce the wall-clock threshold.
 
 Use `scripts/check-bgzf-pack-regression.sh` as the matching guard for real BGZF
 pack inputs. It creates both a small cyclic BGZF fixture and a large entropy
@@ -72,7 +74,9 @@ reader-backed reference, fails when the adaptive trusted BGZF path is more than
 the configured tolerance slower than the reader-backed pack row, and checks that
 the default BGZF pack row stays within tolerance of the explicit adaptive row.
 The shell script only orchestrates fixtures; `microraptor-bench
---check-bgzf-pack-regression` owns row validation and tolerance checks.
+--check-bgzf-pack-regression` owns row validation and tolerance checks. It uses
+the same CI timing policy as the raw pack guard: timing checks are skipped under
+`CI=true` unless `MICRORAPTOR_ENFORCE_TIMING=1`.
 
 Use `scripts/asm-pack.sh` to emit optimized assembly for pack-path inspection.
 Use `scripts/check-pack-instructions.sh` to compute pack-path
@@ -86,7 +90,11 @@ compression, and cache state.
 
 Set `MICRORAPTOR_GAUNTLET_CORPUS_INPUTS` to a space-separated list of real FASTQ,
 gzip FASTQ, or BGZF FASTQ files to add optional corpus rows to the gauntlet
-without checking datasets into the repository.
+without checking datasets into the repository. These external corpus rows are
+evidence capture, not a hard repository gate: successful rows are appended to the
+JSONL output, and failed rows stay in the markdown report with their exit status
+so malformed or unsupported local datasets do not hide the synthetic gauntlet
+result.
 
 For a real dataset:
 
@@ -172,6 +180,11 @@ MICRORAPTOR_PROFILE_INPUT=reads.fastq.bgz MICRORAPTOR_PROFILE_BGZF_PARALLEL=1 sc
 For BGZF inputs, `MICRORAPTOR_PROFILE_BGZF_PARALLEL=1` adds
 `file-bgzf-direct-parallel-pack-seq-qual` to the pack benchmark so adaptive
 BGZF overhead can be compared directly against a forced `BgzfParallelReader`.
+BGZF adaptive and forced-parallel JSON rows include
+`bgzf_job_queue_full` and `bgzf_result_queue_full` counters. These count bounded
+queue backpressure events in the decompress/parse/pack path and are meant to
+distinguish reader-starved, worker-starved, and consumer-starved profiles from
+plain wall-clock noise.
 
 ## Interpreting Results
 

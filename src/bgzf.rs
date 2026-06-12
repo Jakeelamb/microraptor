@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -62,13 +62,14 @@ impl BgzfDeflateBackend {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct BgzfParallelConfig {
     pub workers: usize,
     pub job_queue_depth: usize,
     pub result_queue_depth: usize,
     pub backend: BgzfInflateBackend,
     pub parallel_min_compressed_bytes: u64,
+    pub metrics: Option<Arc<BgzfPipelineMetrics>>,
 }
 
 impl Default for BgzfParallelConfig {
@@ -79,8 +80,47 @@ impl Default for BgzfParallelConfig {
             result_queue_depth: 2,
             backend: BgzfInflateBackend::default(),
             parallel_min_compressed_bytes: DEFAULT_PARALLEL_MIN_COMPRESSED_BYTES,
+            metrics: None,
         }
     }
+}
+
+#[derive(Debug, Default)]
+pub struct BgzfPipelineMetrics {
+    job_queue_full: AtomicU64,
+    result_queue_full: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BgzfPipelineMetricsSnapshot {
+    pub job_queue_full: u64,
+    pub result_queue_full: u64,
+}
+
+impl BgzfPipelineMetrics {
+    pub fn snapshot(&self) -> BgzfPipelineMetricsSnapshot {
+        BgzfPipelineMetricsSnapshot {
+            job_queue_full: self.job_queue_full.load(Ordering::Relaxed),
+            result_queue_full: self.result_queue_full.load(Ordering::Relaxed),
+        }
+    }
+
+    fn record(&self, channel: BgzfBackpressureChannel) {
+        match channel {
+            BgzfBackpressureChannel::Job => {
+                self.job_queue_full.fetch_add(1, Ordering::Relaxed);
+            }
+            BgzfBackpressureChannel::Result => {
+                self.result_queue_full.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BgzfBackpressureChannel {
+    Job,
+    Result,
 }
 
 impl BgzfParallelConfig {
@@ -108,7 +148,12 @@ impl BgzfParallelConfig {
         self
     }
 
-    pub fn should_parallelize(self, compressed_len: u64) -> bool {
+    pub fn with_metrics(mut self, metrics: Arc<BgzfPipelineMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    pub fn should_parallelize(&self, compressed_len: u64) -> bool {
         self.workers > 1 && compressed_len >= self.parallel_min_compressed_bytes
     }
 }
@@ -487,13 +532,17 @@ impl BgzfParallelReader {
         R: Read + Send + 'static,
     {
         let worker_count = config.workers.max(1);
+        let job_queue_depth = config.job_queue_depth.max(1);
+        let result_queue_depth = config.result_queue_depth.max(1);
+        let backend = config.backend;
+        let metrics = config.metrics.clone();
         let cancel = Arc::new(AtomicBool::new(false));
-        let (result_tx, result_rx) = sync_channel(config.result_queue_depth.max(1));
+        let (result_tx, result_rx) = sync_channel(result_queue_depth);
 
         let mut job_txs = Vec::with_capacity(worker_count);
         let mut job_rxs = Vec::with_capacity(worker_count);
         for _ in 0..worker_count {
-            let (tx, rx) = sync_channel(config.job_queue_depth.max(1));
+            let (tx, rx) = sync_channel(job_queue_depth);
             job_txs.push(tx);
             job_rxs.push(rx);
         }
@@ -502,16 +551,20 @@ impl BgzfParallelReader {
         for (worker_id, rx) in job_rxs.into_iter().enumerate() {
             let tx = result_tx.clone();
             let cancel_worker = Arc::clone(&cancel);
+            let metrics_worker = metrics.clone();
             let handle = thread::Builder::new()
                 .name(format!("microraptor-bgzf-decode-{worker_id}"))
-                .spawn(move || bgzf_worker_loop(rx, tx, cancel_worker, config.backend))?;
+                .spawn(move || bgzf_worker_loop(rx, tx, cancel_worker, backend, metrics_worker))?;
             handles.push(handle);
         }
 
         let cancel_reader = Arc::clone(&cancel);
+        let metrics_reader = metrics.clone();
         let handle = thread::Builder::new()
             .name("microraptor-bgzf-read".into())
-            .spawn(move || bgzf_reader_loop(inner, job_txs, result_tx, cancel_reader))?;
+            .spawn(move || {
+                bgzf_reader_loop(inner, job_txs, result_tx, cancel_reader, metrics_reader)
+            })?;
         handles.push(handle);
 
         Ok(Self {
@@ -808,6 +861,7 @@ fn bgzf_reader_loop<R>(
     job_txs: Vec<SyncSender<Job>>,
     result_tx: SyncSender<ParallelMsg>,
     cancel: Arc<AtomicBool>,
+    metrics: Option<Arc<BgzfPipelineMetrics>>,
 ) where
     R: Read,
 {
@@ -818,7 +872,12 @@ fn bgzf_reader_loop<R>(
             Ok(Some(block)) if block.is_eof() => break,
             Ok(Some(block)) => {
                 let worker = index % job_txs.len();
-                if !send_job(&job_txs[worker], Job::Block(index, block), &cancel) {
+                if !send_job(
+                    &job_txs[worker],
+                    Job::Block(index, block),
+                    &cancel,
+                    metrics.as_deref(),
+                ) {
                     return;
                 }
                 index += 1;
@@ -832,13 +891,23 @@ fn bgzf_reader_loop<R>(
     }
 
     for tx in &job_txs {
-        let _ = send_job(tx, Job::End, &cancel);
+        let _ = send_job(tx, Job::End, &cancel, metrics.as_deref());
     }
 
     if let Some(msg) = fatal {
-        let _ = send_result(&result_tx, ParallelMsg::Fatal(msg), &cancel);
+        let _ = send_result(
+            &result_tx,
+            ParallelMsg::Fatal(msg),
+            &cancel,
+            metrics.as_deref(),
+        );
     } else {
-        let _ = send_result(&result_tx, ParallelMsg::End(index), &cancel);
+        let _ = send_result(
+            &result_tx,
+            ParallelMsg::End(index),
+            &cancel,
+            metrics.as_deref(),
+        );
     }
 }
 
@@ -847,12 +916,18 @@ fn bgzf_worker_loop(
     result_tx: SyncSender<ParallelMsg>,
     cancel: Arc<AtomicBool>,
     backend: BgzfInflateBackend,
+    metrics: Option<Arc<BgzfPipelineMetrics>>,
 ) {
     while !cancel.load(Ordering::Acquire) {
         match rx.recv_timeout(Duration::from_millis(10)) {
             Ok(Job::Block(index, block)) => {
                 let decoded = decode_block_with_backend(&block, backend);
-                if !send_result(&result_tx, ParallelMsg::Data(index, decoded), &cancel) {
+                if !send_result(
+                    &result_tx,
+                    ParallelMsg::Data(index, decoded),
+                    &cancel,
+                    metrics.as_deref(),
+                ) {
                     return;
                 }
             }
@@ -863,19 +938,38 @@ fn bgzf_worker_loop(
     }
 }
 
-fn send_job(tx: &SyncSender<Job>, msg: Job, cancel: &AtomicBool) -> bool {
-    send_bounded(tx, msg, cancel)
+fn send_job(
+    tx: &SyncSender<Job>,
+    msg: Job,
+    cancel: &AtomicBool,
+    metrics: Option<&BgzfPipelineMetrics>,
+) -> bool {
+    send_bounded(tx, msg, cancel, metrics, BgzfBackpressureChannel::Job)
 }
 
-fn send_result(tx: &SyncSender<ParallelMsg>, msg: ParallelMsg, cancel: &AtomicBool) -> bool {
-    send_bounded(tx, msg, cancel)
+fn send_result(
+    tx: &SyncSender<ParallelMsg>,
+    msg: ParallelMsg,
+    cancel: &AtomicBool,
+    metrics: Option<&BgzfPipelineMetrics>,
+) -> bool {
+    send_bounded(tx, msg, cancel, metrics, BgzfBackpressureChannel::Result)
 }
 
-fn send_bounded<T>(tx: &SyncSender<T>, mut msg: T, cancel: &AtomicBool) -> bool {
+fn send_bounded<T>(
+    tx: &SyncSender<T>,
+    mut msg: T,
+    cancel: &AtomicBool,
+    metrics: Option<&BgzfPipelineMetrics>,
+    channel: BgzfBackpressureChannel,
+) -> bool {
     while !cancel.load(Ordering::Acquire) {
         match tx.try_send(msg) {
             Ok(()) => return true,
             Err(TrySendError::Full(returned)) => {
+                if let Some(metrics) = metrics {
+                    metrics.record(channel);
+                }
                 msg = returned;
                 thread::sleep(Duration::from_millis(1));
             }

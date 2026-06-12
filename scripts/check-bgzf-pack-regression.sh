@@ -11,6 +11,10 @@ tolerance_pct="${MICRORAPTOR_BGZF_PACK_REGRESSION_TOLERANCE_PCT:-15}"
 parallel_min_bytes="${MICRORAPTOR_BGZF_PARALLEL_MIN_BYTES:-33554432}"
 input_dir="${MICRORAPTOR_BGZF_PACK_REGRESSION_INPUT_DIR:-target/bench-inputs}"
 features="${MICRORAPTOR_BGZF_PACK_FEATURES:-libdeflate}"
+timing_args=()
+if [[ "${CI:-}" == "true" && "${MICRORAPTOR_ENFORCE_TIMING:-0}" != "1" ]]; then
+  timing_args+=(--skip-timing-checks)
+fi
 
 cargo_run=(cargo run --quiet --release)
 if [[ -n "${features}" ]]; then
@@ -39,7 +43,8 @@ check_case() {
     --check-bgzf-pack-regression \
     --check-label "${label}" \
     --min-input-bytes "${min_input_bytes}" \
-    --tolerance-pct "${tolerance_pct}"
+    --tolerance-pct "${tolerance_pct}" \
+    "${timing_args[@]}"
 }
 
 check_case small "${input_dir}/bgzf-small" "${records}" "${iters}" cyclic 0

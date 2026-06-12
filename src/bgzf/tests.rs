@@ -53,6 +53,52 @@ fn streaming_parallel_reader_round_trip_with_tiny_reads() {
 }
 
 #[test]
+fn bounded_send_records_full_queue_metric() {
+    let metrics = BgzfPipelineMetrics::default();
+    let cancel = AtomicBool::new(false);
+    let (tx, rx) = sync_channel(1);
+    tx.send(1_u8).unwrap();
+
+    let handle = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert_eq!(rx.recv().unwrap(), 1);
+        assert_eq!(rx.recv().unwrap(), 2);
+    });
+
+    assert!(send_bounded(
+        &tx,
+        2_u8,
+        &cancel,
+        Some(&metrics),
+        BgzfBackpressureChannel::Job,
+    ));
+    handle.join().unwrap();
+    assert!(metrics.snapshot().job_queue_full > 0);
+    assert_eq!(metrics.snapshot().result_queue_full, 0);
+}
+
+#[test]
+fn parallel_reader_accepts_pipeline_metrics() {
+    let mut input = Vec::new();
+    for i in 0..2000 {
+        input.extend_from_slice(format!("@r{i}\nACGT\n+\nIIII\n").as_bytes());
+    }
+    let encoded = compress_bgzf_parallel(&input, 4).unwrap();
+    let metrics = Arc::new(BgzfPipelineMetrics::default());
+    let config = BgzfParallelConfig::new(2)
+        .with_queue_depths(1, 1)
+        .with_metrics(Arc::clone(&metrics));
+    let mut reader =
+        BgzfParallelReader::with_config(std::io::Cursor::new(encoded), config).unwrap();
+    let mut decoded = Vec::new();
+
+    reader.read_to_end(&mut decoded).unwrap();
+
+    assert_eq!(decoded, input);
+    let _snapshot = metrics.snapshot();
+}
+
+#[test]
 fn adaptive_reader_uses_serial_below_parallel_threshold() {
     let input = patterned_input(BGZF_MAX_PAYLOAD + 17);
     let encoded = compress_bgzf_parallel(&input, 2).unwrap();
