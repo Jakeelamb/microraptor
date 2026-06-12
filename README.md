@@ -24,6 +24,8 @@ Current slice:
 - zero-copy FASTQ record-id helpers for raw names, first tokens, and pair-normalized IDs
 - stateful separate-file paired reader and interleaved FASTQ iterators with
   normalized-id validation
+- configurable `PairValidation` modes for full ID checks, fast `/1` `/2`
+  ordered-mate checks, or trusted ordered inputs
 - minimal `FastqBatchSource` and `FastqPairBatchSource` traits for downstream modules
 
 Backend boundary:
@@ -31,8 +33,8 @@ Backend boundary:
 - ordinary gzip auto-open uses streaming `flate2`; `open_fastq_gzip_libdeflate`
   is explicit because it buffers the decompressed input
 - BGZF is already block-aware and has parallel whole-input compression and
-  decompression helpers, a bounded streaming parallel reader, and virtual-offset
-  indexing/seek reads
+  decompression helpers, a bounded streaming parallel reader, an adaptive
+  serial/parallel reader, and virtual-offset indexing/seek reads
 - output compression supports flate2 by default and libdeflate when requested
 
 Features:

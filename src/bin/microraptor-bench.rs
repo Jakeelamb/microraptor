@@ -1,8 +1,8 @@
 use std::fmt::Write as _;
-#[cfg(all(feature = "bgzf", feature = "libdeflate"))]
 use std::io::Read;
 #[cfg(feature = "gzip")]
 use std::io::Write;
+use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 #[cfg(feature = "bgzf")]
 use std::sync::Arc;
@@ -10,9 +10,27 @@ use std::time::{Duration, Instant};
 
 use microraptor::benchutil::{StreamStats, consume_fastq, synthetic_fastq};
 use microraptor::pack::{pack_bases_into, summarize_qualities};
-use microraptor::{
-    FastqConfig, FastqReader, Result, open_fastq_with_config, open_paired_fastq_with_configs,
-};
+use microraptor::{FastqConfig, FastqReader, PairValidation, Result};
+
+enum BenchRead {
+    Raw(std::fs::File),
+    #[cfg(feature = "gzip")]
+    Gzip(flate2::read::MultiGzDecoder<std::fs::File>),
+    #[cfg(feature = "bgzf")]
+    Bgzf(microraptor::BgzfReader<std::fs::File>),
+}
+
+impl std::io::Read for BenchRead {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Raw(reader) => reader.read(out),
+            #[cfg(feature = "gzip")]
+            Self::Gzip(reader) => reader.read(out),
+            #[cfg(feature = "bgzf")]
+            Self::Bgzf(reader) => reader.read(out),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct Config {
@@ -231,6 +249,39 @@ fn checked_file_len(path: &Path) -> Result<usize> {
         .map_err(|_| microraptor::FastqError::Format("input file is too large".into()))
 }
 
+fn open_bench_read(path: &Path) -> Result<BenchRead> {
+    let mut file = std::fs::File::open(path)?;
+    let mut prefix = [0_u8; 18];
+    let _n = file.read(&mut prefix)?;
+    file.seek(SeekFrom::Start(0))?;
+
+    #[cfg(feature = "bgzf")]
+    if is_bgzf_header(&prefix[.._n]) {
+        return Ok(BenchRead::Bgzf(microraptor::BgzfReader::new(file)));
+    }
+
+    #[cfg(feature = "gzip")]
+    if _n >= 2 && prefix[..2] == [0x1f, 0x8b] {
+        return Ok(BenchRead::Gzip(flate2::read::MultiGzDecoder::new(file)));
+    }
+
+    Ok(BenchRead::Raw(file))
+}
+
+#[cfg(feature = "bgzf")]
+fn is_bgzf_header(prefix: &[u8]) -> bool {
+    prefix.len() >= 18
+        && prefix[0] == 31
+        && prefix[1] == 139
+        && prefix[2] == 8
+        && prefix[3] & 4 != 0
+        && u16::from_le_bytes([prefix[10], prefix[11]]) >= 6
+        && prefix[12] == b'B'
+        && prefix[13] == b'C'
+        && prefix[14] == 2
+        && prefix[15] == 0
+}
+
 fn measure_fastq(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
     measure(name, input.len(), config.iters, || {
         let source = std::io::Cursor::new(input);
@@ -356,24 +407,7 @@ fn measure_pack(name: &str, input: &[u8], config: &Config) -> Result<Measurement
                 ..FastqConfig::default()
             },
         );
-        let mut stats = StreamStats::default();
-        let mut packed = Vec::new();
-        let mut mask = Vec::new();
-        while let Some(batch) = reader.next_batch()? {
-            for record in batch.records() {
-                let seq = record.seq();
-                let qual = record.qual();
-                let summary = pack_bases_into(seq, &mut packed, &mut mask);
-                let q = summarize_qualities(qual)
-                    .map_err(|e| microraptor::FastqError::Format(e.to_string()))?;
-                stats.observe_record(record.name(), seq, qual);
-                stats.checksum = stats
-                    .checksum
-                    .wrapping_add(summary.canonical_bases() as u64)
-                    .wrapping_add(q.sum_phred);
-            }
-        }
-        Ok(stats)
+        consume_fastq_with_pack(&mut reader)
     })
 }
 
@@ -384,7 +418,7 @@ fn measure_path_fastq(
     config: &Config,
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
-        let mut reader = open_fastq_with_config(path, fastq_config(config))?;
+        let mut reader = FastqReader::with_config(open_bench_read(path)?, fastq_config(config));
         consume_fastq(&mut reader)
     })
 }
@@ -396,25 +430,8 @@ fn measure_path_pack(
     config: &Config,
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
-        let mut reader = open_fastq_with_config(path, fastq_config(config))?;
-        let mut stats = StreamStats::default();
-        let mut packed = Vec::new();
-        let mut mask = Vec::new();
-        while let Some(batch) = reader.next_batch()? {
-            for record in batch.records() {
-                let seq = record.seq();
-                let qual = record.qual();
-                let summary = pack_bases_into(seq, &mut packed, &mut mask);
-                let q = summarize_qualities(qual)
-                    .map_err(|e| microraptor::FastqError::Format(e.to_string()))?;
-                stats.observe_record(record.name(), seq, qual);
-                stats.checksum = stats
-                    .checksum
-                    .wrapping_add(summary.canonical_bases() as u64)
-                    .wrapping_add(q.sum_phred);
-            }
-        }
-        Ok(stats)
+        let mut reader = FastqReader::with_config(open_bench_read(path)?, fastq_config(config));
+        consume_fastq_with_pack(&mut reader)
     })
 }
 
@@ -426,12 +443,10 @@ fn measure_paired_path_fastq(
     config: &Config,
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
-        let mut reader = open_paired_fastq_with_configs(
-            first,
-            fastq_config(config),
-            second,
-            fastq_config(config),
-        )?;
+        let mut reader = microraptor::PairedFastqReader::from_fastq_readers(
+            FastqReader::with_config(open_bench_read(first)?, fastq_config(config)),
+            FastqReader::with_config(open_bench_read(second)?, fastq_config(config)),
+        );
         consume_paired_fastq(&mut reader)
     })
 }
@@ -444,33 +459,53 @@ fn measure_paired_path_pack(
     config: &Config,
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
-        let mut reader = open_paired_fastq_with_configs(
-            first,
-            fastq_config(config),
-            second,
-            fastq_config(config),
-        )?;
-        let mut stats = StreamStats::default();
-        let mut packed = Vec::new();
-        let mut mask = Vec::new();
+        let mut reader = microraptor::PairedFastqReader::from_fastq_readers(
+            FastqReader::with_config(open_bench_read(first)?, fastq_config(config)),
+            FastqReader::with_config(open_bench_read(second)?, fastq_config(config)),
+        );
+        let mut ctx = PackContext::default();
         while let Some(batch) = reader.next_pair_batch()? {
             for pair in batch.pairs() {
-                for record in [pair.first(), pair.second()] {
-                    let seq = record.seq();
-                    let qual = record.qual();
-                    let summary = pack_bases_into(seq, &mut packed, &mut mask);
-                    let q = summarize_qualities(qual)
-                        .map_err(|e| microraptor::FastqError::Format(e.to_string()))?;
-                    stats.observe_record(record.name(), seq, qual);
-                    stats.checksum = stats
-                        .checksum
-                        .wrapping_add(summary.canonical_bases() as u64)
-                        .wrapping_add(q.sum_phred);
-                }
+                let first = pair.first();
+                ctx.observe_packed(first.name(), first.seq(), first.qual())?;
+                let second = pair.second();
+                ctx.observe_packed(second.name(), second.seq(), second.qual())?;
             }
         }
-        Ok(stats)
+        Ok(ctx.stats)
     })
+}
+
+#[derive(Default)]
+struct PackContext {
+    stats: StreamStats,
+    packed: Vec<u8>,
+    mask: Vec<u8>,
+}
+
+impl PackContext {
+    fn observe_packed(&mut self, name: &[u8], seq: &[u8], qual: &[u8]) -> Result<()> {
+        let summary = pack_bases_into(seq, &mut self.packed, &mut self.mask);
+        let q = summarize_qualities(qual)
+            .map_err(|e| microraptor::FastqError::Format(e.to_string()))?;
+        self.stats.observe_record(name, seq, qual);
+        self.stats.checksum = self
+            .stats
+            .checksum
+            .wrapping_add(summary.canonical_bases() as u64)
+            .wrapping_add(q.sum_phred);
+        Ok(())
+    }
+}
+
+fn consume_fastq_with_pack<R: std::io::Read>(reader: &mut FastqReader<R>) -> Result<StreamStats> {
+    let mut ctx = PackContext::default();
+    while let Some(batch) = reader.next_batch()? {
+        for record in batch.records() {
+            ctx.observe_packed(record.name(), record.seq(), record.qual())?;
+        }
+    }
+    Ok(ctx.stats)
 }
 
 fn consume_paired_fastq<R1: std::io::Read, R2: std::io::Read>(
@@ -546,6 +581,7 @@ fn fastq_config(config: &Config) -> FastqConfig {
     FastqConfig {
         slab_size: config.slab_size,
         validate: true,
+        pair_validation: PairValidation::FastSlash,
         ..FastqConfig::default()
     }
 }

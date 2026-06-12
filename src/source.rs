@@ -10,8 +10,19 @@ use crate::error::Result;
 use crate::fastq::{FastqConfig, FastqReader, PairedFastqReader};
 #[cfg(feature = "bgzf")]
 use crate::{
-    BgzfInflateBackend, BgzfParallelConfig, BgzfParallelReader, BgzfReader, bgzf::is_bgzf_header,
+    BgzfAutoReader, BgzfInflateBackend, BgzfParallelConfig, BgzfParallelReader, BgzfReader,
+    bgzf::is_bgzf_header,
 };
+
+#[cfg(any(feature = "bgzf", feature = "gzip"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputKind {
+    Raw,
+    #[cfg(feature = "gzip")]
+    Gzip,
+    #[cfg(feature = "bgzf")]
+    Bgzf,
+}
 
 pub fn open_fastq(path: impl AsRef<Path>) -> Result<FastqReader<Box<dyn Read + Send>>> {
     open_fastq_with_config(path, FastqConfig::default())
@@ -64,25 +75,35 @@ fn open_read_by_magic(path: impl AsRef<Path>) -> Result<Box<dyn Read + Send>> {
 
     #[cfg(any(feature = "bgzf", feature = "gzip"))]
     {
-        let mut prefix = [0_u8; 18];
-        let n = file.read(&mut prefix)?;
+        let kind = detect_input_kind(&mut file)?;
         file.seek(SeekFrom::Start(0))?;
 
-        #[cfg(feature = "bgzf")]
-        if is_bgzf_header(&prefix[..n]) {
-            let reader: Box<dyn Read + Send> = Box::new(BgzfReader::new(file));
-            return Ok(reader);
-        }
-
-        #[cfg(feature = "gzip")]
-        if n >= 2 && prefix[..2] == [0x1f, 0x8b] {
-            let reader: Box<dyn Read + Send> = Box::new(flate2::read::MultiGzDecoder::new(file));
-            return Ok(reader);
+        match kind {
+            #[cfg(feature = "bgzf")]
+            InputKind::Bgzf => return Ok(Box::new(BgzfReader::new(file))),
+            #[cfg(feature = "gzip")]
+            InputKind::Gzip => return Ok(Box::new(flate2::read::MultiGzDecoder::new(file))),
+            InputKind::Raw => {}
         }
     }
 
     let reader: Box<dyn Read + Send> = Box::new(file);
     Ok(reader)
+}
+
+#[cfg(any(feature = "bgzf", feature = "gzip"))]
+fn detect_input_kind(file: &mut File) -> Result<InputKind> {
+    let mut prefix = [0_u8; 18];
+    let n = file.read(&mut prefix)?;
+    #[cfg(feature = "bgzf")]
+    if is_bgzf_header(&prefix[..n]) {
+        return Ok(InputKind::Bgzf);
+    }
+    #[cfg(feature = "gzip")]
+    if n >= 2 && prefix[..2] == [0x1f, 0x8b] {
+        return Ok(InputKind::Gzip);
+    }
+    Ok(InputKind::Raw)
 }
 
 #[cfg(all(feature = "gzip", feature = "libdeflate"))]
@@ -163,6 +184,21 @@ pub fn open_fastq_bgzf_parallel_with_options(
     let file = File::open(path)?;
     Ok(FastqReader::with_config(
         BgzfParallelReader::with_config(file, bgzf_config)?,
+        fastq_config,
+    ))
+}
+
+#[cfg(feature = "bgzf")]
+pub fn open_fastq_bgzf_adaptive(
+    path: impl AsRef<Path>,
+    bgzf_config: BgzfParallelConfig,
+    fastq_config: FastqConfig,
+) -> Result<FastqReader<BgzfAutoReader<File>>> {
+    let path = path.as_ref();
+    let compressed_len = std::fs::metadata(path)?.len();
+    let file = File::open(path)?;
+    Ok(FastqReader::with_config(
+        BgzfAutoReader::with_config(file, compressed_len, bgzf_config)?,
         fastq_config,
     ))
 }

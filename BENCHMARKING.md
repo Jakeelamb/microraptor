@@ -50,6 +50,7 @@ For a real dataset:
 
 ```bash
 cargo run --release --bin microraptor-bench -- --input reads.fastq.gz --iters 5
+cargo run --release --bin microraptor-bench -- --paired-inputs r1.fastq.gz r2.fastq.gz --iters 5
 MICRORAPTOR_INPUT=reads.fastq.gz scripts/bench.sh
 MICRORAPTOR_INPUT=reads.fastq.gz MICRORAPTOR_MODE=parse scripts/bench.sh
 ```
@@ -69,7 +70,14 @@ for real `.bgz` inputs. Ordinary gzip remains on the streaming flate2 path;
 inputs. When the `libdeflate` feature is enabled, the normal BGZF auto-open path
 uses libdeflate inflate by default; use `open_fastq_bgzf_flate2` or
 `open_fastq_bgzf_with_backend` when comparing or forcing a backend. BGZF output
-can use libdeflate through `BgzfDeflateBackend`.
+can use libdeflate through `BgzfDeflateBackend`. Use `open_fastq_bgzf_adaptive`
+when you want the crate to keep small BGZF inputs serial and switch to the
+bounded parallel reader only past the built-in size threshold.
+
+`microraptor-bench --paired-inputs` uses typed file openers and
+`PairValidation::FastSlash` for ordered `/1` and `/2` mate IDs. That benchmark
+path is meant to represent the high-performance internal pipeline mode, not the
+most defensive public opener configuration.
 
 `build_bgzf_index` records compressed block offsets and uncompressed block
 starts. Use `virtual_offset_for_uncompressed_offset` to plan a seek, then

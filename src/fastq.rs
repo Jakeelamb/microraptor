@@ -11,6 +11,7 @@ pub struct FastqConfig {
     pub slab_size: usize,
     pub validate: bool,
     pub pairing: PairingMode,
+    pub pair_validation: PairValidation,
 }
 
 impl Default for FastqConfig {
@@ -19,6 +20,7 @@ impl Default for FastqConfig {
             slab_size: DEFAULT_SLAB_SIZE,
             validate: true,
             pairing: PairingMode::None,
+            pair_validation: PairValidation::Full,
         }
     }
 }
@@ -28,12 +30,24 @@ impl FastqConfig {
         self.pairing = PairingMode::Interleaved;
         self
     }
+
+    pub fn pair_validation(mut self, pair_validation: PairValidation) -> Self {
+        self.pair_validation = pair_validation;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PairingMode {
     None,
     Interleaved,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairValidation {
+    Full,
+    FastSlash,
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,6 +313,7 @@ impl<'a> Iterator for PairedFastqPairs<'a> {
 pub struct PairedFastqReader<R1, R2> {
     first: FastqReader<R1>,
     second: FastqReader<R2>,
+    pair_validation: PairValidation,
 }
 
 impl<R1: Read, R2: Read> PairedFastqReader<R1, R2> {
@@ -327,6 +342,7 @@ impl<R1: Read, R2: Read> PairedFastqReader<R1, R2> {
         second: R2,
         second_config: FastqConfig,
     ) -> Self {
+        let pair_validation = first_config.pair_validation;
         Self {
             first: FastqReader::with_config(
                 first,
@@ -342,11 +358,21 @@ impl<R1: Read, R2: Read> PairedFastqReader<R1, R2> {
                     ..second_config
                 },
             ),
+            pair_validation,
         }
     }
 
     pub fn from_fastq_readers(first: FastqReader<R1>, second: FastqReader<R2>) -> Self {
-        Self { first, second }
+        Self {
+            pair_validation: first.config.pair_validation,
+            first,
+            second,
+        }
+    }
+
+    pub fn with_pair_validation(mut self, pair_validation: PairValidation) -> Self {
+        self.pair_validation = pair_validation;
+        self
     }
 
     pub fn next_pair_batch(&mut self) -> Result<Option<PairedFastqBatch<'_>>> {
@@ -359,7 +385,7 @@ impl<R1: Read, R2: Read> PairedFastqReader<R1, R2> {
             (None, Some(second)) => Err(extra_record_error(&second, 0)),
             (Some(first), Some(second)) => {
                 let pair_count = first.len().min(second.len());
-                validate_pair_ids_prefix(&first, &second, pair_count)?;
+                validate_pair_ids_prefix(&first, &second, pair_count, self.pair_validation)?;
 
                 let first_view = BatchView::from_batch(&first, pair_count);
                 let second_view = BatchView::from_batch(&second, pair_count);
@@ -609,7 +635,7 @@ fn validate_pair_ids(first: &FastqBatch<'_>, second: &FastqBatch<'_>) -> Result<
         for index in (0..first.records.len()).step_by(2) {
             let r1 = first.record_at(index);
             let r2 = first.record_at(index + 1);
-            if r1.pair_normalized_id() != r2.pair_normalized_id() {
+            if !pair_ids_match(r1, r2, PairValidation::Full) {
                 return Err(pair_id_mismatch(first, index + 1));
             }
         }
@@ -619,7 +645,7 @@ fn validate_pair_ids(first: &FastqBatch<'_>, second: &FastqBatch<'_>) -> Result<
     for index in 0..first.records.len() {
         let r1 = first.record_at(index);
         let r2 = second.record_at(index);
-        if r1.pair_normalized_id() != r2.pair_normalized_id() {
+        if !pair_ids_match(r1, r2, PairValidation::Full) {
             return Err(pair_id_mismatch(second, index));
         }
     }
@@ -630,15 +656,62 @@ fn validate_pair_ids_prefix(
     first: &FastqBatch<'_>,
     second: &FastqBatch<'_>,
     len: usize,
+    pair_validation: PairValidation,
 ) -> Result<()> {
+    if pair_validation == PairValidation::None {
+        return Ok(());
+    }
     for index in 0..len {
         let r1 = first.record_at(index);
         let r2 = second.record_at(index);
-        if r1.pair_normalized_id() != r2.pair_normalized_id() {
+        if !pair_ids_match(r1, r2, pair_validation) {
             return Err(pair_id_mismatch(second, index));
         }
     }
     Ok(())
+}
+
+fn pair_ids_match(first: FastqRecord<'_>, second: FastqRecord<'_>, mode: PairValidation) -> bool {
+    match mode {
+        PairValidation::None => true,
+        PairValidation::Full => first.pair_normalized_id() == second.pair_normalized_id(),
+        PairValidation::FastSlash => fast_slash_pair_ids_match(first.name(), second.name())
+            .unwrap_or_else(|| first.pair_normalized_id() == second.pair_normalized_id()),
+    }
+}
+
+fn fast_slash_pair_ids_match(first_name: &[u8], second_name: &[u8]) -> Option<bool> {
+    let first = first_name.strip_prefix(b"@").unwrap_or(first_name);
+    let second = second_name.strip_prefix(b"@").unwrap_or(second_name);
+    if first.len() >= 3
+        && first.len() == second.len()
+        && first.ends_with(b"/1")
+        && second.ends_with(b"/2")
+    {
+        return Some(first[..first.len() - 2] == second[..second.len() - 2]);
+    }
+
+    let first_end = token_end(first);
+    let second_end = token_end(second);
+    let first = &first[..first_end];
+    let second = &second[..second_end];
+    if first.len() < 3 || second.len() < 3 {
+        return None;
+    }
+    let first_suffix = &first[first.len() - 2..];
+    let second_suffix = &second[second.len() - 2..];
+    if first_suffix != b"/1" || second_suffix != b"/2" || first.len() != second.len() {
+        return None;
+    }
+    Some(first[..first.len() - 2] == second[..second.len() - 2])
+}
+
+fn token_end(bytes: &[u8]) -> usize {
+    let mut end = 0;
+    while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
+        end += 1;
+    }
+    end
 }
 
 fn pair_id_mismatch(batch: &FastqBatch<'_>, index: usize) -> FastqError {
@@ -824,405 +897,4 @@ fn to_usize(range: Range<u32>) -> Range<usize> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn collect_records(input: &[u8], slab_size: usize) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
-        let mut reader = FastqReader::with_config(
-            input,
-            FastqConfig {
-                slab_size,
-                validate: true,
-                ..FastqConfig::default()
-            },
-        );
-        let mut out = Vec::new();
-        while let Some(batch) = reader.next_batch()? {
-            for rec in batch.records() {
-                out.push((rec.name().to_vec(), rec.seq().to_vec()));
-            }
-        }
-        Ok(out)
-    }
-
-    #[test]
-    fn reads_single_batch() {
-        let out = collect_records(b"@r1\nACGT\n+\nIIII\n@r2\nTGCA\n+\nJJJJ\n", 1024).unwrap();
-        assert_eq!(
-            out,
-            vec![
-                (b"@r1".to_vec(), b"ACGT".to_vec()),
-                (b"@r2".to_vec(), b"TGCA".to_vec())
-            ]
-        );
-    }
-
-    #[test]
-    fn handles_crlf() {
-        let out = collect_records(b"@r1\r\nACGT\r\n+\r\nIIII\r\n", 1024).unwrap();
-        assert_eq!(out, vec![(b"@r1".to_vec(), b"ACGT".to_vec())]);
-    }
-
-    #[test]
-    fn accepts_missing_final_newline() {
-        let out = collect_records(b"@r1\nACGT\n+\nIIII", 1024).unwrap();
-        assert_eq!(out, vec![(b"@r1".to_vec(), b"ACGT".to_vec())]);
-    }
-
-    #[test]
-    fn carries_split_records() {
-        let out = collect_records(b"@r1\nACGT\n+\nIIII\n@r2\nTGCA\n+\nJJJJ\n", 18).unwrap();
-        assert_eq!(out.len(), 2);
-        assert_eq!(out[1].1, b"TGCA");
-    }
-
-    #[test]
-    fn rejects_bad_plus_line() {
-        let err = collect_records(b"@r1\nACGT\n-\nIIII\n", 1024).unwrap_err();
-        assert!(err.to_string().contains("plus line"));
-        assert_eq!(error_position(&err), Some(FastqPosition::new(9, 0, 2)));
-    }
-
-    #[test]
-    fn rejects_quality_length_mismatch() {
-        let err = collect_records(b"@r1\nACGT\n+\nIII\n", 1024).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("quality length 3 != sequence length 4")
-        );
-        assert_eq!(error_position(&err), Some(FastqPosition::new(11, 0, 3)));
-    }
-
-    #[test]
-    fn rejects_truncated_eof() {
-        let err = collect_records(b"@r1\nACGT\n+", 1024).unwrap_err();
-        assert!(err.to_string().contains("truncated FASTQ record"));
-        assert_eq!(error_position(&err), Some(FastqPosition::new(0, 0, 3)));
-    }
-
-    #[test]
-    fn record_id_helpers_are_zero_copy_views() {
-        let input = b"@INST:1:FC:2:1101:1000:1000 1:N:0:ATCACG\nACGT\n+\nIIII\n";
-        let mut reader = FastqReader::new(&input[..]);
-        let batch = reader.next_batch().unwrap().unwrap();
-        let rec = batch.records().next().unwrap();
-
-        assert_eq!(rec.name(), b"@INST:1:FC:2:1101:1000:1000 1:N:0:ATCACG");
-        assert_eq!(
-            rec.name_without_at(),
-            b"INST:1:FC:2:1101:1000:1000 1:N:0:ATCACG"
-        );
-        assert_eq!(rec.id_token(), b"INST:1:FC:2:1101:1000:1000");
-        assert_eq!(rec.pair_normalized_id(), b"INST:1:FC:2:1101:1000:1000");
-    }
-
-    #[test]
-    fn pair_normalized_id_strips_slash_pair_suffixes() {
-        let input = b"@frag/1 extra\nACGT\n+\nIIII\n@frag/2 extra\nTGCA\n+\nJJJJ\n";
-        let mut reader = FastqReader::new(&input[..]);
-        let batch = reader.next_batch().unwrap().unwrap();
-        let ids = batch
-            .records()
-            .map(|r| r.pair_normalized_id().to_vec())
-            .collect::<Vec<_>>();
-        assert_eq!(ids, vec![b"frag".to_vec(), b"frag".to_vec()]);
-    }
-
-    #[test]
-    fn strip_pair_suffix_leaves_other_ids_unchanged() {
-        assert_eq!(strip_pair_suffix(b"frag/1"), b"frag");
-        assert_eq!(strip_pair_suffix(b"frag/2"), b"frag");
-        assert_eq!(strip_pair_suffix(b"frag/3"), b"frag/3");
-        assert_eq!(strip_pair_suffix(b"frag"), b"frag");
-        assert_eq!(strip_pair_suffix(b"1"), b"1");
-    }
-
-    #[test]
-    fn paired_records_zips_two_batches_by_normalized_id() {
-        let r1 = b"@frag1/1\nACGT\n+\nIIII\n@frag2/1\nTGCA\n+\nJJJJ\n";
-        let r2 = b"@frag1/2\nACGA\n+\nHHHH\n@frag2/2\nTGCT\n+\nGGGG\n";
-        let mut first = FastqReader::new(&r1[..]);
-        let mut second = FastqReader::new(&r2[..]);
-        let first_batch = first.next_batch().unwrap().unwrap();
-        let second_batch = second.next_batch().unwrap().unwrap();
-
-        let pairs = paired_records(&first_batch, &second_batch)
-            .unwrap()
-            .map(|pair| {
-                (
-                    pair.pair_id().to_vec(),
-                    pair.first().seq().to_vec(),
-                    pair.second().seq().to_vec(),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            pairs,
-            vec![
-                (b"frag1".to_vec(), b"ACGT".to_vec(), b"ACGA".to_vec()),
-                (b"frag2".to_vec(), b"TGCA".to_vec(), b"TGCT".to_vec())
-            ]
-        );
-    }
-
-    #[test]
-    fn paired_records_rejects_identifier_mismatch() {
-        let r1 = b"@frag1/1\nACGT\n+\nIIII\n";
-        let r2 = b"@other/2\nACGA\n+\nHHHH\n";
-        let mut first = FastqReader::new(&r1[..]);
-        let mut second = FastqReader::new(&r2[..]);
-        let first_batch = first.next_batch().unwrap().unwrap();
-        let second_batch = second.next_batch().unwrap().unwrap();
-
-        let err = paired_records(&first_batch, &second_batch).unwrap_err();
-        assert!(err.to_string().contains("identifiers do not match"));
-        assert_eq!(error_position(&err), Some(FastqPosition::new(0, 0, 0)));
-    }
-
-    #[test]
-    fn paired_reader_carries_uneven_batch_boundaries() {
-        let r1 = [
-            make_record("frag1/1", 190),
-            make_record("frag2/1", 190),
-            make_record("frag3/1", 190),
-        ]
-        .concat();
-        let r2 = [
-            make_record("frag1/2", 150),
-            make_record("frag2/2", 150),
-            make_record("frag3/2", 150),
-        ]
-        .concat();
-        let mut reader = PairedFastqReader::with_configs(
-            &r1[..],
-            FastqConfig {
-                slab_size: 1024,
-                ..FastqConfig::default()
-            },
-            &r2[..],
-            FastqConfig {
-                slab_size: 1024,
-                ..FastqConfig::default()
-            },
-        );
-
-        let first_ids = {
-            let first = reader.next_pair_batch().unwrap().unwrap();
-            assert_eq!(first.len(), 2);
-            first
-                .pairs()
-                .map(|pair| pair.pair_id().to_vec())
-                .collect::<Vec<_>>()
-        };
-
-        let second_ids = {
-            let second = reader.next_pair_batch().unwrap().unwrap();
-            assert_eq!(second.len(), 1);
-            second
-                .pairs()
-                .map(|pair| pair.pair_id().to_vec())
-                .collect::<Vec<_>>()
-        };
-
-        assert_eq!(first_ids, vec![b"frag1".to_vec(), b"frag2".to_vec()]);
-        assert_eq!(second_ids, vec![b"frag3".to_vec()]);
-        assert!(reader.next_pair_batch().unwrap().is_none());
-    }
-
-    #[test]
-    fn paired_reader_rejects_mismatch_after_retained_boundary() {
-        let r1 = [
-            make_record("frag1/1", 150),
-            make_record("frag2/1", 150),
-            make_record("frag3/1", 150),
-        ]
-        .concat();
-        let r2 = [
-            make_record("frag1/2", 260),
-            make_record("other/2", 260),
-            make_record("frag3/2", 260),
-        ]
-        .concat();
-        let mut reader = PairedFastqReader::with_configs(
-            &r1[..],
-            FastqConfig {
-                slab_size: 1024,
-                ..FastqConfig::default()
-            },
-            &r2[..],
-            FastqConfig {
-                slab_size: 1024,
-                ..FastqConfig::default()
-            },
-        );
-
-        {
-            let first = reader.next_pair_batch().unwrap().unwrap();
-            assert_eq!(first.len(), 1);
-        }
-
-        let err = reader.next_pair_batch().unwrap_err();
-        assert!(err.to_string().contains("identifiers do not match"));
-        assert_eq!(error_position(&err), Some(FastqPosition::new(533, 1, 0)));
-    }
-
-    #[test]
-    fn paired_reader_rejects_extra_record_at_eof() {
-        let r1 = [make_record("frag1/1", 4), make_record("frag2/1", 4)].concat();
-        let r2 = make_record("frag1/2", 4);
-        let mut reader = PairedFastqReader::new(&r1[..], &r2[..]);
-
-        {
-            let first = reader.next_pair_batch().unwrap().unwrap();
-            assert_eq!(first.len(), 1);
-        }
-
-        let err = reader.next_pair_batch().unwrap_err();
-        assert!(err.to_string().contains("different record counts"));
-        assert_eq!(error_position(&err), Some(FastqPosition::new(21, 1, 0)));
-    }
-
-    #[test]
-    fn paired_reader_reports_truncated_mate_position() {
-        let r1 = make_record("frag1/1", 4);
-        let r2 = b"@frag1/2\nACGT\n+";
-        let mut reader = PairedFastqReader::new(&r1[..], &r2[..]);
-
-        let err = reader.next_pair_batch().unwrap_err();
-        assert!(err.to_string().contains("truncated FASTQ record"));
-        assert_eq!(error_position(&err), Some(FastqPosition::new(0, 0, 3)));
-    }
-
-    #[test]
-    fn paired_reader_iterates_successful_pairs() {
-        let r1 = [make_record("frag1/1", 4), make_record("frag2/1", 4)].concat();
-        let r2 = [make_record("frag1/2", 4), make_record("frag2/2", 4)].concat();
-        let mut reader = PairedFastqReader::new(&r1[..], &r2[..]);
-        let batch = reader.next_pair_batch().unwrap().unwrap();
-        assert!(!batch.is_empty());
-
-        let pairs = batch
-            .pairs()
-            .map(|pair| {
-                (
-                    pair.pair_id().to_vec(),
-                    pair.first().seq().to_vec(),
-                    pair.second().seq().to_vec(),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            pairs,
-            vec![
-                (b"frag1".to_vec(), b"AAAA".to_vec(), b"AAAA".to_vec()),
-                (b"frag2".to_vec(), b"AAAA".to_vec(), b"AAAA".to_vec())
-            ]
-        );
-    }
-
-    #[test]
-    fn interleaved_pairs_iterates_valid_pairs() {
-        let input = b"@frag1/1\nACGT\n+\nIIII\n@frag1/2\nACGA\n+\nHHHH\n";
-        let mut reader = FastqReader::with_config(&input[..], FastqConfig::default().interleaved());
-        let batch = reader.next_batch().unwrap().unwrap();
-
-        let pairs = batch
-            .interleaved_pairs()
-            .unwrap()
-            .map(|pair| {
-                (
-                    pair.pair_id().to_vec(),
-                    pair.first().seq().to_vec(),
-                    pair.second().seq().to_vec(),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            pairs,
-            vec![(b"frag1".to_vec(), b"ACGT".to_vec(), b"ACGA".to_vec())]
-        );
-    }
-
-    #[test]
-    fn interleaved_pairs_rejects_identifier_mismatch() {
-        let input = b"@frag1/1\nACGT\n+\nIIII\n@other/2\nACGA\n+\nHHHH\n";
-        let mut reader = FastqReader::with_config(&input[..], FastqConfig::default().interleaved());
-        let batch = reader.next_batch().unwrap().unwrap();
-
-        let err = batch.interleaved_pairs().unwrap_err();
-        assert!(err.to_string().contains("identifiers do not match"));
-        assert_eq!(error_position(&err), Some(FastqPosition::new(21, 1, 0)));
-    }
-
-    #[test]
-    fn interleaved_reader_rejects_odd_eof() {
-        let input = b"@frag1/1\nACGT\n+\nIIII\n";
-        let mut reader = FastqReader::with_config(&input[..], FastqConfig::default().interleaved());
-
-        let err = reader.next_batch().unwrap_err();
-        assert!(err.to_string().contains("unpaired record"));
-        assert_eq!(error_position(&err), Some(FastqPosition::new(0, 0, 0)));
-    }
-
-    #[test]
-    fn interleaved_reader_carries_odd_record_to_next_batch() {
-        let input = [
-            make_record("frag1/1", 150),
-            make_record("frag1/2", 150),
-            make_record("frag2/1", 150),
-            make_record("frag2/2", 150),
-        ]
-        .concat();
-        let mut reader = FastqReader::with_config(
-            &input[..],
-            FastqConfig {
-                slab_size: 1024,
-                ..FastqConfig::default().interleaved()
-            },
-        );
-
-        let first_ids = {
-            let batch = reader.next_batch().unwrap().unwrap();
-            assert_eq!(batch.len(), 2);
-            batch
-                .interleaved_pairs()
-                .unwrap()
-                .map(|pair| pair.pair_id().to_vec())
-                .collect::<Vec<_>>()
-        };
-        let second_ids = {
-            let batch = reader.next_batch().unwrap().unwrap();
-            assert_eq!(batch.len(), 2);
-            batch
-                .interleaved_pairs()
-                .unwrap()
-                .map(|pair| pair.pair_id().to_vec())
-                .collect::<Vec<_>>()
-        };
-
-        assert_eq!(first_ids, vec![b"frag1".to_vec()]);
-        assert_eq!(second_ids, vec![b"frag2".to_vec()]);
-        assert!(reader.next_batch().unwrap().is_none());
-    }
-
-    #[test]
-    fn reports_absolute_position_after_slab_carry() {
-        let input = b"@r1\nACGT\n+\nIIII\n@r2\nTGCA\n-\nJJJJ\n";
-        let err = collect_records(input, 18).unwrap_err();
-        assert_eq!(error_position(&err), Some(FastqPosition::new(25, 1, 2)));
-    }
-
-    fn make_record(name: &str, bases: usize) -> Vec<u8> {
-        format!("@{name}\n{}\n+\n{}\n", "A".repeat(bases), "I".repeat(bases)).into_bytes()
-    }
-
-    fn error_position(err: &FastqError) -> Option<FastqPosition> {
-        match err {
-            FastqError::FormatAt { position, .. } => Some(position.clone()),
-            _ => None,
-        }
-    }
-}
+mod tests;
