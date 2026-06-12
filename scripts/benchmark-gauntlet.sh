@@ -85,7 +85,13 @@ run_external() {
     printf '### %s\n\n' "${label}"
     if command -v "${command_name}" >/dev/null 2>&1; then
       printf '```text\n'
+      set +e
       /usr/bin/time -f 'elapsed_s\t%e' "$@" 2>&1
+      local status="$?"
+      set -e
+      if [[ "${status}" -ne 0 ]]; then
+        printf 'exit_status\t%s\n' "${status}"
+      fi
       printf '```\n\n'
     else
       printf '`%s` not installed; skipped.\n\n' "${command_name}"
