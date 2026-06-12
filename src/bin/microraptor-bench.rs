@@ -19,6 +19,7 @@ struct Config {
     workers: usize,
     json: bool,
     input: Option<PathBuf>,
+    mode: Mode,
 }
 
 impl Default for Config {
@@ -31,6 +32,32 @@ impl Default for Config {
             workers: std::thread::available_parallelism().map_or(1, usize::from),
             json: false,
             input: None,
+            mode: Mode::All,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    All,
+    Parse,
+    Pack,
+}
+
+impl Mode {
+    fn includes_parse(self) -> bool {
+        matches!(self, Self::All | Self::Parse)
+    }
+
+    fn includes_pack(self) -> bool {
+        matches!(self, Self::All | Self::Pack)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Parse => "parse",
+            Self::Pack => "pack",
         }
     }
 }
@@ -63,22 +90,29 @@ fn run() -> Result<()> {
 
     let raw = synthetic_fastq(config.records, config.read_len);
     #[cfg_attr(not(any(feature = "gzip", feature = "bgzf")), allow(unused_mut))]
-    let mut measurements = vec![
-        measure_fastq("raw", &raw, &config)?,
-        measure_pack("pack-seq-qual", &raw, &config)?,
-    ];
+    let mut measurements = Vec::new();
+    if config.mode.includes_parse() {
+        measurements.push(measure_fastq("raw", &raw, &config)?);
+    }
+    if config.mode.includes_pack() {
+        measurements.push(measure_pack("pack-seq-qual", &raw, &config)?);
+    }
 
     #[cfg(feature = "gzip")]
     {
-        let gzip = gzip_bytes(&raw)?;
-        measurements.push(measure_gzip("gzip", &gzip, &config)?);
+        if config.mode.includes_parse() {
+            let gzip = gzip_bytes(&raw)?;
+            measurements.push(measure_gzip("gzip", &gzip, &config)?);
+        }
     }
 
     #[cfg(feature = "bgzf")]
     {
-        let bgzf = microraptor::compress_bgzf_parallel(&raw, config.workers)?;
-        measurements.push(measure_bgzf_serial("bgzf-serial", &bgzf, &config)?);
-        measurements.push(measure_bgzf_parallel("bgzf-parallel", &bgzf, &config)?);
+        if config.mode.includes_parse() {
+            let bgzf = microraptor::compress_bgzf_parallel(&raw, config.workers)?;
+            measurements.push(measure_bgzf_serial("bgzf-serial", &bgzf, &config)?);
+            measurements.push(measure_bgzf_parallel("bgzf-parallel", &bgzf, &config)?);
+        }
     }
 
     if config.json {
@@ -95,10 +129,18 @@ fn run() -> Result<()> {
 fn run_real_input(path: &Path, config: &Config) -> Result<()> {
     let input_bytes = usize::try_from(std::fs::metadata(path)?.len())
         .map_err(|_| microraptor::FastqError::Format("input file is too large".into()))?;
-    let measurements = vec![
-        measure_path_fastq("file-auto", path, input_bytes, config)?,
-        measure_path_pack("file-pack-seq-qual", path, input_bytes, config)?,
-    ];
+    let mut measurements = Vec::new();
+    if config.mode.includes_parse() {
+        measurements.push(measure_path_fastq("file-auto", path, input_bytes, config)?);
+    }
+    if config.mode.includes_pack() {
+        measurements.push(measure_path_pack(
+            "file-pack-seq-qual",
+            path,
+            input_bytes,
+            config,
+        )?);
+    }
     let source = path.to_string_lossy();
 
     if config.json {
@@ -313,8 +355,9 @@ fn render_json(config: &Config, source: &str, input_bytes: usize, rows: &[Measur
     let mut out = String::new();
     let _ = write!(
         out,
-        "{{\"source\":{},\"records\":{},\"read_len\":{},\"iters\":{},\"slab_size\":{},\"workers\":{},\"input_bytes\":{},\"measurements\":[",
+        "{{\"source\":{},\"mode\":{},\"records\":{},\"read_len\":{},\"iters\":{},\"slab_size\":{},\"workers\":{},\"input_bytes\":{},\"measurements\":[",
         JsonStr(source),
+        JsonStr(config.mode.as_str()),
         config.records,
         config.read_len,
         config.iters,
@@ -373,6 +416,7 @@ fn parse_args() -> Config {
             "--slab-size" => config.slab_size = parse_next(&mut args, "--slab-size"),
             "--workers" => config.workers = parse_next(&mut args, "--workers"),
             "--input" => config.input = Some(parse_path(&mut args, "--input")),
+            "--mode" => config.mode = parse_mode(&mut args, "--mode"),
             "--json" => config.json = true,
             "--help" | "-h" => {
                 print_help();
@@ -410,9 +454,25 @@ fn parse_path(args: &mut impl Iterator<Item = String>, flag: &str) -> PathBuf {
     PathBuf::from(value)
 }
 
+fn parse_mode(args: &mut impl Iterator<Item = String>, flag: &str) -> Mode {
+    let Some(value) = args.next() else {
+        eprintln!("{flag} requires one of: all, parse, pack");
+        std::process::exit(2);
+    };
+    match value.as_str() {
+        "all" => Mode::All,
+        "parse" => Mode::Parse,
+        "pack" => Mode::Pack,
+        _ => {
+            eprintln!("{flag} requires one of: all, parse, pack; got {value}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn print_help() {
     eprintln!(
-        "microraptor-bench [--input PATH] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--json]"
+        "microraptor-bench [--input PATH] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--json]"
     );
 }
 
@@ -447,5 +507,15 @@ mod tests {
     #[test]
     fn json_string_escapes_control_characters() {
         assert_eq!(JsonStr("a\"b\\c\n").to_string(), "\"a\\\"b\\\\c\\n\"");
+    }
+
+    #[test]
+    fn render_json_includes_mode() {
+        let config = Config {
+            mode: Mode::Pack,
+            ..Config::default()
+        };
+        let json = render_json(&config, "synthetic", 0, &[]);
+        assert!(json.contains("\"mode\":\"pack\""));
     }
 }

@@ -7,6 +7,9 @@ Microraptor has three benchmark surfaces:
 - `cargo run --release --bin microraptor-bench -- ...`: release-mode throughput
   benchmark with table or JSON output.
 - `scripts/profile-perf.sh`: Linux `perf stat` plus sampled call graph output.
+- `scripts/benchmark-gauntlet.sh`: generated real-file gauntlet covering raw,
+  gzip, BGZF, paired R1/R2, and interleaved inputs.
+- `scripts/profile-hotpath.sh`: isolated parse-vs-pack profiling output.
 
 The benchmark binary generates deterministic synthetic FASTQ in memory, then
 measures the same parser and side-channel APIs used by downstream crates. It
@@ -23,12 +26,15 @@ cargo test --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo bench --all-features
 scripts/bench.sh
+scripts/benchmark-gauntlet.sh
 ```
 
 For machine-readable output:
 
 ```bash
 cargo run --release --bin microraptor-bench -- --records 500000 --iters 7 --json
+cargo run --release --bin microraptor-bench -- --records 500000 --mode parse --json
+cargo run --release --bin microraptor-bench -- --records 500000 --mode pack --json
 ```
 
 For a real dataset:
@@ -36,12 +42,22 @@ For a real dataset:
 ```bash
 cargo run --release --bin microraptor-bench -- --input reads.fastq.gz --iters 5
 MICRORAPTOR_INPUT=reads.fastq.gz scripts/bench.sh
+MICRORAPTOR_INPUT=reads.fastq.gz MICRORAPTOR_MODE=parse scripts/bench.sh
 ```
+
+The gauntlet writes:
+
+- `target/bench-results/microraptor-gauntlet.jsonl`
+- `target/bench-results/microraptor-gauntlet.md`
+
+It also records whether optional external comparators such as `seqkit` or
+`fastp` were installed and runnable.
 
 ## Profiling
 
 ```bash
 scripts/profile-perf.sh
+scripts/profile-hotpath.sh
 ```
 
 Outputs:
@@ -61,6 +77,19 @@ Profile a real input file with the same perf commands:
 ```bash
 MICRORAPTOR_INPUT=reads.fastq.gz MICRORAPTOR_ITERS=3 scripts/profile-perf.sh
 ```
+
+For isolated parse/pack hot-path evidence:
+
+```bash
+MICRORAPTOR_PROFILE_RECORDS=1000000 MICRORAPTOR_PROFILE_ITERS=3 scripts/profile-hotpath.sh
+MICRORAPTOR_PROFILE_INPUT=reads.fastq.gz scripts/profile-hotpath.sh
+```
+
+`profile-hotpath.sh` writes:
+
+- `target/profiles/microraptor-hotpath.jsonl`
+- `target/profiles/microraptor-parse.perf-stat.txt` when `perf` is permitted
+- `target/profiles/microraptor-pack.perf-stat.txt` when `perf` is permitted
 
 ## Interpreting Results
 

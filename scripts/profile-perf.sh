@@ -7,6 +7,9 @@ args=()
 if [[ -n "${MICRORAPTOR_INPUT:-}" ]]; then
   args+=(--input "${MICRORAPTOR_INPUT}")
 fi
+if [[ -n "${MICRORAPTOR_MODE:-}" ]]; then
+  args+=(--mode "${MICRORAPTOR_MODE}")
+fi
 
 cargo build --release --bin microraptor-bench
 perf stat -d -r "${MICRORAPTOR_PERF_REPEATS:-3}" \

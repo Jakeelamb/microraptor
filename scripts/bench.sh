@@ -5,6 +5,9 @@ args=()
 if [[ -n "${MICRORAPTOR_INPUT:-}" ]]; then
   args+=(--input "${MICRORAPTOR_INPUT}")
 fi
+if [[ -n "${MICRORAPTOR_MODE:-}" ]]; then
+  args+=(--mode "${MICRORAPTOR_MODE}")
+fi
 
 cargo run --release --bin microraptor-bench -- \
   "${args[@]}" \
