@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::ops::Range;
 
-use crate::error::{FastqError, Result};
+use crate::error::{FastqError, FastqPosition, Result};
 use crate::scan::scan_newlines;
 
 const DEFAULT_SLAB_SIZE: usize = 8 * 1024 * 1024;
@@ -91,6 +91,8 @@ pub struct FastqReader<R> {
     buf: Vec<u8>,
     len: usize,
     next_start: usize,
+    base_offset: u64,
+    record_index: u64,
     eof: bool,
     newlines: Vec<usize>,
     records: Vec<RecordRef>,
@@ -113,6 +115,8 @@ impl<R: Read> FastqReader<R> {
             buf,
             len: 0,
             next_start: 0,
+            base_offset: 0,
+            record_index: 0,
             eof: false,
             newlines: Vec::with_capacity(slab_size / 48),
             records: Vec::with_capacity(8192),
@@ -130,8 +134,12 @@ impl<R: Read> FastqReader<R> {
             &self.newlines,
             self.eof,
             self.config.validate,
+            self.base_offset,
+            self.record_index,
             &mut self.records,
         )?;
+
+        self.record_index += self.records.len() as u64;
 
         if self.records.is_empty() {
             if self.len == 0 && self.eof {
@@ -153,12 +161,14 @@ impl<R: Read> FastqReader<R> {
             return;
         }
         if self.next_start >= self.len {
+            self.base_offset += self.len as u64;
             self.len = 0;
             self.next_start = 0;
             return;
         }
         let carry = self.len - self.next_start;
         self.buf.copy_within(self.next_start..self.len, 0);
+        self.base_offset += self.next_start as u64;
         self.len = carry;
         self.next_start = 0;
     }
@@ -183,6 +193,8 @@ fn frame_records(
     newline_offsets: &[usize],
     eof: bool,
     validate: bool,
+    base_offset: u64,
+    first_record_index: u64,
     records: &mut Vec<RecordRef>,
 ) -> Result<usize> {
     let has_final_line = eof
@@ -191,7 +203,14 @@ fn frame_records(
             .map_or(!bytes.is_empty(), |&nl| nl + 1 < bytes.len());
     let line_count = newline_offsets.len() + usize::from(has_final_line);
     if eof && !line_count.is_multiple_of(4) {
-        return Err(FastqError::Format("truncated FASTQ record".into()));
+        let start = line_start(newline_offsets, (line_count / 4) * 4);
+        return Err(format_at(
+            "truncated FASTQ record",
+            base_offset,
+            start,
+            first_record_index + records.len() as u64,
+            (line_count % 4) as u8,
+        ));
     }
     let complete_lines = (line_count / 4) * 4;
 
@@ -202,7 +221,15 @@ fn frame_records(
         let qual = line_range(bytes, newline_offsets, i + 3);
 
         if validate {
-            validate_record(bytes, &name, &seq, &plus, &qual)?;
+            validate_record(
+                bytes,
+                &name,
+                &seq,
+                &plus,
+                &qual,
+                base_offset,
+                first_record_index + records.len() as u64,
+            )?;
         }
 
         records.push(RecordRef {
@@ -244,24 +271,61 @@ fn validate_record(
     seq: &Range<usize>,
     plus: &Range<usize>,
     qual: &Range<usize>,
+    base_offset: u64,
+    record_index: u64,
 ) -> Result<()> {
     if bytes.get(name.start) != Some(&b'@') {
-        return Err(FastqError::Format("header must start with `@`".into()));
+        return Err(format_at(
+            "header must start with `@`",
+            base_offset,
+            name.start,
+            record_index,
+            0,
+        ));
     }
     if name.end == name.start + 1 {
-        return Err(FastqError::Format("empty FASTQ id".into()));
+        return Err(format_at(
+            "empty FASTQ id",
+            base_offset,
+            name.start,
+            record_index,
+            0,
+        ));
     }
     if bytes.get(plus.start) != Some(&b'+') {
-        return Err(FastqError::Format("plus line must start with `+`".into()));
+        return Err(format_at(
+            "plus line must start with `+`",
+            base_offset,
+            plus.start,
+            record_index,
+            2,
+        ));
     }
     let seq_len = seq.end - seq.start;
     let qual_len = qual.end - qual.start;
     if seq_len != qual_len {
-        return Err(FastqError::Format(format!(
-            "quality length {qual_len} != sequence length {seq_len}"
-        )));
+        return Err(format_at(
+            format!("quality length {qual_len} != sequence length {seq_len}"),
+            base_offset,
+            qual.start,
+            record_index,
+            3,
+        ));
     }
     Ok(())
+}
+
+fn format_at(
+    message: impl Into<String>,
+    base_offset: u64,
+    local_offset: usize,
+    record_index: u64,
+    line_index: u8,
+) -> FastqError {
+    FastqError::FormatAt {
+        message: message.into(),
+        position: FastqPosition::new(base_offset + local_offset as u64, record_index, line_index),
+    }
 }
 
 fn trim_cr_end(bytes: &[u8], start: usize, end: usize) -> usize {
@@ -340,6 +404,7 @@ mod tests {
     fn rejects_bad_plus_line() {
         let err = collect_records(b"@r1\nACGT\n-\nIIII\n", 1024).unwrap_err();
         assert!(err.to_string().contains("plus line"));
+        assert_eq!(error_position(&err), Some(FastqPosition::new(9, 0, 2)));
     }
 
     #[test]
@@ -349,11 +414,27 @@ mod tests {
             err.to_string()
                 .contains("quality length 3 != sequence length 4")
         );
+        assert_eq!(error_position(&err), Some(FastqPosition::new(11, 0, 3)));
     }
 
     #[test]
     fn rejects_truncated_eof() {
         let err = collect_records(b"@r1\nACGT\n+", 1024).unwrap_err();
         assert!(err.to_string().contains("truncated FASTQ record"));
+        assert_eq!(error_position(&err), Some(FastqPosition::new(0, 0, 3)));
+    }
+
+    #[test]
+    fn reports_absolute_position_after_slab_carry() {
+        let input = b"@r1\nACGT\n+\nIIII\n@r2\nTGCA\n-\nJJJJ\n";
+        let err = collect_records(input, 18).unwrap_err();
+        assert_eq!(error_position(&err), Some(FastqPosition::new(25, 1, 2)));
+    }
+
+    fn error_position(err: &FastqError) -> Option<FastqPosition> {
+        match err {
+            FastqError::FormatAt { position, .. } => Some(position.clone()),
+            _ => None,
+        }
     }
 }

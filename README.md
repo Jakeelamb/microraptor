@@ -17,6 +17,7 @@ Current slice:
 - borrowed `RecordRef` ranges instead of per-record allocation
 - optional 2-bit base packing with an ambiguity mask
 - Phred+33 quality summaries and threshold binning
+- structured FASTQ parse errors with byte offset, record index, and line index
 
 Backend boundary:
 
