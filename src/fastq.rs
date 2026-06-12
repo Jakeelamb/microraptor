@@ -40,6 +40,24 @@ impl<'a> FastqRecord<'a> {
         &self.bytes[to_usize(self.record.name.clone())]
     }
 
+    pub fn name_without_at(self) -> &'a [u8] {
+        let name = self.name();
+        name.strip_prefix(b"@").unwrap_or(name)
+    }
+
+    pub fn id_token(self) -> &'a [u8] {
+        let name = self.name_without_at();
+        let end = name
+            .iter()
+            .position(u8::is_ascii_whitespace)
+            .unwrap_or(name.len());
+        &name[..end]
+    }
+
+    pub fn pair_normalized_id(self) -> &'a [u8] {
+        strip_pair_suffix(self.id_token())
+    }
+
     pub fn seq(self) -> &'a [u8] {
         &self.bytes[to_usize(self.record.seq.clone())]
     }
@@ -50,6 +68,14 @@ impl<'a> FastqRecord<'a> {
 
     pub fn qual(self) -> &'a [u8] {
         &self.bytes[to_usize(self.record.qual.clone())]
+    }
+}
+
+pub fn strip_pair_suffix(id: &[u8]) -> &[u8] {
+    if id.len() >= 2 && (id.ends_with(b"/1") || id.ends_with(b"/2")) {
+        &id[..id.len() - 2]
+    } else {
+        id
     }
 }
 
@@ -422,6 +448,43 @@ mod tests {
         let err = collect_records(b"@r1\nACGT\n+", 1024).unwrap_err();
         assert!(err.to_string().contains("truncated FASTQ record"));
         assert_eq!(error_position(&err), Some(FastqPosition::new(0, 0, 3)));
+    }
+
+    #[test]
+    fn record_id_helpers_are_zero_copy_views() {
+        let input = b"@INST:1:FC:2:1101:1000:1000 1:N:0:ATCACG\nACGT\n+\nIIII\n";
+        let mut reader = FastqReader::new(&input[..]);
+        let batch = reader.next_batch().unwrap().unwrap();
+        let rec = batch.records().next().unwrap();
+
+        assert_eq!(rec.name(), b"@INST:1:FC:2:1101:1000:1000 1:N:0:ATCACG");
+        assert_eq!(
+            rec.name_without_at(),
+            b"INST:1:FC:2:1101:1000:1000 1:N:0:ATCACG"
+        );
+        assert_eq!(rec.id_token(), b"INST:1:FC:2:1101:1000:1000");
+        assert_eq!(rec.pair_normalized_id(), b"INST:1:FC:2:1101:1000:1000");
+    }
+
+    #[test]
+    fn pair_normalized_id_strips_slash_pair_suffixes() {
+        let input = b"@frag/1 extra\nACGT\n+\nIIII\n@frag/2 extra\nTGCA\n+\nJJJJ\n";
+        let mut reader = FastqReader::new(&input[..]);
+        let batch = reader.next_batch().unwrap().unwrap();
+        let ids = batch
+            .records()
+            .map(|r| r.pair_normalized_id().to_vec())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec![b"frag".to_vec(), b"frag".to_vec()]);
+    }
+
+    #[test]
+    fn strip_pair_suffix_leaves_other_ids_unchanged() {
+        assert_eq!(strip_pair_suffix(b"frag/1"), b"frag");
+        assert_eq!(strip_pair_suffix(b"frag/2"), b"frag");
+        assert_eq!(strip_pair_suffix(b"frag/3"), b"frag/3");
+        assert_eq!(strip_pair_suffix(b"frag"), b"frag");
+        assert_eq!(strip_pair_suffix(b"1"), b"1");
     }
 
     #[test]

@@ -18,6 +18,7 @@ Current slice:
 - optional 2-bit base packing with an ambiguity mask
 - Phred+33 quality summaries and threshold binning
 - structured FASTQ parse errors with byte offset, record index, and line index
+- zero-copy FASTQ record-id helpers for raw names, first tokens, and pair-normalized IDs
 
 Backend boundary:
 
