@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use microraptor::benchutil::{StreamStats, consume_fastq, synthetic_fastq};
-use microraptor::pack::{pack_bases_into, summarize_qualities};
+use microraptor::pack::pack_bases_and_summarize_qualities_into;
 use microraptor::{FastqConfig, FastqReader, PairValidation, Result};
 
 enum BenchRead {
@@ -485,15 +485,15 @@ struct PackContext {
 
 impl PackContext {
     fn observe_packed(&mut self, name: &[u8], seq: &[u8], qual: &[u8]) -> Result<()> {
-        let summary = pack_bases_into(seq, &mut self.packed, &mut self.mask);
-        let q = summarize_qualities(qual)
-            .map_err(|e| microraptor::FastqError::Format(e.to_string()))?;
+        let summary =
+            pack_bases_and_summarize_qualities_into(seq, qual, &mut self.packed, &mut self.mask)
+                .map_err(|e| microraptor::FastqError::Format(e.to_string()))?;
         self.stats.observe_record(name, seq, qual);
         self.stats.checksum = self
             .stats
             .checksum
-            .wrapping_add(summary.canonical_bases() as u64)
-            .wrapping_add(q.sum_phred);
+            .wrapping_add(summary.bases.canonical_bases() as u64)
+            .wrapping_add(summary.qualities.sum_phred);
         Ok(())
     }
 }

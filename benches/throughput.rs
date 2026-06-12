@@ -3,7 +3,7 @@
 extern crate test;
 
 use microraptor::benchutil::{consume_fastq, synthetic_fastq};
-use microraptor::pack::{pack_bases_into, summarize_qualities};
+use microraptor::pack::pack_bases_and_summarize_qualities_into;
 use microraptor::{FastqConfig, FastqReader};
 use test::{Bencher, black_box};
 
@@ -55,11 +55,16 @@ fn parse_and_pack_seq_qual(b: &mut Bencher) {
         let mut checksum = 0_u64;
         while let Some(batch) = reader.next_batch().unwrap() {
             for record in batch.records() {
-                let summary = pack_bases_into(record.seq(), &mut packed, &mut mask);
-                let q = summarize_qualities(record.qual()).unwrap();
+                let summary = pack_bases_and_summarize_qualities_into(
+                    record.seq(),
+                    record.qual(),
+                    &mut packed,
+                    &mut mask,
+                )
+                .unwrap();
                 checksum = checksum
-                    .wrapping_add(summary.canonical_bases() as u64)
-                    .wrapping_add(q.sum_phred);
+                    .wrapping_add(summary.bases.canonical_bases() as u64)
+                    .wrapping_add(summary.qualities.sum_phred);
             }
         }
         black_box(checksum);
