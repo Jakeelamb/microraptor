@@ -96,6 +96,20 @@ JSONL output, and failed rows stay in the markdown report with their exit status
 so malformed or unsupported local datasets do not hide the synthetic gauntlet
 result.
 
+Recommended corpus pass:
+
+```bash
+MICRORAPTOR_GAUNTLET_RESULT_DIR=target/bench-results-real \
+MICRORAPTOR_GAUNTLET_CORPUS_INPUTS="/path/to/r1.fastq.gz /path/to/r2.fastq.gz /path/to/reads.fastq.bgz" \
+scripts/benchmark-gauntlet.sh
+```
+
+Keep the corpus list outside git. For release evidence, use at least one real
+short-read R1/R2 gzip pair and one BGZF file large enough to cross the adaptive
+parallel threshold. If a local file fails parsing, keep the markdown report; the
+failure is useful compatibility evidence but should not be counted as biological
+throughput proof.
+
 For a real dataset:
 
 ```bash

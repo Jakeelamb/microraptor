@@ -48,6 +48,18 @@ Backend boundary:
   serial/parallel reader, and virtual-offset indexing/seek reads
 - output compression supports flate2 by default and libdeflate when requested
 
+Default streamer boundary:
+
+- `open_fastq_with_config` is the default streamer surface for raw, gzip, and
+  BGZF paths. Treat it as frozen for the current tiny-module scope unless a real
+  workload exposes a correctness issue or measured bottleneck.
+- performance work should preserve the one-streamer shape: scripts and benchmark
+  rows may compare explicit alternatives, but production callers should not need
+  to choose between competing default FASTQ pipelines.
+- new streamer behavior needs parity evidence across default features,
+  `--all-features`, and `--no-default-features`; timing-only wins are not enough
+  to justify API churn.
+
 Features:
 
 - `simd`: nightly portable-SIMD newline scanner
