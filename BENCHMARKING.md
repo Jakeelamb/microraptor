@@ -37,6 +37,8 @@ cargo bench --all-features
 scripts/bench.sh
 scripts/benchmark-gauntlet.sh
 scripts/check-pack-regression.sh
+scripts/check-pack-instructions.sh
+scripts/asm-pack.sh
 ```
 
 For machine-readable output:
@@ -47,15 +49,22 @@ cargo run --release --bin microraptor-bench -- --records 500000 --mode parse --j
 cargo run --release --bin microraptor-bench -- --records 500000 --mode pack --json
 ```
 
-Synthetic `--mode pack` uses the trusted streaming pack path for `pack-seq-qual`
-and reports the safe parser-backed reference as `reader-pack-seq-qual`. The
+Synthetic `--mode pack` uses the trusted streaming pack path for `pack-seq-qual`.
+It also reports `direct-pack-seq-qual` for the lower-memory single-pass scanner
+and `reader-pack-seq-qual` for the safe parser-backed reference. The default
 trusted path reuses the SIMD newline scanner, handles slab carry and CRLF
 trimming, and skips batch record construction before packing.
 
 Use `scripts/check-pack-regression.sh` as a narrow guard for the default pack
 path. It checks that `pack-seq-qual` and `reader-pack-seq-qual` checksums match
 and fails when the trusted path is more than the configured tolerance slower
-than the reader-backed reference.
+than the reader-backed reference. It also checks that the direct scanner emits
+the same checksum.
+
+Use `scripts/asm-pack.sh` to emit optimized assembly for pack-path inspection.
+Use `scripts/check-pack-instructions.sh` to compute pack-path
+instructions/base from `perf stat`; set
+`MICRORAPTOR_MAX_PACK_INSTRUCTIONS_PER_BASE` to turn it into a threshold gate.
 
 For a real dataset:
 

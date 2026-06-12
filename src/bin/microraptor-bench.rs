@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use microraptor::benchutil::{
     StreamStats, consume_fastq, consume_trusted_fastq_read_with_pack, synthetic_fastq,
 };
-use microraptor::pack::{TrustedPackedRecord, pack_bases_and_summarize_qualities_into};
+use microraptor::pack::{
+    TrustedPackedRecord, pack_bases_and_summarize_qualities_into, pack_trusted_fastq_read_direct,
+};
 use microraptor::{FastqConfig, FastqReader, PairValidation, Result};
 
 enum BenchRead {
@@ -125,6 +127,7 @@ fn run() -> Result<()> {
     }
     if config.mode.includes_pack() {
         measurements.push(measure_trusted_pack("pack-seq-qual", &raw, &config)?);
+        measurements.push(measure_direct_pack("direct-pack-seq-qual", &raw, &config)?);
         measurements.push(measure_pack("reader-pack-seq-qual", &raw, &config)?);
     }
 
@@ -236,6 +239,12 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
     if config.mode.includes_pack() {
         measurements.push(measure_path_trusted_pack(
             "file-pack-seq-qual",
+            path,
+            input_bytes,
+            config,
+        )?);
+        measurements.push(measure_path_direct_pack(
+            "file-direct-pack-seq-qual",
             path,
             input_bytes,
             config,
@@ -440,6 +449,25 @@ fn measure_trusted_pack(name: &str, input: &[u8], config: &Config) -> Result<Mea
     })
 }
 
+fn measure_direct_pack(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
+    measure(name, input.len(), config.iters, || {
+        let mut stats = StreamStats::default();
+        pack_trusted_fastq_read_direct(
+            std::io::Cursor::new(input),
+            FastqConfig {
+                slab_size: config.slab_size,
+                validate: true,
+                ..FastqConfig::default()
+            },
+            |record| {
+                observe_trusted_record(&mut stats, record);
+                Ok(())
+            },
+        )?;
+        Ok(stats)
+    })
+}
+
 fn measure_path_fastq(
     name: &str,
     path: &Path,
@@ -472,6 +500,22 @@ fn measure_path_trusted_pack(
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
         consume_trusted_fastq_read_with_pack(open_bench_read(path)?, fastq_config(config))
+    })
+}
+
+fn measure_path_direct_pack(
+    name: &str,
+    path: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let mut stats = StreamStats::default();
+        pack_trusted_fastq_read_direct(open_bench_read(path)?, fastq_config(config), |record| {
+            observe_trusted_record(&mut stats, record);
+            Ok(())
+        })?;
+        Ok(stats)
     })
 }
 

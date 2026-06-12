@@ -1,7 +1,15 @@
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+use std::arch::x86_64::{
+    __m256i, _mm256_cmpgt_epi8, _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_or_si256,
+    _mm256_set1_epi8,
+};
 use std::fmt;
 use std::io::Read;
 #[cfg(feature = "simd")]
-use std::simd::{Simd, cmp::SimdPartialOrd};
+use std::simd::{
+    Select, Simd,
+    cmp::{SimdPartialEq, SimdPartialOrd},
+};
 
 use crate::scan::scan_newlines;
 use crate::{FastqConfig, FastqError, FastqPosition, Result as FastqResult};
@@ -148,6 +156,7 @@ pub struct TrustedPackedPair<'a> {
 pub enum PackKernel {
     Scalar,
     PortableSimd,
+    Avx2,
 }
 
 pub fn selected_pack_kernel() -> PackKernel {
@@ -156,6 +165,10 @@ pub fn selected_pack_kernel() -> PackKernel {
 
 #[cfg(feature = "simd")]
 fn select_pack_kernel() -> PackKernel {
+    #[cfg(target_arch = "x86_64")]
+    if std::is_x86_feature_detected!("avx2") {
+        return PackKernel::Avx2;
+    }
     PackKernel::PortableSimd
 }
 
@@ -252,6 +265,69 @@ pub fn pack_trusted_fastq_read_sink<R: Read>(
     config: FastqConfig,
     mut sink: impl TrustedPackSink,
 ) -> FastqResult<()> {
+    pack_trusted_fastq_read_sink_with_kernel(
+        &mut reader,
+        config,
+        &mut sink,
+        TrustedScanKernel::Offset,
+    )
+}
+
+pub fn pack_trusted_fastq_direct(
+    input: &[u8],
+    on_record: impl FnMut(TrustedPackedRecord<'_>) -> FastqResult<()>,
+) -> FastqResult<()> {
+    pack_trusted_fastq_direct_sink(input, on_record)
+}
+
+pub fn pack_trusted_fastq_direct_sink(
+    input: &[u8],
+    mut sink: impl TrustedPackSink,
+) -> FastqResult<()> {
+    let mut bases = Vec::new();
+    let mut n_mask = Vec::new();
+    let slab = pack_trusted_fastq_direct_slab(
+        input,
+        SlabContext {
+            base_offset: 0,
+            first_record_index: 0,
+            eof: true,
+        },
+        &mut bases,
+        &mut n_mask,
+        &mut sink,
+    )?;
+    debug_assert_eq!(slab.next_start, input.len());
+    Ok(())
+}
+
+pub fn pack_trusted_fastq_read_direct<R: Read>(
+    mut reader: R,
+    config: FastqConfig,
+    on_record: impl FnMut(TrustedPackedRecord<'_>) -> FastqResult<()>,
+) -> FastqResult<()> {
+    pack_trusted_fastq_read_direct_sink(&mut reader, config, on_record)
+}
+
+pub fn pack_trusted_fastq_read_direct_sink<R: Read>(
+    mut reader: R,
+    config: FastqConfig,
+    mut sink: impl TrustedPackSink,
+) -> FastqResult<()> {
+    pack_trusted_fastq_read_sink_with_kernel(
+        &mut reader,
+        config,
+        &mut sink,
+        TrustedScanKernel::Direct,
+    )
+}
+
+fn pack_trusted_fastq_read_sink_with_kernel<R: Read>(
+    mut reader: R,
+    config: FastqConfig,
+    sink: &mut impl TrustedPackSink,
+    kernel: TrustedScanKernel,
+) -> FastqResult<()> {
     let slab_size = config.slab_size.max(1024);
     let mut buf = vec![0_u8; slab_size];
     let mut len = 0;
@@ -272,18 +348,24 @@ pub fn pack_trusted_fastq_read_sink<R: Read>(
             len += n;
         }
 
-        let slab = pack_trusted_fastq_slab(
-            &buf[..len],
-            SlabContext {
-                base_offset,
-                first_record_index: record_index,
-                eof,
-            },
-            &mut newlines,
-            &mut bases,
-            &mut n_mask,
-            &mut sink,
-        )?;
+        let context = SlabContext {
+            base_offset,
+            first_record_index: record_index,
+            eof,
+        };
+        let slab = match kernel {
+            TrustedScanKernel::Offset => pack_trusted_fastq_slab(
+                &buf[..len],
+                context,
+                &mut newlines,
+                &mut bases,
+                &mut n_mask,
+                sink,
+            )?,
+            TrustedScanKernel::Direct => {
+                pack_trusted_fastq_direct_slab(&buf[..len], context, &mut bases, &mut n_mask, sink)?
+            }
+        };
         if slab.records != 0 {
             sink.slab(TrustedPackSlab {
                 records: slab.records,
@@ -311,6 +393,12 @@ pub fn pack_trusted_fastq_read_sink<R: Read>(
             return Err(FastqError::RecordTooLarge { slab_size });
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum TrustedScanKernel {
+    Offset,
+    Direct,
 }
 
 pub fn pack_trusted_paired_fastq_read<R1: Read, R2: Read>(
@@ -470,6 +558,10 @@ pub fn is_masked(n_mask: &[u8], index: usize) -> Option<bool> {
 }
 
 pub fn summarize_qualities(qualities: &[u8]) -> Result<QualitySummary, PackError> {
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    if qualities.len() >= 32 && std::is_x86_feature_detected!("avx2") {
+        return unsafe { summarize_qualities_avx2(qualities) };
+    }
     #[cfg(feature = "simd")]
     if qualities.len() >= 32 {
         return summarize_qualities_simd(qualities);
@@ -478,6 +570,53 @@ pub fn summarize_qualities(qualities: &[u8]) -> Result<QualitySummary, PackError
     for (offset, &byte) in qualities.iter().enumerate() {
         summary.observe(byte, offset)?;
     }
+    Ok(summary.finish())
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn summarize_qualities_avx2(qualities: &[u8]) -> Result<QualitySummary, PackError> {
+    let low = _mm256_set1_epi8(33);
+    let high = _mm256_set1_epi8(126);
+    let q20 = _mm256_set1_epi8(52);
+    let q30 = _mm256_set1_epi8(62);
+
+    let mut summary = QualityAccumulator::default();
+    let mut i = 0;
+    while i + 32 <= qualities.len() {
+        let bytes = unsafe { _mm256_loadu_si256(qualities.as_ptr().add(i).cast::<__m256i>()) };
+        let too_low = _mm256_cmpgt_epi8(low, bytes);
+        let too_high = _mm256_cmpgt_epi8(bytes, high);
+        let invalid = _mm256_movemask_epi8(_mm256_or_si256(too_low, too_high));
+        if invalid != 0 {
+            let offset = invalid.trailing_zeros() as usize;
+            return Err(PackError::InvalidQuality {
+                offset: i + offset,
+                byte: qualities[i + offset],
+            });
+        }
+
+        summary.q20_bases +=
+            _mm256_movemask_epi8(_mm256_cmpgt_epi8(bytes, q20)).count_ones() as usize;
+        summary.q30_bases +=
+            _mm256_movemask_epi8(_mm256_cmpgt_epi8(bytes, q30)).count_ones() as usize;
+        let mut j = 0;
+        while j < 32 {
+            let phred = qualities[i + j] - 33;
+            summary.min_phred = summary.min_phred.min(phred);
+            summary.max_phred = summary.max_phred.max(phred);
+            summary.sum_phred += u64::from(phred);
+            j += 1;
+        }
+        summary.len += 32;
+        i += 32;
+    }
+
+    while i < qualities.len() {
+        summary.observe(qualities[i], i)?;
+        i += 1;
+    }
+
     Ok(summary.finish())
 }
 
@@ -635,6 +774,99 @@ fn pack_trusted_fastq_slab(
             records,
         })
     }
+}
+
+fn pack_trusted_fastq_direct_slab(
+    input: &[u8],
+    context: SlabContext,
+    bases: &mut Vec<u8>,
+    n_mask: &mut Vec<u8>,
+    sink: &mut impl TrustedPackSink,
+) -> FastqResult<SlabResult> {
+    let mut cursor = 0;
+    let mut records = 0_u64;
+
+    while cursor < input.len() {
+        let record_start = cursor;
+        let Some(name) = direct_line(input, &mut cursor, context.eof) else {
+            return Ok(SlabResult {
+                next_start: record_start,
+                records,
+            });
+        };
+        let Some(seq) = direct_line(input, &mut cursor, context.eof) else {
+            return incomplete_or_truncated_direct(input, context, record_start, records, 1);
+        };
+        let Some(plus) = direct_line(input, &mut cursor, context.eof) else {
+            return incomplete_or_truncated_direct(input, context, record_start, records, 2);
+        };
+        let Some(qual) = direct_line(input, &mut cursor, context.eof) else {
+            return incomplete_or_truncated_direct(input, context, record_start, records, 3);
+        };
+
+        observe_trusted_packed_record(
+            name,
+            seq,
+            plus,
+            qual,
+            context.base_offset,
+            context.first_record_index + records,
+            bases,
+            n_mask,
+            sink,
+        )?;
+        records += 1;
+    }
+
+    Ok(SlabResult {
+        next_start: input.len(),
+        records,
+    })
+}
+
+fn incomplete_or_truncated_direct(
+    input: &[u8],
+    context: SlabContext,
+    record_start: usize,
+    records: u64,
+    line_index: u8,
+) -> FastqResult<SlabResult> {
+    if context.eof {
+        Err(format_fastq_at(
+            "truncated FASTQ record",
+            context.base_offset,
+            input.len(),
+            context.first_record_index + records,
+            line_index,
+        ))
+    } else {
+        Ok(SlabResult {
+            next_start: record_start,
+            records,
+        })
+    }
+}
+
+fn direct_line<'a>(input: &'a [u8], cursor: &mut usize, eof: bool) -> Option<Line<'a>> {
+    let start = *cursor;
+    if start >= input.len() {
+        return None;
+    }
+
+    let mut end = start;
+    while end < input.len() && input[end] != b'\n' {
+        end += 1;
+    }
+    if end == input.len() && !eof {
+        return None;
+    }
+
+    *cursor = if end < input.len() { end + 1 } else { end };
+    let end = trim_cr_end(input, start, end);
+    Some(Line {
+        bytes: &input[start..end],
+        start,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -811,6 +1043,19 @@ fn pack_bases_exact(seq: &[u8], bases: &mut [u8], n_mask: &mut [u8]) -> BaseSumm
     let full_chunks = seq.len() / 4;
     let mut chunk_index = 0;
     let mut base_index = 0;
+    #[cfg(feature = "simd")]
+    while chunk_index + 4 <= full_chunks {
+        let codes = base_codes_16(&seq[base_index..base_index + 16]);
+        pack_code_quads(
+            &codes,
+            base_index,
+            &mut bases[chunk_index..chunk_index + 4],
+            &mut summary,
+            n_mask,
+        );
+        chunk_index += 4;
+        base_index += 16;
+    }
     while chunk_index < full_chunks {
         let c0 = BASE_LUT[usize::from(seq[base_index])];
         let c1 = BASE_LUT[usize::from(seq[base_index + 1])];
@@ -870,6 +1115,19 @@ fn pack_bases_and_qualities_exact(
     let full_chunks = seq.len() / 4;
     let mut chunk_index = 0;
     let mut base_index = 0;
+    #[cfg(feature = "simd")]
+    while chunk_index + 4 <= full_chunks {
+        let codes = base_codes_16(&seq[base_index..base_index + 16]);
+        pack_code_quads(
+            &codes,
+            base_index,
+            &mut bases[chunk_index..chunk_index + 4],
+            &mut bases_summary,
+            n_mask,
+        );
+        chunk_index += 4;
+        base_index += 16;
+    }
     while chunk_index < full_chunks {
         let c0 = BASE_LUT[usize::from(seq[base_index])];
         let c1 = BASE_LUT[usize::from(seq[base_index + 1])];
@@ -905,6 +1163,50 @@ fn pack_bases_and_qualities_exact(
         bases: bases_summary,
         qualities: summarize_qualities(qualities)?,
     })
+}
+
+#[cfg(feature = "simd")]
+fn base_codes_16(seq: &[u8]) -> [u8; 16] {
+    debug_assert!(seq.len() >= 16);
+    type Chunk = Simd<u8, 16>;
+
+    let lower = Chunk::from_slice(&seq[..16]) | Chunk::splat(0x20);
+    let mut codes = Chunk::splat(BASE_N);
+    codes = lower
+        .simd_eq(Chunk::splat(b'a'))
+        .select(Chunk::splat(0), codes);
+    codes = lower
+        .simd_eq(Chunk::splat(b'c'))
+        .select(Chunk::splat(1), codes);
+    codes = lower
+        .simd_eq(Chunk::splat(b'g'))
+        .select(Chunk::splat(2), codes);
+    codes = lower
+        .simd_eq(Chunk::splat(b't'))
+        .select(Chunk::splat(3), codes);
+    codes.to_array()
+}
+
+#[cfg(feature = "simd")]
+fn pack_code_quads(
+    codes: &[u8; 16],
+    base_index: usize,
+    bases: &mut [u8],
+    summary: &mut BaseSummary,
+    n_mask: &mut [u8],
+) {
+    let mut quad = 0;
+    while quad < 4 {
+        let code_index = quad * 4;
+        let index = base_index + code_index;
+        let mut packed = 0_u8;
+        packed |= pack_code(codes[code_index], index, 0, summary, n_mask);
+        packed |= pack_code(codes[code_index + 1], index, 1, summary, n_mask);
+        packed |= pack_code(codes[code_index + 2], index, 2, summary, n_mask);
+        packed |= pack_code(codes[code_index + 3], index, 3, summary, n_mask);
+        bases[quad] = packed;
+        quad += 1;
+    }
 }
 
 struct QualityAccumulator {
@@ -1316,6 +1618,57 @@ mod tests {
     }
 
     #[test]
+    fn trusted_direct_fastq_matches_offset_scan() {
+        let input = b"@r0\r\nACGTN\r\n+\r\nIIIII\r\n@r1\nTGCA\n+\n!!!!\n";
+        let mut offset = Vec::new();
+        let mut direct = Vec::new();
+
+        pack_trusted_fastq(input, |record| {
+            offset.push((
+                record.name.to_vec(),
+                record.bases.to_vec(),
+                record.n_mask.to_vec(),
+                record.summary,
+            ));
+            Ok(())
+        })
+        .unwrap();
+
+        pack_trusted_fastq_direct(input, |record| {
+            direct.push((
+                record.name.to_vec(),
+                record.bases.to_vec(),
+                record.n_mask.to_vec(),
+                record.summary,
+            ));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(direct, offset);
+    }
+
+    #[test]
+    fn trusted_direct_stream_handles_slab_carry() {
+        let input = b"@r0\nACGTACGTACGT\n+\nIIIIIIIIIIII\n@r1\nNNNN\n+\n!!!!";
+        let mut records = 0;
+        pack_trusted_fastq_read_direct(
+            &input[..],
+            FastqConfig {
+                slab_size: 16,
+                ..FastqConfig::default()
+            },
+            |record| {
+                records += 1;
+                assert_eq!(record.summary.bases.len, record.seq.len());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(records, 2);
+    }
+
+    #[test]
     fn trusted_paired_fastq_validates_fast_slash_ids() {
         let r1 = b"@frag/1\nACGT\n+\nIIII\n";
         let r2 = b"@frag/2\nTGCA\n+\nIIII\n";
@@ -1354,7 +1707,10 @@ mod tests {
     #[test]
     fn reports_selected_pack_kernel() {
         #[cfg(feature = "simd")]
-        assert_eq!(selected_pack_kernel(), PackKernel::PortableSimd);
+        assert!(matches!(
+            selected_pack_kernel(),
+            PackKernel::PortableSimd | PackKernel::Avx2
+        ));
         #[cfg(not(feature = "simd"))]
         assert_eq!(selected_pack_kernel(), PackKernel::Scalar);
     }

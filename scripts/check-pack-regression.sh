@@ -23,22 +23,26 @@ extract_field() {
 }
 
 fast_ns="$(extract_field pack-seq-qual best_ns)"
+direct_ns="$(extract_field direct-pack-seq-qual best_ns)"
 reference_ns="$(extract_field reader-pack-seq-qual best_ns)"
 fast_checksum="$(extract_field pack-seq-qual checksum)"
+direct_checksum="$(extract_field direct-pack-seq-qual checksum)"
 reference_checksum="$(extract_field reader-pack-seq-qual checksum)"
 
-if [[ -z "${fast_ns}" || -z "${reference_ns}" ]]; then
+if [[ -z "${fast_ns}" || -z "${direct_ns}" || -z "${reference_ns}" ]]; then
   printf 'missing pack benchmark rows\n%s\n' "${json}" >&2
   exit 2
 fi
 
-if [[ "${fast_checksum}" != "${reference_checksum}" ]]; then
-  printf 'checksum mismatch: pack=%s reader=%s\n' "${fast_checksum}" "${reference_checksum}" >&2
+if [[ "${fast_checksum}" != "${reference_checksum}" || "${direct_checksum}" != "${reference_checksum}" ]]; then
+  printf 'checksum mismatch: pack=%s direct=%s reader=%s\n' \
+    "${fast_checksum}" "${direct_checksum}" "${reference_checksum}" >&2
   exit 1
 fi
 
 limit_ns="$(( reference_ns + (reference_ns * tolerance_pct / 100) ))"
 printf 'pack-seq-qual_ns\t%s\n' "${fast_ns}"
+printf 'direct-pack-seq-qual_ns\t%s\n' "${direct_ns}"
 printf 'reader-pack-seq-qual_ns\t%s\n' "${reference_ns}"
 printf 'tolerance_pct\t%s\n' "${tolerance_pct}"
 

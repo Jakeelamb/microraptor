@@ -24,6 +24,8 @@ Current slice:
   allocation
 - trusted packed-record sink APIs, paired trusted packing, and selected pack
   kernel reporting
+- direct single-pass trusted pack scanner and assembly audit script for pack
+  kernel inspection
 - structured FASTQ parse errors with byte offset, record index, and line index
 - zero-copy FASTQ record-id helpers for raw names, first tokens, and pair-normalized IDs
 - stateful separate-file paired reader and interleaved FASTQ iterators with
