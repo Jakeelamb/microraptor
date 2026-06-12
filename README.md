@@ -19,6 +19,7 @@ Current slice:
 - Phred+33 quality summaries and threshold binning
 - structured FASTQ parse errors with byte offset, record index, and line index
 - zero-copy FASTQ record-id helpers for raw names, first tokens, and pair-normalized IDs
+- paired and interleaved FASTQ iterators with normalized-id validation
 
 Backend boundary:
 
@@ -54,6 +55,21 @@ while let Some(batch) = reader.next_batch()? {
     for record in batch.records() {
         assert_eq!(record.seq(), b"ACGT");
     }
+}
+# Ok::<(), microraptor::FastqError>(())
+```
+
+Interleaved paired-end batches can be enabled without changing the streaming
+path:
+
+```rust
+use microraptor::{FastqConfig, FastqReader};
+
+let data = b"@frag/1\nACGT\n+\nIIII\n@frag/2\nTGCA\n+\nJJJJ\n";
+let mut reader = FastqReader::with_config(&data[..], FastqConfig::default().interleaved());
+let batch = reader.next_batch()?.unwrap();
+for pair in batch.interleaved_pairs()? {
+    assert_eq!(pair.pair_id(), b"frag");
 }
 # Ok::<(), microraptor::FastqError>(())
 ```

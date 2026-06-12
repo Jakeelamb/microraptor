@@ -15,7 +15,10 @@ pub use bgzf::{
     decompress_bgzf_parallel,
 };
 pub use error::{FastqError, FastqPosition, Result};
-pub use fastq::{FastqBatch, FastqConfig, FastqReader, FastqRecord, RecordRef, strip_pair_suffix};
+pub use fastq::{
+    FastqBatch, FastqConfig, FastqPair, FastqReader, FastqRecord, InterleavedPairs, PairedRecords,
+    PairingMode, RecordRef, paired_records, strip_pair_suffix,
+};
 pub use source::{open_fastq, open_fastq_with_config};
 #[cfg(feature = "bgzf")]
 pub use source::{open_fastq_bgzf_parallel, open_fastq_bgzf_parallel_with_config};

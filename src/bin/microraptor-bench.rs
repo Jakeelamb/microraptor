@@ -90,6 +90,7 @@ fn measure_fastq(name: &str, input: &[u8], config: &Config) -> Result<Measuremen
             FastqConfig {
                 slab_size: config.slab_size,
                 validate: true,
+                ..FastqConfig::default()
             },
         );
         consume_fastq(&mut reader)
@@ -105,6 +106,7 @@ fn measure_gzip(name: &str, input: &[u8], config: &Config) -> Result<Measurement
             FastqConfig {
                 slab_size: config.slab_size,
                 validate: true,
+                ..FastqConfig::default()
             },
         );
         consume_fastq(&mut reader)
@@ -120,6 +122,7 @@ fn measure_bgzf_serial(name: &str, input: &[u8], config: &Config) -> Result<Meas
             FastqConfig {
                 slab_size: config.slab_size,
                 validate: true,
+                ..FastqConfig::default()
             },
         );
         consume_fastq(&mut reader)
@@ -139,6 +142,7 @@ fn measure_bgzf_parallel(name: &str, input: &[u8], config: &Config) -> Result<Me
             FastqConfig {
                 slab_size: config.slab_size,
                 validate: true,
+                ..FastqConfig::default()
             },
         );
         consume_fastq(&mut reader)
@@ -152,6 +156,7 @@ fn measure_pack(name: &str, input: &[u8], config: &Config) -> Result<Measurement
             FastqConfig {
                 slab_size: config.slab_size,
                 validate: true,
+                ..FastqConfig::default()
             },
         );
         let mut stats = StreamStats::default();

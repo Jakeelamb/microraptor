@@ -20,6 +20,7 @@ fn parse_raw_strict_8m_slab(b: &mut Bencher) {
             FastqConfig {
                 slab_size: 8 * 1024 * 1024,
                 validate: true,
+                ..FastqConfig::default()
             },
         );
         black_box(consume_fastq(&mut reader).unwrap());
@@ -36,6 +37,7 @@ fn parse_raw_no_validate_8m_slab(b: &mut Bencher) {
             FastqConfig {
                 slab_size: 8 * 1024 * 1024,
                 validate: false,
+                ..FastqConfig::default()
             },
         );
         black_box(consume_fastq(&mut reader).unwrap());
