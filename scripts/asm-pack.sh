@@ -27,9 +27,9 @@ grep -E 'pack_trusted_fastq|pack_bases_and_qualities|summarize_qualities' "${des
   head -n 20 || true
 
 printf 'avx2_ops\t'
-grep -E '(vpbroadcast|vpadd|vpcm|vpmov|vpsub|vpcmp|ymm[0-9]+)' "${dest}" |
+grep -E '(vpbroadcast|vpadd|vpcm|vpmov|vpmin|vpmax|vpsad|vpsub|vpcmp|ymm[0-9]+)' "${dest}" |
   head -n 20 || true
 
 printf 'vector_ops\t'
-grep -E '(vpadd|vpcm|vpmov|vpsub|vpcmp|movdqa|movdqu|movups|movaps|[xyz]mm[0-9]+)' "${dest}" |
+grep -E '(vpadd|vpcm|vpmov|vpmin|vpmax|vpsad|vpsub|vpcmp|movdqa|movdqu|movups|movaps|[xyz]mm[0-9]+)' "${dest}" |
   head -n 20 || true

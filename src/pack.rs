@@ -1,7 +1,8 @@
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 use std::arch::x86_64::{
-    __m256i, _mm256_cmpgt_epi8, _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_or_si256,
-    _mm256_set1_epi8,
+    __m256i, _mm256_add_epi64, _mm256_cmpgt_epi8, _mm256_loadu_si256, _mm256_max_epu8,
+    _mm256_min_epu8, _mm256_movemask_epi8, _mm256_or_si256, _mm256_sad_epu8, _mm256_set1_epi8,
+    _mm256_setzero_si256, _mm256_storeu_si256, _mm256_sub_epi8,
 };
 use std::fmt;
 use std::io::Read;
@@ -453,6 +454,8 @@ pub const fn bit_mask_len(bit_count: usize) -> usize {
 
 const BASE_N: u8 = 4;
 const BASE_LUT: [u8; 256] = base_lut();
+const BASE_QUAD_STATES: usize = 5 * 5 * 5 * 5;
+const BASE_QUAD_LUT: [u32; BASE_QUAD_STATES] = base_quad_lut();
 
 const fn base_lut() -> [u8; 256] {
     let mut table = [BASE_N; 256];
@@ -465,6 +468,60 @@ const fn base_lut() -> [u8; 256] {
     table[b'T' as usize] = 3;
     table[b't' as usize] = 3;
     table
+}
+
+const fn base_quad_lut() -> [u32; BASE_QUAD_STATES] {
+    let mut table = [0_u32; BASE_QUAD_STATES];
+    let mut c0 = 0_u8;
+    while c0 <= BASE_N {
+        let mut c1 = 0_u8;
+        while c1 <= BASE_N {
+            let mut c2 = 0_u8;
+            while c2 <= BASE_N {
+                let mut c3 = 0_u8;
+                while c3 <= BASE_N {
+                    let key = quad_key(c0, c1, c2, c3);
+                    table[key] = quad_entry(c0, c1, c2, c3);
+                    c3 += 1;
+                }
+                c2 += 1;
+            }
+            c1 += 1;
+        }
+        c0 += 1;
+    }
+    table
+}
+
+const fn quad_key(c0: u8, c1: u8, c2: u8, c3: u8) -> usize {
+    c0 as usize + (c1 as usize * 5) + (c2 as usize * 25) + (c3 as usize * 125)
+}
+
+const fn quad_entry(c0: u8, c1: u8, c2: u8, c3: u8) -> u32 {
+    let codes = [c0, c1, c2, c3];
+    let mut packed = 0_u32;
+    let mut mask = 0_u32;
+    let mut counts = [0_u32; 5];
+    let mut i = 0;
+    while i < 4 {
+        let code = codes[i];
+        if code < BASE_N {
+            packed |= (code as u32) << (i * 2);
+            counts[code as usize] += 1;
+        } else {
+            mask |= 1 << i;
+            counts[BASE_N as usize] += 1;
+        }
+        i += 1;
+    }
+
+    packed
+        | (mask << 8)
+        | (counts[0] << 12)
+        | (counts[1] << 15)
+        | (counts[2] << 18)
+        | (counts[3] << 21)
+        | (counts[4] << 24)
 }
 
 pub fn pack_bases(seq: &[u8]) -> PackedSequence {
@@ -578,8 +635,13 @@ pub fn summarize_qualities(qualities: &[u8]) -> Result<QualitySummary, PackError
 unsafe fn summarize_qualities_avx2(qualities: &[u8]) -> Result<QualitySummary, PackError> {
     let low = _mm256_set1_epi8(33);
     let high = _mm256_set1_epi8(126);
+    let offset = _mm256_set1_epi8(33);
     let q20 = _mm256_set1_epi8(52);
     let q30 = _mm256_set1_epi8(62);
+    let zero = _mm256_setzero_si256();
+    let mut min_phred = _mm256_set1_epi8(93);
+    let mut max_phred = _mm256_setzero_si256();
+    let mut sum_phred = _mm256_setzero_si256();
 
     let mut summary = QualityAccumulator::default();
     let mut i = 0;
@@ -600,17 +662,15 @@ unsafe fn summarize_qualities_avx2(qualities: &[u8]) -> Result<QualitySummary, P
             _mm256_movemask_epi8(_mm256_cmpgt_epi8(bytes, q20)).count_ones() as usize;
         summary.q30_bases +=
             _mm256_movemask_epi8(_mm256_cmpgt_epi8(bytes, q30)).count_ones() as usize;
-        let mut j = 0;
-        while j < 32 {
-            let phred = qualities[i + j] - 33;
-            summary.min_phred = summary.min_phred.min(phred);
-            summary.max_phred = summary.max_phred.max(phred);
-            summary.sum_phred += u64::from(phred);
-            j += 1;
-        }
+        let phreds = _mm256_sub_epi8(bytes, offset);
+        min_phred = _mm256_min_epu8(min_phred, phreds);
+        max_phred = _mm256_max_epu8(max_phred, phreds);
+        sum_phred = _mm256_add_epi64(sum_phred, _mm256_sad_epu8(phreds, zero));
         summary.len += 32;
         i += 32;
     }
+
+    unsafe { finish_avx2_quality_vectors(&mut summary, min_phred, max_phred, sum_phred) };
 
     while i < qualities.len() {
         summary.observe(qualities[i], i)?;
@@ -618,6 +678,35 @@ unsafe fn summarize_qualities_avx2(qualities: &[u8]) -> Result<QualitySummary, P
     }
 
     Ok(summary.finish())
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn finish_avx2_quality_vectors(
+    summary: &mut QualityAccumulator,
+    min_phred: __m256i,
+    max_phred: __m256i,
+    sum_phred: __m256i,
+) {
+    if summary.len == 0 {
+        return;
+    }
+
+    let mut min_lanes = [0_u8; 32];
+    let mut max_lanes = [0_u8; 32];
+    let mut sum_lanes = [0_u64; 4];
+    unsafe {
+        _mm256_storeu_si256(min_lanes.as_mut_ptr().cast::<__m256i>(), min_phred);
+        _mm256_storeu_si256(max_lanes.as_mut_ptr().cast::<__m256i>(), max_phred);
+        _mm256_storeu_si256(sum_lanes.as_mut_ptr().cast::<__m256i>(), sum_phred);
+    }
+    for &phred in &min_lanes {
+        summary.min_phred = summary.min_phred.min(phred);
+    }
+    for &phred in &max_lanes {
+        summary.max_phred = summary.max_phred.max(phred);
+    }
+    summary.sum_phred = sum_lanes.iter().copied().sum();
 }
 
 #[cfg(feature = "simd")]
@@ -1061,13 +1150,16 @@ fn pack_bases_exact(seq: &[u8], bases: &mut [u8], n_mask: &mut [u8]) -> BaseSumm
         let c1 = BASE_LUT[usize::from(seq[base_index + 1])];
         let c2 = BASE_LUT[usize::from(seq[base_index + 2])];
         let c3 = BASE_LUT[usize::from(seq[base_index + 3])];
-
-        let mut packed = 0_u8;
-        packed |= pack_code(c0, base_index, 0, &mut summary, n_mask);
-        packed |= pack_code(c1, base_index, 1, &mut summary, n_mask);
-        packed |= pack_code(c2, base_index, 2, &mut summary, n_mask);
-        packed |= pack_code(c3, base_index, 3, &mut summary, n_mask);
-        bases[chunk_index] = packed;
+        pack_quad_from_codes(
+            c0,
+            c1,
+            c2,
+            c3,
+            base_index,
+            &mut bases[chunk_index],
+            &mut summary,
+            n_mask,
+        );
         chunk_index += 1;
         base_index += 4;
     }
@@ -1107,10 +1199,16 @@ fn pack_bases_and_qualities_exact(
         n_mask[..mask_needed].fill(0);
     }
 
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    if seq.len() >= 32 && std::is_x86_feature_detected!("avx2") {
+        return unsafe { pack_bases_and_qualities_exact_avx2(seq, qualities, bases, n_mask) };
+    }
+
     let mut bases_summary = BaseSummary {
         len: seq.len(),
         ..BaseSummary::default()
     };
+    let mut quality_summary = QualityAccumulator::default();
 
     let full_chunks = seq.len() / 4;
     let mut chunk_index = 0;
@@ -1125,21 +1223,32 @@ fn pack_bases_and_qualities_exact(
             &mut bases_summary,
             n_mask,
         );
+        let end = base_index + 16;
+        while base_index < end {
+            quality_summary.observe(qualities[base_index], base_index)?;
+            base_index += 1;
+        }
         chunk_index += 4;
-        base_index += 16;
     }
     while chunk_index < full_chunks {
         let c0 = BASE_LUT[usize::from(seq[base_index])];
         let c1 = BASE_LUT[usize::from(seq[base_index + 1])];
         let c2 = BASE_LUT[usize::from(seq[base_index + 2])];
         let c3 = BASE_LUT[usize::from(seq[base_index + 3])];
-
-        let mut packed = 0_u8;
-        packed |= pack_code(c0, base_index, 0, &mut bases_summary, n_mask);
-        packed |= pack_code(c1, base_index, 1, &mut bases_summary, n_mask);
-        packed |= pack_code(c2, base_index, 2, &mut bases_summary, n_mask);
-        packed |= pack_code(c3, base_index, 3, &mut bases_summary, n_mask);
-        bases[chunk_index] = packed;
+        pack_quad_from_codes(
+            c0,
+            c1,
+            c2,
+            c3,
+            base_index,
+            &mut bases[chunk_index],
+            &mut bases_summary,
+            n_mask,
+        );
+        quality_summary.observe(qualities[base_index], base_index)?;
+        quality_summary.observe(qualities[base_index + 1], base_index + 1)?;
+        quality_summary.observe(qualities[base_index + 2], base_index + 2)?;
+        quality_summary.observe(qualities[base_index + 3], base_index + 3)?;
         chunk_index += 1;
         base_index += 4;
     }
@@ -1156,12 +1265,131 @@ fn pack_bases_and_qualities_exact(
             bases_summary.n += 1;
             n_mask[index / 8] |= 1 << (index % 8);
         }
+        quality_summary.observe(qualities[index], index)?;
         index += 1;
     }
 
     Ok(PackedRecordSummary {
         bases: bases_summary,
-        qualities: summarize_qualities(qualities)?,
+        qualities: quality_summary.finish(),
+    })
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn pack_bases_and_qualities_exact_avx2(
+    seq: &[u8],
+    qualities: &[u8],
+    bases: &mut [u8],
+    n_mask: &mut [u8],
+) -> Result<PackedRecordSummary, PackError> {
+    let low = _mm256_set1_epi8(33);
+    let high = _mm256_set1_epi8(126);
+    let offset = _mm256_set1_epi8(33);
+    let q20 = _mm256_set1_epi8(52);
+    let q30 = _mm256_set1_epi8(62);
+    let zero = _mm256_setzero_si256();
+    let mut min_phred = _mm256_set1_epi8(93);
+    let mut max_phred = _mm256_setzero_si256();
+    let mut sum_phred = _mm256_setzero_si256();
+
+    let mut bases_summary = BaseSummary {
+        len: seq.len(),
+        ..BaseSummary::default()
+    };
+    let mut quality_summary = QualityAccumulator::default();
+    let mut base_index = 0;
+    let mut chunk_index = 0;
+
+    while base_index + 32 <= seq.len() {
+        let block_start = base_index;
+        let block_end = base_index + 32;
+        while base_index < block_end {
+            let c0 = BASE_LUT[usize::from(seq[base_index])];
+            let c1 = BASE_LUT[usize::from(seq[base_index + 1])];
+            let c2 = BASE_LUT[usize::from(seq[base_index + 2])];
+            let c3 = BASE_LUT[usize::from(seq[base_index + 3])];
+            pack_quad_from_codes(
+                c0,
+                c1,
+                c2,
+                c3,
+                base_index,
+                &mut bases[chunk_index],
+                &mut bases_summary,
+                n_mask,
+            );
+            chunk_index += 1;
+            base_index += 4;
+        }
+
+        let bytes =
+            unsafe { _mm256_loadu_si256(qualities.as_ptr().add(block_start).cast::<__m256i>()) };
+        let too_low = _mm256_cmpgt_epi8(low, bytes);
+        let too_high = _mm256_cmpgt_epi8(bytes, high);
+        let invalid = _mm256_movemask_epi8(_mm256_or_si256(too_low, too_high));
+        if invalid != 0 {
+            let offset = invalid.trailing_zeros() as usize;
+            return Err(PackError::InvalidQuality {
+                offset: block_start + offset,
+                byte: qualities[block_start + offset],
+            });
+        }
+
+        quality_summary.q20_bases +=
+            _mm256_movemask_epi8(_mm256_cmpgt_epi8(bytes, q20)).count_ones() as usize;
+        quality_summary.q30_bases +=
+            _mm256_movemask_epi8(_mm256_cmpgt_epi8(bytes, q30)).count_ones() as usize;
+        let phreds = _mm256_sub_epi8(bytes, offset);
+        min_phred = _mm256_min_epu8(min_phred, phreds);
+        max_phred = _mm256_max_epu8(max_phred, phreds);
+        sum_phred = _mm256_add_epi64(sum_phred, _mm256_sad_epu8(phreds, zero));
+        quality_summary.len += 32;
+    }
+
+    unsafe { finish_avx2_quality_vectors(&mut quality_summary, min_phred, max_phred, sum_phred) };
+
+    let full_chunks = seq.len() / 4;
+    while chunk_index < full_chunks {
+        let c0 = BASE_LUT[usize::from(seq[base_index])];
+        let c1 = BASE_LUT[usize::from(seq[base_index + 1])];
+        let c2 = BASE_LUT[usize::from(seq[base_index + 2])];
+        let c3 = BASE_LUT[usize::from(seq[base_index + 3])];
+        pack_quad_from_codes(
+            c0,
+            c1,
+            c2,
+            c3,
+            base_index,
+            &mut bases[chunk_index],
+            &mut bases_summary,
+            n_mask,
+        );
+        quality_summary.observe(qualities[base_index], base_index)?;
+        quality_summary.observe(qualities[base_index + 1], base_index + 1)?;
+        quality_summary.observe(qualities[base_index + 2], base_index + 2)?;
+        quality_summary.observe(qualities[base_index + 3], base_index + 3)?;
+        chunk_index += 1;
+        base_index += 4;
+    }
+
+    while base_index < seq.len() {
+        let offset = base_index - (full_chunks * 4);
+        let code = BASE_LUT[usize::from(seq[base_index])];
+        if code < BASE_N {
+            add_base_count(&mut bases_summary, code);
+            bases[full_chunks] |= code << (offset * 2);
+        } else {
+            bases_summary.n += 1;
+            n_mask[base_index / 8] |= 1 << (base_index % 8);
+        }
+        quality_summary.observe(qualities[base_index], base_index)?;
+        base_index += 1;
+    }
+
+    Ok(PackedRecordSummary {
+        bases: bases_summary,
+        qualities: quality_summary.finish(),
     })
 }
 
@@ -1199,14 +1427,59 @@ fn pack_code_quads(
     while quad < 4 {
         let code_index = quad * 4;
         let index = base_index + code_index;
-        let mut packed = 0_u8;
-        packed |= pack_code(codes[code_index], index, 0, summary, n_mask);
-        packed |= pack_code(codes[code_index + 1], index, 1, summary, n_mask);
-        packed |= pack_code(codes[code_index + 2], index, 2, summary, n_mask);
-        packed |= pack_code(codes[code_index + 3], index, 3, summary, n_mask);
-        bases[quad] = packed;
+        pack_quad_from_codes(
+            codes[code_index],
+            codes[code_index + 1],
+            codes[code_index + 2],
+            codes[code_index + 3],
+            index,
+            &mut bases[quad],
+            summary,
+            n_mask,
+        );
         quad += 1;
     }
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn pack_quad_from_codes(
+    c0: u8,
+    c1: u8,
+    c2: u8,
+    c3: u8,
+    base_index: usize,
+    base_out: &mut u8,
+    summary: &mut BaseSummary,
+    n_mask: &mut [u8],
+) {
+    apply_quad_entry(
+        BASE_QUAD_LUT[quad_key(c0, c1, c2, c3)],
+        base_index,
+        base_out,
+        summary,
+        n_mask,
+    );
+}
+
+#[inline(always)]
+fn apply_quad_entry(
+    entry: u32,
+    base_index: usize,
+    base_out: &mut u8,
+    summary: &mut BaseSummary,
+    n_mask: &mut [u8],
+) {
+    *base_out = entry as u8;
+    let mask = ((entry >> 8) & 0x0f) as u8;
+    if mask != 0 {
+        n_mask[base_index / 8] |= mask << (base_index % 8);
+    }
+    summary.a += ((entry >> 12) & 0x07) as usize;
+    summary.c += ((entry >> 15) & 0x07) as usize;
+    summary.g += ((entry >> 18) & 0x07) as usize;
+    summary.t += ((entry >> 21) & 0x07) as usize;
+    summary.n += ((entry >> 24) & 0x07) as usize;
 }
 
 struct QualityAccumulator {
@@ -1257,25 +1530,6 @@ impl QualityAccumulator {
             q20_bases: self.q20_bases,
             q30_bases: self.q30_bases,
         }
-    }
-}
-
-#[inline(always)]
-fn pack_code(
-    code: u8,
-    base_index: usize,
-    offset: usize,
-    summary: &mut BaseSummary,
-    n_mask: &mut [u8],
-) -> u8 {
-    if code < BASE_N {
-        add_base_count(summary, code);
-        code << (offset * 2)
-    } else {
-        summary.n += 1;
-        let index = base_index + offset;
-        n_mask[index / 8] |= 1 << (index % 8);
-        0
     }
 }
 
@@ -1502,6 +1756,29 @@ mod tests {
             }
         );
         assert_eq!(summary.mean_phred(), Some(22.5));
+    }
+
+    #[test]
+    fn summarizes_long_quality_vector_reduction() {
+        let qualities: Vec<u8> = (0..97).map(|i| 33 + (i % 41) as u8).collect();
+        let summary = summarize_qualities(&qualities).unwrap();
+        let phreds: Vec<u8> = qualities.iter().map(|&byte| byte - 33).collect();
+
+        assert_eq!(summary.len, qualities.len());
+        assert_eq!(summary.min_phred, phreds.iter().copied().min());
+        assert_eq!(summary.max_phred, phreds.iter().copied().max());
+        assert_eq!(
+            summary.sum_phred,
+            phreds.iter().map(|&phred| u64::from(phred)).sum()
+        );
+        assert_eq!(
+            summary.q20_bases,
+            phreds.iter().filter(|&&q| q >= 20).count()
+        );
+        assert_eq!(
+            summary.q30_bases,
+            phreds.iter().filter(|&&q| q >= 30).count()
+        );
     }
 
     #[test]

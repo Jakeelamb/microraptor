@@ -26,6 +26,8 @@ Current slice:
   kernel reporting
 - direct single-pass trusted pack scanner and assembly audit script for pack
   kernel inspection
+- fused base+quality packing with compact quad LUTs, AVX2 quality reductions,
+  and slab/BGZF pack benchmark gates
 - structured FASTQ parse errors with byte offset, record index, and line index
 - zero-copy FASTQ record-id helpers for raw names, first tokens, and pair-normalized IDs
 - stateful separate-file paired reader and interleaved FASTQ iterators with

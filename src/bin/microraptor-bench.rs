@@ -159,6 +159,27 @@ fn run() -> Result<()> {
                 )?);
             }
         }
+        if config.mode.includes_pack() {
+            let bgzf = microraptor::compress_bgzf_parallel(&raw, config.workers)?;
+            measurements.push(measure_bgzf_trusted_pack(
+                "bgzf-pack-seq-qual",
+                &bgzf,
+                &config,
+            )?);
+            measurements.push(measure_bgzf_parallel_trusted_pack(
+                "bgzf-parallel-pack-seq-qual",
+                &bgzf,
+                &config,
+            )?);
+            #[cfg(feature = "libdeflate")]
+            {
+                measurements.push(measure_bgzf_libdeflate_parallel_trusted_pack(
+                    "bgzf-libdeflate-parallel-pack-seq-qual",
+                    &bgzf,
+                    &config,
+                )?);
+            }
+        }
     }
 
     if config.json {
@@ -255,6 +276,24 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
             input_bytes,
             config,
         )?);
+        #[cfg(feature = "bgzf")]
+        if path_has_bgzf_header(path)? {
+            measurements.push(measure_path_bgzf_parallel_trusted_pack(
+                "file-bgzf-parallel-pack-seq-qual",
+                path,
+                input_bytes,
+                config,
+            )?);
+            #[cfg(feature = "libdeflate")]
+            {
+                measurements.push(measure_path_bgzf_libdeflate_parallel_trusted_pack(
+                    "file-bgzf-libdeflate-parallel-pack-seq-qual",
+                    path,
+                    input_bytes,
+                    config,
+                )?);
+            }
+        }
     }
     let source = path.to_string_lossy();
 
@@ -374,6 +413,30 @@ fn measure_bgzf_parallel(name: &str, input: &[u8], config: &Config) -> Result<Me
     })
 }
 
+#[cfg(feature = "bgzf")]
+fn measure_bgzf_trusted_pack(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
+    measure(name, input.len(), config.iters, || {
+        let source = microraptor::BgzfReader::new(input);
+        consume_trusted_fastq_read_with_pack(source, fastq_config(config))
+    })
+}
+
+#[cfg(feature = "bgzf")]
+fn measure_bgzf_parallel_trusted_pack(
+    name: &str,
+    input: &[u8],
+    config: &Config,
+) -> Result<Measurement> {
+    let owned: Arc<[u8]> = Arc::from(input);
+    measure(name, input.len(), config.iters, || {
+        let source = microraptor::BgzfParallelReader::new(
+            std::io::Cursor::new(Arc::clone(&owned)),
+            config.workers,
+        )?;
+        consume_trusted_fastq_read_with_pack(source, fastq_config(config))
+    })
+}
+
 #[cfg(all(feature = "bgzf", feature = "libdeflate"))]
 fn measure_bgzf_libdeflate_serial(
     name: &str,
@@ -419,6 +482,23 @@ fn measure_bgzf_libdeflate_parallel(
             },
         );
         consume_fastq(&mut reader)
+    })
+}
+
+#[cfg(all(feature = "bgzf", feature = "libdeflate"))]
+fn measure_bgzf_libdeflate_parallel_trusted_pack(
+    name: &str,
+    input: &[u8],
+    config: &Config,
+) -> Result<Measurement> {
+    let owned: Arc<[u8]> = Arc::from(input);
+    measure(name, input.len(), config.iters, || {
+        let source = microraptor::BgzfParallelReader::with_inflate_backend(
+            std::io::Cursor::new(Arc::clone(&owned)),
+            config.workers,
+            microraptor::BgzfInflateBackend::Libdeflate,
+        )?;
+        consume_trusted_fastq_read_with_pack(source, fastq_config(config))
     })
 }
 
@@ -676,7 +756,39 @@ fn measure_path_bgzf_libdeflate_parallel(
     })
 }
 
+#[cfg(feature = "bgzf")]
+fn measure_path_bgzf_parallel_trusted_pack(
+    name: &str,
+    path: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let file = std::fs::File::open(path)?;
+        let source = microraptor::BgzfParallelReader::new(file, config.workers)?;
+        consume_trusted_fastq_read_with_pack(source, fastq_config(config))
+    })
+}
+
 #[cfg(all(feature = "bgzf", feature = "libdeflate"))]
+fn measure_path_bgzf_libdeflate_parallel_trusted_pack(
+    name: &str,
+    path: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let file = std::fs::File::open(path)?;
+        let source = microraptor::BgzfParallelReader::with_inflate_backend(
+            file,
+            config.workers,
+            microraptor::BgzfInflateBackend::Libdeflate,
+        )?;
+        consume_trusted_fastq_read_with_pack(source, fastq_config(config))
+    })
+}
+
+#[cfg(feature = "bgzf")]
 fn path_has_bgzf_header(path: &Path) -> Result<bool> {
     let mut file = std::fs::File::open(path)?;
     let mut prefix = [0_u8; 18];

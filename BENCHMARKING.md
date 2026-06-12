@@ -38,6 +38,7 @@ scripts/bench.sh
 scripts/benchmark-gauntlet.sh
 scripts/check-pack-regression.sh
 scripts/check-pack-instructions.sh
+scripts/check-slab-autotune.sh
 scripts/asm-pack.sh
 ```
 
@@ -53,7 +54,9 @@ Synthetic `--mode pack` uses the trusted streaming pack path for `pack-seq-qual`
 It also reports `direct-pack-seq-qual` for the lower-memory single-pass scanner
 and `reader-pack-seq-qual` for the safe parser-backed reference. The default
 trusted path reuses the SIMD newline scanner, handles slab carry and CRLF
-trimming, and skips batch record construction before packing.
+trimming, uses the fused base+quality pack kernel, and skips batch record
+construction before packing. The fused kernel packs four classified bases per
+compact LUT lookup and accumulates qualities during the same exact-length walk.
 
 Use `scripts/check-pack-regression.sh` as a narrow guard for the default pack
 path. It checks that `pack-seq-qual` and `reader-pack-seq-qual` checksums match
@@ -65,6 +68,9 @@ Use `scripts/asm-pack.sh` to emit optimized assembly for pack-path inspection.
 Use `scripts/check-pack-instructions.sh` to compute pack-path
 instructions/base from `perf stat`; set
 `MICRORAPTOR_MAX_PACK_INSTRUCTIONS_PER_BASE` to turn it into a threshold gate.
+Use `scripts/check-slab-autotune.sh` to compare the default pack path across
+candidate slab sizes. Set `MICRORAPTOR_SLAB_INPUT=/path/to/file.fastq` to tune a
+real workload instead of the synthetic fixture.
 
 For a real dataset:
 
@@ -157,6 +163,10 @@ pipeline planning, `records_s` and `bases_s` are the more useful common units.
 
 The `bgzf-parallel` row uses the bounded streaming `BgzfParallelReader`, not the
 older whole-input decompression helper.
+In pack mode, `bgzf-parallel-pack-seq-qual` and
+`file-bgzf-parallel-pack-seq-qual` force that same decompression pipeline into
+the trusted pack path. Treat those rows as the gate for enabling any future BGZF
+pack default changes.
 
 ## CI Parity
 
