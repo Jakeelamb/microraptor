@@ -7,6 +7,7 @@ iters="${MICRORAPTOR_GAUNTLET_ITERS:-3}"
 workers="${MICRORAPTOR_WORKERS:-$(nproc)}"
 input_dir="${MICRORAPTOR_GAUNTLET_INPUT_DIR:-target/bench-inputs}"
 result_dir="${MICRORAPTOR_GAUNTLET_RESULT_DIR:-target/bench-results}"
+corpus_inputs="${MICRORAPTOR_GAUNTLET_CORPUS_INPUTS:-}"
 
 mkdir -p "${input_dir}" "${result_dir}"
 
@@ -110,6 +111,12 @@ run_microraptor "paired/r2/raw" "${input_dir}/r2.fastq"
 run_microraptor_paired "paired/raw" "${input_dir}/r1.fastq" "${input_dir}/r2.fastq"
 run_microraptor_paired "paired/gzip" "${input_dir}/r1.fastq.gz" "${input_dir}/r2.fastq.gz"
 run_microraptor_paired "paired/bgzf" "${input_dir}/r1.fastq.bgz" "${input_dir}/r2.fastq.bgz"
+
+if [[ -n "${corpus_inputs}" ]]; then
+  for corpus_input in ${corpus_inputs}; do
+    run_microraptor "corpus/$(basename "${corpus_input}")" "${corpus_input}"
+  done
+fi
 
 {
   printf '## external tools\n\n'

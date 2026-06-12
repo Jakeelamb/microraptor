@@ -5,8 +5,10 @@ records="${MICRORAPTOR_PROFILE_RECORDS:-500000}"
 read_len="${MICRORAPTOR_PROFILE_READ_LEN:-150}"
 iters="${MICRORAPTOR_PROFILE_ITERS:-3}"
 workers="${MICRORAPTOR_WORKERS:-$(nproc)}"
-input_dir="${MICRORAPTOR_PROFILE_INPUT_DIR:-target/bench-inputs}"
+input_dir="${MICRORAPTOR_PROFILE_INPUT_DIR:-target/profile-inputs}"
 profile_dir="${MICRORAPTOR_PROFILE_DIR:-target/profiles}"
+pattern="${MICRORAPTOR_PROFILE_PATTERN:-cyclic}"
+profile_bgzf_parallel="${MICRORAPTOR_PROFILE_BGZF_PARALLEL:-0}"
 
 mkdir -p "${input_dir}" "${profile_dir}"
 
@@ -14,19 +16,26 @@ cargo build --release --all-features --bin microraptor-bench --bin microraptor-f
 target/release/microraptor-fixture \
   --out-dir "${input_dir}" \
   --records "${records}" \
-  --read-len "${read_len}"
+  --read-len "${read_len}" \
+  --pattern "${pattern}"
 
 input="${MICRORAPTOR_PROFILE_INPUT:-${input_dir}/single.fastq}"
 jsonl="${profile_dir}/microraptor-hotpath.jsonl"
 : > "${jsonl}"
 
 for mode in parse pack; do
+  profile_args=()
+  if [[ "${mode}" == "pack" && "${profile_bgzf_parallel}" != "0" ]]; then
+    profile_args+=(--profile-bgzf-parallel)
+  fi
+
   printf 'benchmarking mode=%s input=%s\n' "${mode}" "${input}"
   target/release/microraptor-bench \
     --input "${input}" \
     --mode "${mode}" \
     --iters "${iters}" \
     --workers "${workers}" \
+    "${profile_args[@]}" \
     --json >> "${jsonl}"
 
   if command -v perf >/dev/null 2>&1; then
@@ -36,7 +45,8 @@ for mode in parse pack; do
         --input "${input}" \
         --mode "${mode}" \
         --iters "${iters}" \
-        --workers "${workers}" >/dev/null || true
+        --workers "${workers}" \
+        "${profile_args[@]}" >/dev/null || true
 
     perf record -F 999 -g \
       -o "${profile_dir}/microraptor-${mode}.perf.data" -- \
@@ -44,7 +54,8 @@ for mode in parse pack; do
         --input "${input}" \
         --mode "${mode}" \
         --iters 1 \
-        --workers "${workers}" >/dev/null 2>&1 || true
+        --workers "${workers}" \
+        "${profile_args[@]}" >/dev/null 2>&1 || true
 
     if [[ -f "${profile_dir}/microraptor-${mode}.perf.data" ]]; then
       perf report \

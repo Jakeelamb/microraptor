@@ -68,6 +68,7 @@ pub struct BgzfParallelConfig {
     pub job_queue_depth: usize,
     pub result_queue_depth: usize,
     pub backend: BgzfInflateBackend,
+    pub parallel_min_compressed_bytes: u64,
 }
 
 impl Default for BgzfParallelConfig {
@@ -77,6 +78,7 @@ impl Default for BgzfParallelConfig {
             job_queue_depth: 2,
             result_queue_depth: 2,
             backend: BgzfInflateBackend::default(),
+            parallel_min_compressed_bytes: DEFAULT_PARALLEL_MIN_COMPRESSED_BYTES,
         }
     }
 }
@@ -101,8 +103,13 @@ impl BgzfParallelConfig {
         self
     }
 
+    pub fn with_parallel_min_compressed_bytes(mut self, bytes: u64) -> Self {
+        self.parallel_min_compressed_bytes = bytes;
+        self
+    }
+
     pub fn should_parallelize(self, compressed_len: u64) -> bool {
-        self.workers > 1 && compressed_len >= DEFAULT_PARALLEL_MIN_COMPRESSED_BYTES
+        self.workers > 1 && compressed_len >= self.parallel_min_compressed_bytes
     }
 }
 

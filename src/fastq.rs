@@ -497,6 +497,10 @@ impl<R: Read> FastqReader<R> {
         }
     }
 
+    pub fn into_inner(self) -> R {
+        self.reader
+    }
+
     pub fn next_batch(&mut self) -> Result<Option<FastqBatch<'_>>> {
         self.compact_carry();
         self.fill_slab()?;

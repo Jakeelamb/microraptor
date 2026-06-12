@@ -80,7 +80,15 @@ fn open_read_by_magic(path: impl AsRef<Path>) -> Result<Box<dyn Read + Send>> {
 
         match kind {
             #[cfg(feature = "bgzf")]
-            InputKind::Bgzf => return Ok(Box::new(BgzfReader::new(file))),
+            InputKind::Bgzf => {
+                let compressed_len = file.metadata()?.len();
+                let config = BgzfParallelConfig::new(default_bgzf_workers());
+                return Ok(Box::new(BgzfAutoReader::with_config(
+                    file,
+                    compressed_len,
+                    config,
+                )?));
+            }
             #[cfg(feature = "gzip")]
             InputKind::Gzip => return Ok(Box::new(flate2::read::MultiGzDecoder::new(file))),
             InputKind::Raw => {}
@@ -104,6 +112,11 @@ fn detect_input_kind(file: &mut File) -> Result<InputKind> {
         return Ok(InputKind::Gzip);
     }
     Ok(InputKind::Raw)
+}
+
+#[cfg(feature = "bgzf")]
+fn default_bgzf_workers() -> usize {
+    std::thread::available_parallelism().map_or(1, usize::from)
 }
 
 #[cfg(all(feature = "gzip", feature = "libdeflate"))]
@@ -279,6 +292,45 @@ mod tests {
         assert_eq!(rec.seq(), b"ACGT");
 
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "bgzf")]
+    fn public_bgzf_adaptive_opener_selects_serial_and_parallel() {
+        let dir = std::env::temp_dir();
+        let small_path = dir.join(format!("microraptor-bgzf-small-{}.bgz", std::process::id()));
+        let large_path = dir.join(format!("microraptor-bgzf-large-{}.bgz", std::process::id()));
+
+        let mut small_writer = crate::BgzfWriter::new(File::create(&small_path).unwrap());
+        small_writer.write_all(b"@r1\nACGT\n+\nIIII\n").unwrap();
+        small_writer.finish().unwrap();
+
+        let mut large_writer = crate::BgzfWriter::new(File::create(&large_path).unwrap());
+        for i in 0..2048 {
+            writeln!(large_writer, "@r{i}\nACGTACGTACGTACGT\n+\nIIIIIIIIIIIIIIII").unwrap();
+        }
+        large_writer.finish().unwrap();
+
+        let serial = open_fastq_bgzf_adaptive(
+            &small_path,
+            BgzfParallelConfig::new(2).with_parallel_min_compressed_bytes(u64::MAX),
+            FastqConfig::default(),
+        )
+        .unwrap()
+        .into_inner();
+        assert!(matches!(serial, crate::BgzfAutoReader::Serial(_)));
+
+        let parallel = open_fastq_bgzf_adaptive(
+            &large_path,
+            BgzfParallelConfig::new(2).with_parallel_min_compressed_bytes(0),
+            FastqConfig::default(),
+        )
+        .unwrap()
+        .into_inner();
+        assert!(matches!(parallel, crate::BgzfAutoReader::Parallel(_)));
+
+        std::fs::remove_file(small_path).unwrap();
+        std::fs::remove_file(large_path).unwrap();
     }
 
     #[test]

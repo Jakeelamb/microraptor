@@ -64,6 +64,16 @@ and fails when the trusted path is more than the configured tolerance slower
 than the reader-backed reference. It also checks that the direct scanner emits
 the same checksum.
 
+Use `scripts/check-bgzf-pack-regression.sh` as the matching guard for real BGZF
+pack inputs. It creates both a small cyclic BGZF fixture and a large entropy
+BGZF fixture that must cross the adaptive parallel threshold, requires the
+serial/adaptive/libdeflate trusted-pack rows, checks their checksums against the
+reader-backed reference, fails when the adaptive trusted BGZF path is more than
+the configured tolerance slower than the reader-backed pack row, and checks that
+the default BGZF pack row stays within tolerance of the explicit adaptive row.
+The shell script only orchestrates fixtures; `microraptor-bench
+--check-bgzf-pack-regression` owns row validation and tolerance checks.
+
 Use `scripts/asm-pack.sh` to emit optimized assembly for pack-path inspection.
 Use `scripts/check-pack-instructions.sh` to compute pack-path
 instructions/base from `perf stat`; set
@@ -73,6 +83,10 @@ candidate slab sizes. Set `MICRORAPTOR_SLAB_INPUT=/path/to/file.fastq` to tune a
 real workload instead of the synthetic fixture. Treat this as workload evidence,
 not an automatic default change; slab winners are sensitive to input size,
 compression, and cache state.
+
+Set `MICRORAPTOR_GAUNTLET_CORPUS_INPUTS` to a space-separated list of real FASTQ,
+gzip FASTQ, or BGZF FASTQ files to add optional corpus rows to the gauntlet
+without checking datasets into the repository.
 
 For a real dataset:
 
@@ -95,12 +109,16 @@ Build with `--features libdeflate` or `--all-features` to include explicit
 `bgzf-libdeflate-*` rows for synthetic BGZF and `file-bgzf-libdeflate-*` rows
 for real `.bgz` inputs. Ordinary gzip remains on the streaming flate2 path;
 `open_fastq_gzip_libdeflate` is an explicit buffered path for bounded gzip
-inputs. When the `libdeflate` feature is enabled, the normal BGZF auto-open path
-uses libdeflate inflate by default; use `open_fastq_bgzf_flate2` or
-`open_fastq_bgzf_with_backend` when comparing or forcing a backend. BGZF output
-can use libdeflate through `BgzfDeflateBackend`. Use `open_fastq_bgzf_adaptive`
-when you want the crate to keep small BGZF inputs serial and switch to the
-bounded parallel reader only past the built-in size threshold.
+inputs. The normal BGZF auto-open path uses `BgzfAutoReader` by default: small
+compressed inputs stay serial and larger inputs switch to the bounded parallel
+reader only past the built-in size threshold. When the `libdeflate` feature is
+enabled, BGZF auto-open uses libdeflate inflate by default; use
+`open_fastq_bgzf_flate2` or `open_fastq_bgzf_with_backend` when comparing or
+forcing a backend. BGZF output can use libdeflate through `BgzfDeflateBackend`.
+Use `open_fastq_bgzf_adaptive` when you need to pass an explicit BGZF worker or
+backend configuration. `BgzfParallelConfig::with_parallel_min_compressed_bytes`
+controls the adaptive serial/parallel threshold; `microraptor-bench` exposes the
+same knob as `--bgzf-parallel-min-bytes`.
 
 `microraptor-bench --paired-inputs` uses typed file openers and
 `PairValidation::FastSlash` for ordered `/1` and `/2` mate IDs. That benchmark
@@ -142,6 +160,7 @@ For isolated parse/pack hot-path evidence:
 ```bash
 MICRORAPTOR_PROFILE_RECORDS=1000000 MICRORAPTOR_PROFILE_ITERS=3 scripts/profile-hotpath.sh
 MICRORAPTOR_PROFILE_INPUT=reads.fastq.gz scripts/profile-hotpath.sh
+MICRORAPTOR_PROFILE_INPUT=reads.fastq.bgz MICRORAPTOR_PROFILE_BGZF_PARALLEL=1 scripts/profile-hotpath.sh
 ```
 
 `profile-hotpath.sh` writes:
@@ -149,6 +168,10 @@ MICRORAPTOR_PROFILE_INPUT=reads.fastq.gz scripts/profile-hotpath.sh
 - `target/profiles/microraptor-hotpath.jsonl`
 - `target/profiles/microraptor-parse.perf-stat.txt` when `perf` is permitted
 - `target/profiles/microraptor-pack.perf-stat.txt` when `perf` is permitted
+
+For BGZF inputs, `MICRORAPTOR_PROFILE_BGZF_PARALLEL=1` adds
+`file-bgzf-direct-parallel-pack-seq-qual` to the pack benchmark so adaptive
+BGZF overhead can be compared directly against a forced `BgzfParallelReader`.
 
 ## Interpreting Results
 
@@ -165,10 +188,11 @@ pipeline planning, `records_s` and `bases_s` are the more useful common units.
 
 The `bgzf-parallel` row uses the bounded streaming `BgzfParallelReader`, not the
 older whole-input decompression helper.
-In pack mode, `bgzf-parallel-pack-seq-qual` and
-`file-bgzf-parallel-pack-seq-qual` force that same decompression pipeline into
-the trusted pack path. Treat those rows as the gate for enabling any future BGZF
-pack default changes.
+In pack mode, `file-pack-seq-qual` uses the default adaptive BGZF auto-open path
+for `.bgz` inputs. `bgzf-adaptive-pack-seq-qual` and
+`file-bgzf-adaptive-pack-seq-qual` keep the adaptive comparison explicit. With
+`libdeflate` enabled, the `*-libdeflate-serial-pack-seq-qual` and
+`*-libdeflate-adaptive-pack-seq-qual` rows make the backend comparison explicit.
 
 ## CI Parity
 

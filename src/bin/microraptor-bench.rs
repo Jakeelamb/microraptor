@@ -20,7 +20,7 @@ enum BenchRead {
     #[cfg(feature = "gzip")]
     Gzip(flate2::read::MultiGzDecoder<std::fs::File>),
     #[cfg(feature = "bgzf")]
-    Bgzf(microraptor::BgzfReader<std::fs::File>),
+    Bgzf(microraptor::BgzfAutoReader<std::fs::File>),
 }
 
 impl std::io::Read for BenchRead {
@@ -42,10 +42,13 @@ struct Config {
     iters: usize,
     slab_size: usize,
     workers: usize,
+    bgzf_parallel_min_bytes: u64,
     json: bool,
     input: Option<PathBuf>,
     paired_inputs: Option<(PathBuf, PathBuf)>,
     mode: Mode,
+    bgzf_pack_check: Option<BgzfPackCheck>,
+    profile_bgzf_parallel: bool,
 }
 
 impl Default for Config {
@@ -56,10 +59,30 @@ impl Default for Config {
             iters: 5,
             slab_size: 8 * 1024 * 1024,
             workers: std::thread::available_parallelism().map_or(1, usize::from),
+            bgzf_parallel_min_bytes: 32 * 1024 * 1024,
             json: false,
             input: None,
             paired_inputs: None,
             mode: Mode::All,
+            bgzf_pack_check: None,
+            profile_bgzf_parallel: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct BgzfPackCheck {
+    label: String,
+    min_input_bytes: usize,
+    tolerance_pct: u128,
+}
+
+impl Default for BgzfPackCheck {
+    fn default() -> Self {
+        Self {
+            label: "bgzf".into(),
+            min_input_bytes: 0,
+            tolerance_pct: 15,
         }
     }
 }
@@ -165,15 +188,20 @@ fn run() -> Result<()> {
                 &bgzf,
                 &config,
             )?);
-            measurements.push(measure_bgzf_parallel_trusted_pack(
-                "bgzf-parallel-pack-seq-qual",
+            measurements.push(measure_bgzf_adaptive_trusted_pack(
+                "bgzf-adaptive-pack-seq-qual",
                 &bgzf,
                 &config,
             )?);
             #[cfg(feature = "libdeflate")]
             {
-                measurements.push(measure_bgzf_libdeflate_parallel_trusted_pack(
-                    "bgzf-libdeflate-parallel-pack-seq-qual",
+                measurements.push(measure_bgzf_libdeflate_serial_trusted_pack(
+                    "bgzf-libdeflate-serial-pack-seq-qual",
+                    &bgzf,
+                    &config,
+                )?);
+                measurements.push(measure_bgzf_libdeflate_adaptive_trusted_pack(
+                    "bgzf-libdeflate-adaptive-pack-seq-qual",
                     &bgzf,
                     &config,
                 )?);
@@ -277,16 +305,30 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
         )?);
         #[cfg(feature = "bgzf")]
         if path_has_bgzf_header(path)? {
-            measurements.push(measure_path_bgzf_parallel_trusted_pack(
-                "file-bgzf-parallel-pack-seq-qual",
+            measurements.push(measure_path_bgzf_adaptive_trusted_pack(
+                "file-bgzf-adaptive-pack-seq-qual",
                 path,
                 input_bytes,
                 config,
             )?);
             #[cfg(feature = "libdeflate")]
             {
-                measurements.push(measure_path_bgzf_libdeflate_parallel_trusted_pack(
-                    "file-bgzf-libdeflate-parallel-pack-seq-qual",
+                measurements.push(measure_path_bgzf_libdeflate_serial_trusted_pack(
+                    "file-bgzf-libdeflate-serial-pack-seq-qual",
+                    path,
+                    input_bytes,
+                    config,
+                )?);
+                measurements.push(measure_path_bgzf_libdeflate_adaptive_trusted_pack(
+                    "file-bgzf-libdeflate-adaptive-pack-seq-qual",
+                    path,
+                    input_bytes,
+                    config,
+                )?);
+            }
+            if config.profile_bgzf_parallel {
+                measurements.push(measure_path_bgzf_direct_parallel_trusted_pack(
+                    "file-bgzf-direct-parallel-pack-seq-qual",
                     path,
                     input_bytes,
                     config,
@@ -294,6 +336,11 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
             }
         }
     }
+
+    if let Some(check) = config.bgzf_pack_check.as_ref() {
+        return check_bgzf_pack_regression(check, &measurements);
+    }
+
     let source = path.to_string_lossy();
 
     if config.json {
@@ -307,12 +354,105 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
     Ok(())
 }
 
+fn check_bgzf_pack_regression(check: &BgzfPackCheck, rows: &[Measurement]) -> Result<()> {
+    let reader = required_measurement(rows, "file-reader-pack-seq-qual")?;
+    let default = required_measurement(rows, "file-pack-seq-qual")?;
+    let adaptive = required_measurement(rows, "file-bgzf-adaptive-pack-seq-qual")?;
+    let libdeflate_serial =
+        required_measurement(rows, "file-bgzf-libdeflate-serial-pack-seq-qual")?;
+    let libdeflate_adaptive =
+        required_measurement(rows, "file-bgzf-libdeflate-adaptive-pack-seq-qual")?;
+
+    if default.bytes < check.min_input_bytes {
+        return Err(microraptor::FastqError::Format(format!(
+            "BGZF {} fixture is below parallel threshold: {} bytes < {} bytes",
+            check.label, default.bytes, check.min_input_bytes
+        )));
+    }
+
+    for row in [default, adaptive, libdeflate_serial, libdeflate_adaptive] {
+        if row.checksum != reader.checksum {
+            return Err(microraptor::FastqError::Format(format!(
+                "BGZF {} checksum mismatch: {}={} reader={}",
+                check.label, row.name, row.checksum, reader.checksum
+            )));
+        }
+    }
+
+    let reader_limit = tolerance_limit(reader.best.as_nanos(), check.tolerance_pct);
+    if adaptive.best.as_nanos() > reader_limit {
+        return Err(microraptor::FastqError::Format(format!(
+            "BGZF {} adaptive pack regression: {} ns > {} ns",
+            check.label,
+            adaptive.best.as_nanos(),
+            reader_limit
+        )));
+    }
+
+    let adaptive_limit = tolerance_limit(adaptive.best.as_nanos(), check.tolerance_pct);
+    if default.best.as_nanos() > adaptive_limit {
+        return Err(microraptor::FastqError::Format(format!(
+            "BGZF {} default pack is slower than adaptive: {} ns > {} ns",
+            check.label,
+            default.best.as_nanos(),
+            adaptive_limit
+        )));
+    }
+
+    if libdeflate_adaptive.best.as_nanos() > reader_limit {
+        return Err(microraptor::FastqError::Format(format!(
+            "BGZF {} libdeflate adaptive pack regression: {} ns > {} ns",
+            check.label,
+            libdeflate_adaptive.best.as_nanos(),
+            reader_limit
+        )));
+    }
+
+    println!("{}_input_bytes\t{}", check.label, default.bytes);
+    println!(
+        "{}_file-pack-seq-qual_ns\t{}",
+        check.label,
+        default.best.as_nanos()
+    );
+    println!(
+        "{}_file-reader-pack-seq-qual_ns\t{}",
+        check.label,
+        reader.best.as_nanos()
+    );
+    println!(
+        "{}_file-bgzf-adaptive-pack-seq-qual_ns\t{}",
+        check.label,
+        adaptive.best.as_nanos()
+    );
+    println!(
+        "{}_file-bgzf-libdeflate-serial-pack-seq-qual_ns\t{}",
+        check.label,
+        libdeflate_serial.best.as_nanos()
+    );
+    println!(
+        "{}_file-bgzf-libdeflate-adaptive-pack-seq-qual_ns\t{}",
+        check.label,
+        libdeflate_adaptive.best.as_nanos()
+    );
+    Ok(())
+}
+
+fn required_measurement<'a>(rows: &'a [Measurement], name: &str) -> Result<&'a Measurement> {
+    rows.iter().find(|row| row.name == name).ok_or_else(|| {
+        microraptor::FastqError::Format(format!("missing BGZF pack benchmark row: {name}"))
+    })
+}
+
+fn tolerance_limit(ns: u128, tolerance_pct: u128) -> u128 {
+    ns + (ns * tolerance_pct / 100)
+}
+
 fn checked_file_len(path: &Path) -> Result<usize> {
     usize::try_from(std::fs::metadata(path)?.len())
         .map_err(|_| microraptor::FastqError::Format("input file is too large".into()))
 }
 
-fn open_bench_read(path: &Path) -> Result<BenchRead> {
+fn open_bench_read(path: &Path, _config: &Config) -> Result<BenchRead> {
     let mut file = std::fs::File::open(path)?;
     let mut prefix = [0_u8; 18];
     let _n = file.read(&mut prefix)?;
@@ -320,7 +460,12 @@ fn open_bench_read(path: &Path) -> Result<BenchRead> {
 
     #[cfg(feature = "bgzf")]
     if is_bgzf_header(&prefix[.._n]) {
-        return Ok(BenchRead::Bgzf(microraptor::BgzfReader::new(file)));
+        let compressed_len = file.metadata()?.len();
+        return Ok(BenchRead::Bgzf(microraptor::BgzfAutoReader::with_config(
+            file,
+            compressed_len,
+            bgzf_config(_config),
+        )?));
     }
 
     #[cfg(feature = "gzip")]
@@ -421,16 +566,17 @@ fn measure_bgzf_trusted_pack(name: &str, input: &[u8], config: &Config) -> Resul
 }
 
 #[cfg(feature = "bgzf")]
-fn measure_bgzf_parallel_trusted_pack(
+fn measure_bgzf_adaptive_trusted_pack(
     name: &str,
     input: &[u8],
     config: &Config,
 ) -> Result<Measurement> {
     let owned: Arc<[u8]> = Arc::from(input);
     measure(name, input.len(), config.iters, || {
-        let source = microraptor::BgzfParallelReader::new(
+        let source = microraptor::BgzfAutoReader::with_config(
             std::io::Cursor::new(Arc::clone(&owned)),
-            config.workers,
+            input.len() as u64,
+            bgzf_config(config),
         )?;
         consume_trusted_fastq_read_with_pack(source, fastq_config(config))
     })
@@ -485,17 +631,32 @@ fn measure_bgzf_libdeflate_parallel(
 }
 
 #[cfg(all(feature = "bgzf", feature = "libdeflate"))]
-fn measure_bgzf_libdeflate_parallel_trusted_pack(
+fn measure_bgzf_libdeflate_serial_trusted_pack(
+    name: &str,
+    input: &[u8],
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input.len(), config.iters, || {
+        let source = microraptor::BgzfReader::with_inflate_backend(
+            input,
+            microraptor::BgzfInflateBackend::Libdeflate,
+        );
+        consume_trusted_fastq_read_with_pack(source, fastq_config(config))
+    })
+}
+
+#[cfg(all(feature = "bgzf", feature = "libdeflate"))]
+fn measure_bgzf_libdeflate_adaptive_trusted_pack(
     name: &str,
     input: &[u8],
     config: &Config,
 ) -> Result<Measurement> {
     let owned: Arc<[u8]> = Arc::from(input);
     measure(name, input.len(), config.iters, || {
-        let source = microraptor::BgzfParallelReader::with_inflate_backend(
+        let source = microraptor::BgzfAutoReader::with_config(
             std::io::Cursor::new(Arc::clone(&owned)),
-            config.workers,
-            microraptor::BgzfInflateBackend::Libdeflate,
+            input.len() as u64,
+            bgzf_config(config).with_inflate_backend(microraptor::BgzfInflateBackend::Libdeflate),
         )?;
         consume_trusted_fastq_read_with_pack(source, fastq_config(config))
     })
@@ -548,7 +709,8 @@ fn measure_path_fastq(
     config: &Config,
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
-        let mut reader = FastqReader::with_config(open_bench_read(path)?, fastq_config(config));
+        let mut reader =
+            FastqReader::with_config(open_bench_read(path, config)?, fastq_config(config));
         consume_fastq(&mut reader)
     })
 }
@@ -560,7 +722,8 @@ fn measure_path_pack(
     config: &Config,
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
-        let mut reader = FastqReader::with_config(open_bench_read(path)?, fastq_config(config));
+        let mut reader =
+            FastqReader::with_config(open_bench_read(path, config)?, fastq_config(config));
         consume_fastq_with_pack(&mut reader)
     })
 }
@@ -571,8 +734,13 @@ fn measure_path_trusted_pack(
     input_bytes: usize,
     config: &Config,
 ) -> Result<Measurement> {
+    #[cfg(feature = "bgzf")]
+    if path_has_bgzf_header(path)? {
+        return measure_path_bgzf_adaptive_trusted_pack(name, path, input_bytes, config);
+    }
+
     measure(name, input_bytes, config.iters, || {
-        consume_trusted_fastq_read_with_pack(open_bench_read(path)?, fastq_config(config))
+        consume_trusted_fastq_read_with_pack(open_bench_read(path, config)?, fastq_config(config))
     })
 }
 
@@ -583,7 +751,10 @@ fn measure_path_direct_pack(
     config: &Config,
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
-        consume_trusted_fastq_read_direct_with_pack(open_bench_read(path)?, fastq_config(config))
+        consume_trusted_fastq_read_direct_with_pack(
+            open_bench_read(path, config)?,
+            fastq_config(config),
+        )
     })
 }
 
@@ -596,8 +767,8 @@ fn measure_paired_path_fastq(
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
         let mut reader = microraptor::PairedFastqReader::from_fastq_readers(
-            FastqReader::with_config(open_bench_read(first)?, fastq_config(config)),
-            FastqReader::with_config(open_bench_read(second)?, fastq_config(config)),
+            FastqReader::with_config(open_bench_read(first, config)?, fastq_config(config)),
+            FastqReader::with_config(open_bench_read(second, config)?, fastq_config(config)),
         );
         consume_paired_fastq(&mut reader)
     })
@@ -612,8 +783,8 @@ fn measure_paired_path_pack(
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
         let mut reader = microraptor::PairedFastqReader::from_fastq_readers(
-            FastqReader::with_config(open_bench_read(first)?, fastq_config(config)),
-            FastqReader::with_config(open_bench_read(second)?, fastq_config(config)),
+            FastqReader::with_config(open_bench_read(first, config)?, fastq_config(config)),
+            FastqReader::with_config(open_bench_read(second, config)?, fastq_config(config)),
         );
         let mut ctx = PackContext::default();
         while let Some(batch) = reader.next_pair_batch()? {
@@ -638,8 +809,8 @@ fn measure_paired_path_trusted_pack(
     measure(name, input_bytes, config.iters, || {
         let mut stats = StreamStats::default();
         microraptor::pack::pack_trusted_paired_fastq_read(
-            open_bench_read(first)?,
-            open_bench_read(second)?,
+            open_bench_read(first, config)?,
+            open_bench_read(second, config)?,
             fastq_config(config),
             PairValidation::FastSlash,
             |pair| {
@@ -745,7 +916,25 @@ fn measure_path_bgzf_libdeflate_parallel(
 }
 
 #[cfg(feature = "bgzf")]
-fn measure_path_bgzf_parallel_trusted_pack(
+fn measure_path_bgzf_adaptive_trusted_pack(
+    name: &str,
+    path: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let file = std::fs::File::open(path)?;
+        let source = microraptor::BgzfAutoReader::with_config(
+            file,
+            input_bytes as u64,
+            bgzf_config(config),
+        )?;
+        consume_trusted_fastq_read_with_pack(source, fastq_config(config))
+    })
+}
+
+#[cfg(feature = "bgzf")]
+fn measure_path_bgzf_direct_parallel_trusted_pack(
     name: &str,
     path: &Path,
     input_bytes: usize,
@@ -759,7 +948,7 @@ fn measure_path_bgzf_parallel_trusted_pack(
 }
 
 #[cfg(all(feature = "bgzf", feature = "libdeflate"))]
-fn measure_path_bgzf_libdeflate_parallel_trusted_pack(
+fn measure_path_bgzf_libdeflate_serial_trusted_pack(
     name: &str,
     path: &Path,
     input_bytes: usize,
@@ -767,10 +956,27 @@ fn measure_path_bgzf_libdeflate_parallel_trusted_pack(
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
         let file = std::fs::File::open(path)?;
-        let source = microraptor::BgzfParallelReader::with_inflate_backend(
+        let source = microraptor::BgzfReader::with_inflate_backend(
             file,
-            config.workers,
             microraptor::BgzfInflateBackend::Libdeflate,
+        );
+        consume_trusted_fastq_read_with_pack(source, fastq_config(config))
+    })
+}
+
+#[cfg(all(feature = "bgzf", feature = "libdeflate"))]
+fn measure_path_bgzf_libdeflate_adaptive_trusted_pack(
+    name: &str,
+    path: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let file = std::fs::File::open(path)?;
+        let source = microraptor::BgzfAutoReader::with_config(
+            file,
+            input_bytes as u64,
+            bgzf_config(config).with_inflate_backend(microraptor::BgzfInflateBackend::Libdeflate),
         )?;
         consume_trusted_fastq_read_with_pack(source, fastq_config(config))
     })
@@ -800,6 +1006,12 @@ fn fastq_config(config: &Config) -> FastqConfig {
         pair_validation: PairValidation::FastSlash,
         ..FastqConfig::default()
     }
+}
+
+#[cfg(feature = "bgzf")]
+fn bgzf_config(config: &Config) -> microraptor::BgzfParallelConfig {
+    microraptor::BgzfParallelConfig::new(config.workers)
+        .with_parallel_min_compressed_bytes(config.bgzf_parallel_min_bytes)
 }
 
 fn measure<F>(name: &str, bytes: usize, iters: usize, mut f: F) -> Result<Measurement>
@@ -916,6 +1128,9 @@ fn parse_args() -> Config {
             "--iters" => config.iters = parse_next(&mut args, "--iters"),
             "--slab-size" => config.slab_size = parse_next(&mut args, "--slab-size"),
             "--workers" => config.workers = parse_next(&mut args, "--workers"),
+            "--bgzf-parallel-min-bytes" => {
+                config.bgzf_parallel_min_bytes = parse_next(&mut args, "--bgzf-parallel-min-bytes")
+            }
             "--input" => config.input = Some(parse_path(&mut args, "--input")),
             "--paired-inputs" => {
                 let first = parse_path(&mut args, "--paired-inputs");
@@ -923,6 +1138,30 @@ fn parse_args() -> Config {
                 config.paired_inputs = Some((first, second));
             }
             "--mode" => config.mode = parse_mode(&mut args, "--mode"),
+            "--check-bgzf-pack-regression" => {
+                config
+                    .bgzf_pack_check
+                    .get_or_insert_with(BgzfPackCheck::default);
+            }
+            "--check-label" => {
+                config
+                    .bgzf_pack_check
+                    .get_or_insert_with(BgzfPackCheck::default)
+                    .label = parse_string(&mut args, "--check-label");
+            }
+            "--min-input-bytes" => {
+                config
+                    .bgzf_pack_check
+                    .get_or_insert_with(BgzfPackCheck::default)
+                    .min_input_bytes = parse_next(&mut args, "--min-input-bytes");
+            }
+            "--tolerance-pct" => {
+                config
+                    .bgzf_pack_check
+                    .get_or_insert_with(BgzfPackCheck::default)
+                    .tolerance_pct = parse_next::<u128>(&mut args, "--tolerance-pct");
+            }
+            "--profile-bgzf-parallel" => config.profile_bgzf_parallel = true,
             "--json" => config.json = true,
             "--help" | "-h" => {
                 print_help();
@@ -942,7 +1181,10 @@ fn parse_args() -> Config {
     config
 }
 
-fn parse_next(args: &mut impl Iterator<Item = String>, flag: &str) -> usize {
+fn parse_next<T>(args: &mut impl Iterator<Item = String>, flag: &str) -> T
+where
+    T: std::str::FromStr,
+{
     let Some(value) = args.next() else {
         eprintln!("{flag} requires a value");
         std::process::exit(2);
@@ -950,7 +1192,7 @@ fn parse_next(args: &mut impl Iterator<Item = String>, flag: &str) -> usize {
     match value.parse() {
         Ok(v) => v,
         Err(_) => {
-            eprintln!("{flag} requires an unsigned integer, got {value}");
+            eprintln!("{flag} requires a numeric value, got {value}");
             std::process::exit(2);
         }
     }
@@ -962,6 +1204,14 @@ fn parse_path(args: &mut impl Iterator<Item = String>, flag: &str) -> PathBuf {
         std::process::exit(2);
     };
     PathBuf::from(value)
+}
+
+fn parse_string(args: &mut impl Iterator<Item = String>, flag: &str) -> String {
+    let Some(value) = args.next() else {
+        eprintln!("{flag} requires a value");
+        std::process::exit(2);
+    };
+    value
 }
 
 fn parse_mode(args: &mut impl Iterator<Item = String>, flag: &str) -> Mode {
@@ -982,7 +1232,7 @@ fn parse_mode(args: &mut impl Iterator<Item = String>, flag: &str) -> Mode {
 
 fn print_help() {
     eprintln!(
-        "microraptor-bench [--input PATH | --paired-inputs R1 R2] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--json]"
+        "microraptor-bench [--input PATH | --paired-inputs R1 R2] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--bgzf-parallel-min-bytes N] [--json] [--check-bgzf-pack-regression] [--check-label NAME] [--min-input-bytes N] [--tolerance-pct N] [--profile-bgzf-parallel]"
     );
 }
 
