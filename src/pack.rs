@@ -333,8 +333,9 @@ fn pack_bases_exact(seq: &[u8], bases: &mut [u8], n_mask: &mut [u8]) -> BaseSumm
     };
 
     let full_chunks = seq.len() / 4;
-    for (chunk_index, packed_out) in bases.iter_mut().enumerate().take(full_chunks) {
-        let base_index = chunk_index * 4;
+    let mut chunk_index = 0;
+    let mut base_index = 0;
+    while chunk_index < full_chunks {
         let c0 = BASE_LUT[usize::from(seq[base_index])];
         let c1 = BASE_LUT[usize::from(seq[base_index + 1])];
         let c2 = BASE_LUT[usize::from(seq[base_index + 2])];
@@ -345,13 +346,16 @@ fn pack_bases_exact(seq: &[u8], bases: &mut [u8], n_mask: &mut [u8]) -> BaseSumm
         packed |= pack_code(c1, base_index, 1, &mut summary, n_mask);
         packed |= pack_code(c2, base_index, 2, &mut summary, n_mask);
         packed |= pack_code(c3, base_index, 3, &mut summary, n_mask);
-        *packed_out = packed;
+        bases[chunk_index] = packed;
+        chunk_index += 1;
+        base_index += 4;
     }
 
     let tail_start = full_chunks * 4;
-    for (offset, &base) in seq[tail_start..].iter().enumerate() {
-        let index = tail_start + offset;
-        let code = BASE_LUT[usize::from(base)];
+    let mut index = tail_start;
+    while index < seq.len() {
+        let offset = index - tail_start;
+        let code = BASE_LUT[usize::from(seq[index])];
         if code < BASE_N {
             add_base_count(&mut summary, code);
             bases[full_chunks] |= code << (offset * 2);
@@ -359,6 +363,7 @@ fn pack_bases_exact(seq: &[u8], bases: &mut [u8], n_mask: &mut [u8]) -> BaseSumm
             summary.n += 1;
             n_mask[index / 8] |= 1 << (index % 8);
         }
+        index += 1;
     }
 
     summary
@@ -388,8 +393,9 @@ fn pack_bases_and_qualities_exact(
     let mut quality = QualityAccumulator::default();
 
     let full_chunks = seq.len() / 4;
-    for (chunk_index, packed_out) in bases.iter_mut().enumerate().take(full_chunks) {
-        let base_index = chunk_index * 4;
+    let mut chunk_index = 0;
+    let mut base_index = 0;
+    while chunk_index < full_chunks {
         let c0 = BASE_LUT[usize::from(seq[base_index])];
         let c1 = BASE_LUT[usize::from(seq[base_index + 1])];
         let c2 = BASE_LUT[usize::from(seq[base_index + 2])];
@@ -404,17 +410,16 @@ fn pack_bases_and_qualities_exact(
         quality.observe(qualities[base_index + 1], base_index + 1)?;
         quality.observe(qualities[base_index + 2], base_index + 2)?;
         quality.observe(qualities[base_index + 3], base_index + 3)?;
-        *packed_out = packed;
+        bases[chunk_index] = packed;
+        chunk_index += 1;
+        base_index += 4;
     }
 
     let tail_start = full_chunks * 4;
-    for (offset, (&base, &qual)) in seq[tail_start..]
-        .iter()
-        .zip(&qualities[tail_start..])
-        .enumerate()
-    {
-        let index = tail_start + offset;
-        let code = BASE_LUT[usize::from(base)];
+    let mut index = tail_start;
+    while index < seq.len() {
+        let offset = index - tail_start;
+        let code = BASE_LUT[usize::from(seq[index])];
         if code < BASE_N {
             add_base_count(&mut bases_summary, code);
             bases[full_chunks] |= code << (offset * 2);
@@ -422,7 +427,8 @@ fn pack_bases_and_qualities_exact(
             bases_summary.n += 1;
             n_mask[index / 8] |= 1 << (index % 8);
         }
-        quality.observe(qual, index)?;
+        quality.observe(qualities[index], index)?;
+        index += 1;
     }
 
     Ok(PackedRecordSummary {
@@ -431,7 +437,6 @@ fn pack_bases_and_qualities_exact(
     })
 }
 
-#[derive(Default)]
 struct QualityAccumulator {
     len: usize,
     min_phred: u8,
@@ -441,17 +446,25 @@ struct QualityAccumulator {
     q30_bases: usize,
 }
 
+impl Default for QualityAccumulator {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            min_phred: u8::MAX,
+            max_phred: 0,
+            sum_phred: 0,
+            q20_bases: 0,
+            q30_bases: 0,
+        }
+    }
+}
+
 impl QualityAccumulator {
     #[inline(always)]
     fn observe(&mut self, byte: u8, offset: usize) -> Result<(), PackError> {
         let phred = phred33(byte, offset)?;
-        if self.len == 0 {
-            self.min_phred = phred;
-            self.max_phred = phred;
-        } else {
-            self.min_phred = self.min_phred.min(phred);
-            self.max_phred = self.max_phred.max(phred);
-        }
+        self.min_phred = self.min_phred.min(phred);
+        self.max_phred = self.max_phred.max(phred);
         self.len += 1;
         self.sum_phred += u64::from(phred);
         self.q20_bases += usize::from(phred >= 20);
