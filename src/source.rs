@@ -1,13 +1,17 @@
 use std::fs::File;
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+use std::io::Cursor;
 use std::io::Read;
 #[cfg(any(feature = "bgzf", feature = "gzip"))]
 use std::io::{Seek, SeekFrom};
 use std::path::Path;
 
 use crate::error::Result;
-use crate::fastq::{FastqConfig, FastqReader};
+use crate::fastq::{FastqConfig, FastqReader, PairedFastqReader};
 #[cfg(feature = "bgzf")]
-use crate::{BgzfInflateBackend, BgzfParallelReader, BgzfReader, bgzf::is_bgzf_header};
+use crate::{
+    BgzfInflateBackend, BgzfParallelConfig, BgzfParallelReader, BgzfReader, bgzf::is_bgzf_header,
+};
 
 pub fn open_fastq(path: impl AsRef<Path>) -> Result<FastqReader<Box<dyn Read + Send>>> {
     open_fastq_with_config(path, FastqConfig::default())
@@ -17,6 +21,42 @@ pub fn open_fastq_with_config(
     path: impl AsRef<Path>,
     config: FastqConfig,
 ) -> Result<FastqReader<Box<dyn Read + Send>>> {
+    let reader = open_read_by_magic(path)?;
+    Ok(FastqReader::with_config(reader, config))
+}
+
+pub fn open_paired_fastq(
+    first_path: impl AsRef<Path>,
+    second_path: impl AsRef<Path>,
+) -> Result<PairedFastqReader<Box<dyn Read + Send>, Box<dyn Read + Send>>> {
+    open_paired_fastq_with_config(first_path, second_path, FastqConfig::default())
+}
+
+pub fn open_paired_fastq_with_config(
+    first_path: impl AsRef<Path>,
+    second_path: impl AsRef<Path>,
+    config: FastqConfig,
+) -> Result<PairedFastqReader<Box<dyn Read + Send>, Box<dyn Read + Send>>> {
+    open_paired_fastq_with_configs(first_path, config.clone(), second_path, config)
+}
+
+pub fn open_paired_fastq_with_configs(
+    first_path: impl AsRef<Path>,
+    first_config: FastqConfig,
+    second_path: impl AsRef<Path>,
+    second_config: FastqConfig,
+) -> Result<PairedFastqReader<Box<dyn Read + Send>, Box<dyn Read + Send>>> {
+    let first = open_read_by_magic(first_path)?;
+    let second = open_read_by_magic(second_path)?;
+    Ok(PairedFastqReader::with_configs(
+        first,
+        first_config,
+        second,
+        second_config,
+    ))
+}
+
+fn open_read_by_magic(path: impl AsRef<Path>) -> Result<Box<dyn Read + Send>> {
     #[cfg(any(feature = "bgzf", feature = "gzip"))]
     let mut file = File::open(path)?;
     #[cfg(not(any(feature = "bgzf", feature = "gzip")))]
@@ -31,18 +71,70 @@ pub fn open_fastq_with_config(
         #[cfg(feature = "bgzf")]
         if is_bgzf_header(&prefix[..n]) {
             let reader: Box<dyn Read + Send> = Box::new(BgzfReader::new(file));
-            return Ok(FastqReader::with_config(reader, config));
+            return Ok(reader);
         }
 
         #[cfg(feature = "gzip")]
         if n >= 2 && prefix[..2] == [0x1f, 0x8b] {
             let reader: Box<dyn Read + Send> = Box::new(flate2::read::MultiGzDecoder::new(file));
-            return Ok(FastqReader::with_config(reader, config));
+            return Ok(reader);
         }
     }
 
     let reader: Box<dyn Read + Send> = Box::new(file);
-    Ok(FastqReader::with_config(reader, config))
+    Ok(reader)
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+pub fn open_fastq_gzip_libdeflate(path: impl AsRef<Path>) -> Result<FastqReader<Cursor<Vec<u8>>>> {
+    open_fastq_gzip_libdeflate_with_config(path, FastqConfig::default())
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+pub fn open_fastq_gzip_libdeflate_with_config(
+    path: impl AsRef<Path>,
+    config: FastqConfig,
+) -> Result<FastqReader<Cursor<Vec<u8>>>> {
+    let mut compressed = Vec::new();
+    File::open(path)?.read_to_end(&mut compressed)?;
+    let decoded = decompress_gzip_libdeflate_buffered(&compressed)?;
+    Ok(FastqReader::with_config(Cursor::new(decoded), config))
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+fn decompress_gzip_libdeflate_buffered(compressed: &[u8]) -> Result<Vec<u8>> {
+    let mut out = vec![0_u8; initial_gzip_output_capacity(compressed)];
+    let mut decompressor = libdeflater::Decompressor::new();
+    loop {
+        match decompressor.gzip_decompress(compressed, &mut out) {
+            Ok(n) => {
+                out.truncate(n);
+                return Ok(out);
+            }
+            Err(libdeflater::DecompressionError::InsufficientSpace) => {
+                let next = out.len().checked_mul(2).ok_or_else(|| {
+                    crate::FastqError::Format("gzip output size exceeds usize range".into())
+                })?;
+                out.resize(next.max(1), 0);
+            }
+            Err(err) => {
+                return Err(crate::FastqError::Format(format!(
+                    "libdeflate gzip inflate failed: {err}"
+                )));
+            }
+        }
+    }
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+fn initial_gzip_output_capacity(compressed: &[u8]) -> usize {
+    let isize = compressed
+        .len()
+        .checked_sub(4)
+        .and_then(|start| compressed.get(start..))
+        .map(|tail| u32::from_le_bytes([tail[0], tail[1], tail[2], tail[3]]) as usize)
+        .unwrap_or(0);
+    isize.max(compressed.len().saturating_mul(2)).max(1024)
 }
 
 #[cfg(feature = "bgzf")]
@@ -60,6 +152,19 @@ pub fn open_fastq_bgzf_parallel_with_config(
     config: FastqConfig,
 ) -> Result<FastqReader<BgzfParallelReader>> {
     open_fastq_bgzf_parallel_with_backend(path, workers, BgzfInflateBackend::default(), config)
+}
+
+#[cfg(feature = "bgzf")]
+pub fn open_fastq_bgzf_parallel_with_options(
+    path: impl AsRef<Path>,
+    bgzf_config: BgzfParallelConfig,
+    fastq_config: FastqConfig,
+) -> Result<FastqReader<BgzfParallelReader>> {
+    let file = File::open(path)?;
+    Ok(FastqReader::with_config(
+        BgzfParallelReader::with_config(file, bgzf_config)?,
+        fastq_config,
+    ))
 }
 
 #[cfg(feature = "bgzf")]
@@ -168,5 +273,49 @@ mod tests {
         assert_eq!(auto_stats, libdeflate_stats);
 
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "libdeflate")]
+    fn explicit_libdeflate_gzip_opener_parses_same_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "microraptor-libdeflate-gzip-{}.fq.gz",
+            std::process::id()
+        ));
+        let file = File::create(&path).unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+        encoder
+            .write_all(b"@r1\nACGT\n+\nIIII\n@r2\nTGCA\n+\nJJJJ\n")
+            .unwrap();
+        encoder.finish().unwrap();
+
+        let mut flate2 = open_fastq(&path).unwrap();
+        let mut libdeflate = open_fastq_gzip_libdeflate(&path).unwrap();
+
+        let flate2_stats = crate::benchutil::consume_fastq(&mut flate2).unwrap();
+        let libdeflate_stats = crate::benchutil::consume_fastq(&mut libdeflate).unwrap();
+        assert_eq!(flate2_stats, libdeflate_stats);
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn paired_openers_parse_matching_files() {
+        let dir = std::env::temp_dir();
+        let r1_path = dir.join(format!("microraptor-r1-{}.fq", std::process::id()));
+        let r2_path = dir.join(format!("microraptor-r2-{}.fq", std::process::id()));
+        std::fs::write(&r1_path, b"@frag/1\nACGT\n+\nIIII\n").unwrap();
+        std::fs::write(&r2_path, b"@frag/2\nTGCA\n+\nJJJJ\n").unwrap();
+
+        let mut reader = open_paired_fastq(&r1_path, &r2_path).unwrap();
+        let batch = reader.next_pair_batch().unwrap().unwrap();
+        let pair = batch.pairs().next().unwrap();
+        assert_eq!(pair.pair_id(), b"frag");
+        assert_eq!(pair.first().seq(), b"ACGT");
+        assert_eq!(pair.second().seq(), b"TGCA");
+
+        std::fs::remove_file(r1_path).unwrap();
+        std::fs::remove_file(r2_path).unwrap();
     }
 }

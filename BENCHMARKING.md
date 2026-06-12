@@ -1,6 +1,6 @@
 # Benchmarking
 
-Microraptor has three benchmark surfaces:
+Microraptor has five benchmark surfaces:
 
 - `cargo bench --all-features`: nightly microbenchmarks using Rust's built-in
   benchmark harness.
@@ -19,11 +19,20 @@ For real input files, pass `--input PATH` or set `MICRORAPTOR_INPUT`. The file
 path goes through `open_fastq_with_config`, so raw FASTQ, gzip FASTQ, and BGZF
 FASTQ use the same auto-detection path as library callers.
 
+The FASTQ parser expects the common four-line record shape: name, sequence,
+plus, quality. Multiline sequence or quality fields are not supported.
+
+Paired input coverage is ordered-pair coverage: generated R1/R2 files with
+matching order and interleaved files with adjacent mates. The stateful paired
+reader handles different batch boundaries and validates normalized IDs, but it
+does not synchronize reordered mates.
+
 ## Fast Commands
 
 ```bash
 cargo test --all
 cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets --no-default-features -- -D warnings
 cargo bench --all-features
 scripts/bench.sh
 scripts/benchmark-gauntlet.sh
@@ -56,10 +65,16 @@ It also records whether optional external comparators such as `seqkit` or
 Build with `--features libdeflate` or `--all-features` to include explicit
 `bgzf-libdeflate-*` rows for synthetic BGZF and `file-bgzf-libdeflate-*` rows
 for real `.bgz` inputs. Ordinary gzip remains on the streaming flate2 path;
-libdeflate is used where BGZF block trailers give an exact output size. When the
-`libdeflate` feature is enabled, the normal BGZF auto-open path also uses
-libdeflate by default; use `open_fastq_bgzf_flate2` or
-`open_fastq_bgzf_with_backend` when comparing or forcing a backend.
+`open_fastq_gzip_libdeflate` is an explicit buffered path for bounded gzip
+inputs. When the `libdeflate` feature is enabled, the normal BGZF auto-open path
+uses libdeflate inflate by default; use `open_fastq_bgzf_flate2` or
+`open_fastq_bgzf_with_backend` when comparing or forcing a backend. BGZF output
+can use libdeflate through `BgzfDeflateBackend`.
+
+`build_bgzf_index` records compressed block offsets and uncompressed block
+starts. Use `virtual_offset_for_uncompressed_offset` to plan a seek, then
+`BgzfSeekReader::seek_virtual_offset` to resume reading from that BGZF virtual
+offset.
 
 ## Profiling
 
@@ -114,3 +129,20 @@ pipeline planning, `records_s` and `bases_s` are the more useful common units.
 
 The `bgzf-parallel` row uses the bounded streaming `BgzfParallelReader`, not the
 older whole-input decompression helper.
+
+## CI Parity
+
+The GitHub Actions workflow uses nightly Rust from `rust-toolchain.toml` and
+checks:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets --no-default-features -- -D warnings
+cargo test --all-features
+cargo test --no-default-features
+cargo fuzz build
+```
+
+`cargo fuzz build` only compiles the fuzz targets. It does not run long fuzzing
+campaigns in CI.

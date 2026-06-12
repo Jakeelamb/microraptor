@@ -1,7 +1,7 @@
 # microraptor
 
 Microraptor is a slab-based FASTQ streaming core. It is built around one invariant:
-raw FASTQ, gzip FASTQ, and future BGZF/ISA-L paths all produce the same
+raw FASTQ, gzip FASTQ, and BGZF/ISA-L paths all produce the same
 decompressed byte slabs, and the parser only sees bytes.
 
 Current slice:
@@ -11,9 +11,9 @@ Current slice:
 - BGZF FASTQ detected by BGZF headers before ordinary gzip
 - serial BGZF streaming reader and writer
 - parallel BGZF decompression/compression entry points for independent blocks
-- BGZF block index construction with virtual-offset lookup
-- optional libdeflate BGZF inflate backend, used by default for BGZF when the
-  `libdeflate` feature is enabled
+- BGZF block index construction and `BgzfSeekReader` virtual-offset reads
+- optional libdeflate BGZF inflate and deflate backends
+- explicit buffered libdeflate gzip opener for bounded single gzip inputs
 - reusable slab buffer with carry handling for records crossing slab boundaries
 - SIMD newline scan on nightly through `std::simd`, with scalar fallback when the
   `simd` feature is disabled
@@ -22,31 +22,42 @@ Current slice:
 - Phred+33 quality summaries and threshold binning
 - structured FASTQ parse errors with byte offset, record index, and line index
 - zero-copy FASTQ record-id helpers for raw names, first tokens, and pair-normalized IDs
-- paired and interleaved FASTQ iterators with normalized-id validation
+- stateful separate-file paired reader and interleaved FASTQ iterators with
+  normalized-id validation
+- minimal `FastqBatchSource` and `FastqPairBatchSource` traits for downstream modules
 
 Backend boundary:
 
-- ordinary gzip currently uses `flate2`; the decoder stage is isolated so ISA-L
-  can replace it without touching FASTQ framing
+- ordinary gzip auto-open uses streaming `flate2`; `open_fastq_gzip_libdeflate`
+  is explicit because it buffers the decompressed input
 - BGZF is already block-aware and has parallel whole-input compression and
   decompression helpers, a bounded streaming parallel reader, and virtual-offset
-  indexing
-- output compression currently uses Rust deflate through `flate2`; libdeflate or
-  ISA-L can replace block compression later
+  indexing/seek reads
+- output compression supports flate2 by default and libdeflate when requested
 
 Features:
 
 - `simd`: nightly portable-SIMD newline scanner
 - `gzip`: ordinary gzip input by gzip magic
 - `bgzf`: BGZF reader, writer, detection, and parallel block helpers
-- `libdeflate`: optional libdeflate BGZF inflate backend; enables explicit
-  backend selection and makes BGZF auto-open use the fastest available backend
+- `libdeflate`: optional libdeflate BGZF inflate/deflate backends and explicit
+  buffered gzip opener; makes BGZF auto-open use the fastest available inflate backend
+
+Current limitations:
+
+- FASTQ records must be four physical lines. Multiline sequence or quality
+  fields are rejected as malformed or truncated input.
+- Paired R1/R2 support validates ordered mates; it does not synchronize files
+  with reordered records.
 
 Benchmarking:
 
 - `cargo bench --all-features`
 - `cargo run --release --bin microraptor-bench -- --records 500000 --iters 7`
+- `scripts/bench.sh`
+- `scripts/benchmark-gauntlet.sh`
 - `scripts/profile-perf.sh`
+- `scripts/profile-hotpath.sh`
 
 See `BENCHMARKING.md` for profiling details and result interpretation.
 
@@ -67,6 +78,21 @@ while let Some(batch) = reader.next_batch()? {
     for record in batch.records() {
         assert_eq!(record.seq(), b"ACGT");
     }
+}
+# Ok::<(), microraptor::FastqError>(())
+```
+
+Separate R1/R2 streams can be read as stateful paired batches:
+
+```rust
+use microraptor::PairedFastqReader;
+
+let r1 = b"@frag/1\nACGT\n+\nIIII\n";
+let r2 = b"@frag/2\nTGCA\n+\nJJJJ\n";
+let mut reader = PairedFastqReader::new(&r1[..], &r2[..]);
+let batch = reader.next_pair_batch()?.unwrap();
+for pair in batch.pairs() {
+    assert_eq!(pair.pair_id(), b"frag");
 }
 # Ok::<(), microraptor::FastqError>(())
 ```
