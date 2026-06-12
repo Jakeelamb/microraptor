@@ -127,7 +127,7 @@ impl BgzfParallelConfig {
     pub fn new(workers: usize) -> Self {
         Self {
             workers,
-            result_queue_depth: workers.saturating_mul(2).max(2),
+            result_queue_depth: workers.saturating_mul(4).max(2),
             ..Self::default()
         }
     }
