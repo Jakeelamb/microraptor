@@ -22,4 +22,7 @@ pub use fastq::{
 };
 pub use source::{open_fastq, open_fastq_with_config};
 #[cfg(feature = "bgzf")]
-pub use source::{open_fastq_bgzf_parallel, open_fastq_bgzf_parallel_with_config};
+pub use source::{
+    open_fastq_bgzf_flate2, open_fastq_bgzf_parallel, open_fastq_bgzf_parallel_with_backend,
+    open_fastq_bgzf_parallel_with_config, open_fastq_bgzf_with_backend,
+};

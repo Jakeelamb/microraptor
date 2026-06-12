@@ -22,12 +22,30 @@ pub const BGZF_EOF_BLOCK: &[u8] = &[
     31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0, 66, 67, 2, 0, 27, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BgzfInflateBackend {
-    #[default]
     Flate2,
     #[cfg(feature = "libdeflate")]
     Libdeflate,
+}
+
+impl Default for BgzfInflateBackend {
+    fn default() -> Self {
+        Self::fastest_available()
+    }
+}
+
+impl BgzfInflateBackend {
+    pub const fn fastest_available() -> Self {
+        #[cfg(feature = "libdeflate")]
+        {
+            Self::Libdeflate
+        }
+        #[cfg(not(feature = "libdeflate"))]
+        {
+            Self::Flate2
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -56,7 +56,10 @@ It also records whether optional external comparators such as `seqkit` or
 Build with `--features libdeflate` or `--all-features` to include explicit
 `bgzf-libdeflate-*` rows for synthetic BGZF and `file-bgzf-libdeflate-*` rows
 for real `.bgz` inputs. Ordinary gzip remains on the streaming flate2 path;
-libdeflate is used where BGZF block trailers give an exact output size.
+libdeflate is used where BGZF block trailers give an exact output size. When the
+`libdeflate` feature is enabled, the normal BGZF auto-open path also uses
+libdeflate by default; use `open_fastq_bgzf_flate2` or
+`open_fastq_bgzf_with_backend` when comparing or forcing a backend.
 
 ## Profiling
 
