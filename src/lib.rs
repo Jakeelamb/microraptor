@@ -1,5 +1,6 @@
 #![cfg_attr(feature = "simd", feature(portable_simd))]
 
+pub mod benchutil;
 #[cfg(feature = "bgzf")]
 mod bgzf;
 mod error;

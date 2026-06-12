@@ -33,6 +33,14 @@ Features:
 - `gzip`: ordinary gzip input by gzip magic
 - `bgzf`: BGZF reader, writer, detection, and parallel block helpers
 
+Benchmarking:
+
+- `cargo bench --all-features`
+- `cargo run --release --bin microraptor-bench -- --records 500000 --iters 7`
+- `scripts/profile-perf.sh`
+
+See `BENCHMARKING.md` for profiling details and result interpretation.
+
 Example:
 
 ```rust
