@@ -24,10 +24,18 @@ enum InputKind {
     Bgzf,
 }
 
+/// Open a FASTQ file with default configuration.
+///
+/// With default features, this detects raw FASTQ, ordinary gzip, and BGZF by
+/// file magic. BGZF is checked before ordinary gzip.
 pub fn open_fastq(path: impl AsRef<Path>) -> Result<FastqReader<Box<dyn Read + Send>>> {
     open_fastq_with_config(path, FastqConfig::default())
 }
 
+/// Open a FASTQ file with explicit parser configuration.
+///
+/// This is the primary file-path API for callers that want format
+/// auto-detection with custom validation, slab, or pairing settings.
 pub fn open_fastq_with_config(
     path: impl AsRef<Path>,
     config: FastqConfig,
@@ -36,6 +44,7 @@ pub fn open_fastq_with_config(
     Ok(FastqReader::with_config(reader, config))
 }
 
+/// Open ordered R1/R2 FASTQ files with default configuration.
 pub fn open_paired_fastq(
     first_path: impl AsRef<Path>,
     second_path: impl AsRef<Path>,
@@ -43,6 +52,7 @@ pub fn open_paired_fastq(
     open_paired_fastq_with_config(first_path, second_path, FastqConfig::default())
 }
 
+/// Open ordered R1/R2 FASTQ files with the same configuration for both mates.
 pub fn open_paired_fastq_with_config(
     first_path: impl AsRef<Path>,
     second_path: impl AsRef<Path>,
@@ -51,6 +61,7 @@ pub fn open_paired_fastq_with_config(
     open_paired_fastq_with_configs(first_path, config.clone(), second_path, config)
 }
 
+/// Open ordered R1/R2 FASTQ files with separate mate configurations.
 pub fn open_paired_fastq_with_configs(
     first_path: impl AsRef<Path>,
     first_config: FastqConfig,
@@ -120,11 +131,17 @@ fn default_bgzf_workers() -> usize {
 }
 
 #[cfg(all(feature = "gzip", feature = "libdeflate"))]
+/// Open an ordinary gzip FASTQ file through a buffered libdeflate path.
+///
+/// Unlike [`open_fastq`], this buffers the fully decompressed input before
+/// parsing. Use it only for bounded inputs and explicit backend comparisons.
 pub fn open_fastq_gzip_libdeflate(path: impl AsRef<Path>) -> Result<FastqReader<Cursor<Vec<u8>>>> {
     open_fastq_gzip_libdeflate_with_config(path, FastqConfig::default())
 }
 
 #[cfg(all(feature = "gzip", feature = "libdeflate"))]
+/// Open an ordinary gzip FASTQ file through buffered libdeflate with parser
+/// configuration.
 pub fn open_fastq_gzip_libdeflate_with_config(
     path: impl AsRef<Path>,
     config: FastqConfig,
@@ -172,6 +189,7 @@ fn initial_gzip_output_capacity(compressed: &[u8]) -> usize {
 }
 
 #[cfg(feature = "bgzf")]
+/// Open a BGZF FASTQ file with an explicit parallel worker count.
 pub fn open_fastq_bgzf_parallel(
     path: impl AsRef<Path>,
     workers: usize,
@@ -180,6 +198,8 @@ pub fn open_fastq_bgzf_parallel(
 }
 
 #[cfg(feature = "bgzf")]
+/// Open a BGZF FASTQ file with an explicit parallel worker count and parser
+/// configuration.
 pub fn open_fastq_bgzf_parallel_with_config(
     path: impl AsRef<Path>,
     workers: usize,
@@ -189,6 +209,7 @@ pub fn open_fastq_bgzf_parallel_with_config(
 }
 
 #[cfg(feature = "bgzf")]
+/// Open a BGZF FASTQ file with explicit BGZF and FASTQ configuration.
 pub fn open_fastq_bgzf_parallel_with_options(
     path: impl AsRef<Path>,
     bgzf_config: BgzfParallelConfig,
@@ -202,6 +223,10 @@ pub fn open_fastq_bgzf_parallel_with_options(
 }
 
 #[cfg(feature = "bgzf")]
+/// Open a BGZF FASTQ file with adaptive serial/parallel reading.
+///
+/// The supplied [`BgzfParallelConfig`] controls the parallelization threshold,
+/// backend, workers, queue depths, and optional metrics.
 pub fn open_fastq_bgzf_adaptive(
     path: impl AsRef<Path>,
     bgzf_config: BgzfParallelConfig,
@@ -217,11 +242,13 @@ pub fn open_fastq_bgzf_adaptive(
 }
 
 #[cfg(feature = "bgzf")]
+/// Open a BGZF FASTQ file through the flate2 serial backend.
 pub fn open_fastq_bgzf_flate2(path: impl AsRef<Path>) -> Result<FastqReader<BgzfReader<File>>> {
     open_fastq_bgzf_with_backend(path, BgzfInflateBackend::Flate2, FastqConfig::default())
 }
 
 #[cfg(feature = "bgzf")]
+/// Open a BGZF FASTQ file with a selected serial inflate backend.
 pub fn open_fastq_bgzf_with_backend(
     path: impl AsRef<Path>,
     backend: BgzfInflateBackend,
@@ -235,6 +262,7 @@ pub fn open_fastq_bgzf_with_backend(
 }
 
 #[cfg(feature = "bgzf")]
+/// Open a BGZF FASTQ file with a selected parallel inflate backend.
 pub fn open_fastq_bgzf_parallel_with_backend(
     path: impl AsRef<Path>,
     workers: usize,

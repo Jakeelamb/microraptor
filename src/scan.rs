@@ -28,9 +28,10 @@ fn scan_newlines_impl(bytes: &[u8], out: &mut Vec<usize>) {
 
 #[cfg(not(feature = "simd"))]
 fn scan_newlines_impl(bytes: &[u8], out: &mut Vec<usize>) {
-    scan_newlines_scalar_offset(bytes, 0, out);
+    out.extend(memchr::memchr_iter(b'\n', bytes));
 }
 
+#[cfg(feature = "simd")]
 fn scan_newlines_scalar_offset(bytes: &[u8], offset: usize, out: &mut Vec<usize>) {
     for (i, &b) in bytes.iter().enumerate() {
         if b == b'\n' {

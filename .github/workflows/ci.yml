@@ -8,32 +8,82 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  rust:
-    name: nightly rust
+  stable:
+    name: stable crate surface
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install nightly components
+      - name: Install stable components
         run: rustup component add rustfmt clippy
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Clippy default library
+        run: cargo clippy --lib -- -D warnings
+
+      - name: Check library warnings
+        run: RUSTFLAGS="-D warnings" cargo check --lib
+
+      - name: Check rustdoc warnings
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+
+      - name: Test default library
+        run: cargo test --lib
+
+      - name: Check release documentation artifacts
+        run: |
+          test -s CITATION.cff
+          test -s CHANGELOG.md
+          test -s CONTRIBUTING.md
+          test -s SECURITY.md
+          test -s docs/API_SURFACE.md
+          test -s docs/FRAMEWORK.md
+          test -s docs/PUBLISHING.md
+          test -s docs/RELEASE_AUDIT.md
+
+      - name: Check benchmark script syntax
+        run: |
+          bash -n scripts/benchmark-gauntlet.sh
+          bash -n scripts/render-benchmark-report.sh
+          bash -n scripts/benchmark-rust-peers.sh
+          bash -n scripts/check-replication-host.sh
+          bash -n scripts/check-benchmark-snapshots.sh
+          bash -n scripts/discover-local-benchmark-corpus.sh
+          bash -n scripts/export-replication-kit.sh
+          bash -n scripts/prepare-real-benchmark-inputs.sh
+          bash -n scripts/release-gate.sh
+
+      - name: Verify checked benchmark snapshots
+        run: scripts/check-benchmark-snapshots.sh
+
+      - name: Package dry run
+        run: cargo package
+
+  nightly:
+    name: nightly all-feature surface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --profile minimal --component rustfmt,clippy
+
       - name: Clippy all features
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo +nightly clippy --all-targets --all-features -- -D warnings
 
       - name: Clippy no default features
-        run: cargo clippy --all-targets --no-default-features -- -D warnings
+        run: cargo +nightly clippy --all-targets --no-default-features -- -D warnings
 
       - name: Test all features
-        run: cargo test --all-features
+        run: cargo +nightly test --all-features
 
       - name: Test no default features
-        run: cargo test --no-default-features
+        run: cargo +nightly test --no-default-features
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        run: cargo +nightly install cargo-fuzz --locked
 
       - name: Compile fuzz targets
-        run: cargo fuzz build
+        run: cargo +nightly fuzz build

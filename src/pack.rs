@@ -1,3 +1,10 @@
+//! Base and quality packing utilities.
+//!
+//! Bases are packed four per byte using A=0, C=1, G=2, and T=3. Ambiguous or
+//! non-canonical bases are represented by zero bits in the packed byte stream
+//! and a set bit in the separate ambiguity mask. Quality helpers interpret
+//! input as Phred+33 FASTQ qualities.
+
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 use std::arch::x86_64::{
     __m256i, _mm256_add_epi64, _mm256_cmpgt_epi8, _mm256_loadu_si256, _mm256_max_epu8,
@@ -18,23 +25,32 @@ use crate::{FastqConfig, FastqError, FastqPosition, Result as FastqResult};
 /// Summary of a packed DNA sequence.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BaseSummary {
+    /// Number of bases observed.
     pub len: usize,
+    /// Number of canonical A bases.
     pub a: usize,
+    /// Number of canonical C bases.
     pub c: usize,
+    /// Number of canonical G bases.
     pub g: usize,
+    /// Number of canonical T bases.
     pub t: usize,
+    /// Number of ambiguous or non-canonical bases.
     pub n: usize,
 }
 
 impl BaseSummary {
+    /// Return the number of C or G bases.
     pub fn gc_bases(self) -> usize {
         self.c + self.g
     }
 
+    /// Return the number of A/C/G/T bases.
     pub fn canonical_bases(self) -> usize {
         self.a + self.c + self.g + self.t
     }
 
+    /// Return true when no bases were observed.
     pub fn is_empty(self) -> bool {
         self.len == 0
     }
@@ -47,52 +63,79 @@ impl BaseSummary {
 /// packed stream and set the corresponding bit in `n_mask`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackedSequence {
+    /// Two-bit packed base bytes, four bases per byte.
     pub bases: Vec<u8>,
+    /// Ambiguity bit mask, one bit per input base.
     pub n_mask: Vec<u8>,
+    /// Base counts for the original sequence.
     pub summary: BaseSummary,
 }
 
 impl PackedSequence {
+    /// Return the number of original bases.
     pub fn len(&self) -> usize {
         self.summary.len
     }
 
+    /// Return true when the original sequence was empty.
     pub fn is_empty(&self) -> bool {
         self.summary.is_empty()
     }
 }
 
+/// Decoded base value from a packed sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackedBase {
+    /// Canonical A.
     A,
+    /// Canonical C.
     C,
+    /// Canonical G.
     G,
+    /// Canonical T.
     T,
+    /// Ambiguous or non-canonical base.
     N,
 }
 
+/// Output buffer involved in a packing error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackBuffer {
+    /// Two-bit base buffer.
     Bases,
+    /// Ambiguity mask buffer.
     NMask,
+    /// Quality-bin output buffer.
     QualityBins,
 }
 
+/// Error returned by base or quality packing helpers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackError {
+    /// A caller-supplied output buffer was too small.
     OutputTooSmall {
+        /// Buffer that was too small.
         buffer: PackBuffer,
+        /// Required number of bytes.
         needed: usize,
+        /// Provided number of bytes.
         provided: usize,
     },
+    /// A quality byte was outside the printable Phred+33 range.
     InvalidQuality {
+        /// Offset within the supplied quality slice.
         offset: usize,
+        /// Invalid byte value.
         byte: u8,
     },
+    /// Quality thresholds were not sorted in ascending order.
     UnsortedQualityThresholds {
+        /// Threshold index that violates sorted order.
         index: usize,
     },
+    /// More quality thresholds were provided than fit in a `u8` bin.
     TooManyQualityThresholds {
+        /// Number of thresholds supplied by the caller.
         count: usize,
     },
 }
@@ -100,15 +143,22 @@ pub enum PackError {
 /// Phred+33 quality summary.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct QualitySummary {
+    /// Number of quality values observed.
     pub len: usize,
+    /// Minimum Phred value, or `None` when empty.
     pub min_phred: Option<u8>,
+    /// Maximum Phred value, or `None` when empty.
     pub max_phred: Option<u8>,
+    /// Sum of Phred values.
     pub sum_phred: u64,
+    /// Number of bases with Phred score at least 20.
     pub q20_bases: usize,
+    /// Number of bases with Phred score at least 30.
     pub q30_bases: usize,
 }
 
 impl QualitySummary {
+    /// Return the arithmetic mean Phred score, or `None` when empty.
     pub fn mean_phred(self) -> Option<f64> {
         if self.len == 0 {
             None
@@ -117,6 +167,7 @@ impl QualitySummary {
         }
     }
 
+    /// Return true when no qualities were observed.
     pub fn is_empty(self) -> bool {
         self.len == 0
     }
@@ -131,35 +182,56 @@ impl QualitySummary {
     }
 }
 
+/// Combined base and quality summary for one FASTQ record.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PackedRecordSummary {
+    /// Packed base summary.
     pub bases: BaseSummary,
+    /// Phred+33 quality summary.
     pub qualities: QualitySummary,
 }
 
+/// Borrowed view of one trusted packed FASTQ record.
+///
+/// The packed buffers are reused by streaming pack paths. Callers must consume
+/// or copy them before the next callback invocation.
 #[derive(Debug, Clone, Copy)]
 pub struct TrustedPackedRecord<'a> {
+    /// Record name without the leading `@`.
     pub name: &'a [u8],
+    /// Original sequence bytes.
     pub seq: &'a [u8],
+    /// Original quality bytes.
     pub qual: &'a [u8],
+    /// Two-bit packed base bytes.
     pub bases: &'a [u8],
+    /// Ambiguity bit mask.
     pub n_mask: &'a [u8],
+    /// Base and quality summary for the record.
     pub summary: PackedRecordSummary,
 }
 
+/// Borrowed view of one trusted packed R1/R2 pair.
 #[derive(Debug, Clone, Copy)]
 pub struct TrustedPackedPair<'a> {
+    /// First mate.
     pub first: TrustedPackedRecord<'a>,
+    /// Second mate.
     pub second: TrustedPackedRecord<'a>,
 }
 
+/// Selected implementation family for base packing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackKernel {
+    /// Portable scalar implementation.
     Scalar,
+    /// Nightly portable-SIMD implementation.
     PortableSimd,
+    /// x86-64 AVX2 implementation.
     Avx2,
 }
 
+/// Return the base-packing kernel selected for this build and host.
 pub fn selected_pack_kernel() -> PackKernel {
     select_pack_kernel()
 }
@@ -178,14 +250,19 @@ fn select_pack_kernel() -> PackKernel {
     PackKernel::Scalar
 }
 
+/// Progress notification for one trusted pack slab.
 #[derive(Debug, Clone, Copy)]
 pub struct TrustedPackSlab {
+    /// Number of complete records emitted from the slab.
     pub records: u64,
 }
 
+/// Callback interface for trusted streaming pack paths.
 pub trait TrustedPackSink {
+    /// Observe one packed record.
     fn record(&mut self, record: TrustedPackedRecord<'_>) -> FastqResult<()>;
 
+    /// Observe slab-level progress after records have been emitted.
     fn slab(&mut self, _slab: TrustedPackSlab) -> FastqResult<()> {
         Ok(())
     }
@@ -226,6 +303,10 @@ impl fmt::Display for PackError {
 
 impl std::error::Error for PackError {}
 
+/// Pack all complete records from an in-memory trusted four-line FASTQ buffer.
+///
+/// This path validates record shape and quality length, but it assumes ordinary
+/// four-line FASTQ and does not support multiline sequence or quality fields.
 pub fn pack_trusted_fastq(
     input: &[u8],
     on_record: impl FnMut(TrustedPackedRecord<'_>) -> FastqResult<()>,
@@ -233,6 +314,7 @@ pub fn pack_trusted_fastq(
     pack_trusted_fastq_sink(input, on_record)
 }
 
+/// Pack all complete records from an in-memory trusted FASTQ buffer into a sink.
 pub fn pack_trusted_fastq_sink(input: &[u8], mut sink: impl TrustedPackSink) -> FastqResult<()> {
     let mut bases = Vec::new();
     let mut n_mask = Vec::new();
@@ -253,6 +335,7 @@ pub fn pack_trusted_fastq_sink(input: &[u8], mut sink: impl TrustedPackSink) -> 
     Ok(())
 }
 
+/// Stream trusted four-line FASTQ from a reader and invoke a callback per record.
 pub fn pack_trusted_fastq_read<R: Read>(
     mut reader: R,
     config: FastqConfig,
@@ -261,6 +344,7 @@ pub fn pack_trusted_fastq_read<R: Read>(
     pack_trusted_fastq_read_sink(&mut reader, config, on_record)
 }
 
+/// Stream trusted four-line FASTQ from a reader into a sink.
 pub fn pack_trusted_fastq_read_sink<R: Read>(
     mut reader: R,
     config: FastqConfig,
@@ -274,6 +358,10 @@ pub fn pack_trusted_fastq_read_sink<R: Read>(
     )
 }
 
+/// Pack an in-memory trusted FASTQ buffer with the direct scanner.
+///
+/// This is a lower-level alternative used for benchmark and implementation
+/// comparison against the default newline-offset scanner.
 pub fn pack_trusted_fastq_direct(
     input: &[u8],
     on_record: impl FnMut(TrustedPackedRecord<'_>) -> FastqResult<()>,
@@ -281,6 +369,7 @@ pub fn pack_trusted_fastq_direct(
     pack_trusted_fastq_direct_sink(input, on_record)
 }
 
+/// Pack an in-memory trusted FASTQ buffer with the direct scanner into a sink.
 pub fn pack_trusted_fastq_direct_sink(
     input: &[u8],
     mut sink: impl TrustedPackSink,
@@ -302,6 +391,7 @@ pub fn pack_trusted_fastq_direct_sink(
     Ok(())
 }
 
+/// Stream trusted FASTQ from a reader using the direct scanner.
 pub fn pack_trusted_fastq_read_direct<R: Read>(
     mut reader: R,
     config: FastqConfig,
@@ -310,6 +400,7 @@ pub fn pack_trusted_fastq_read_direct<R: Read>(
     pack_trusted_fastq_read_direct_sink(&mut reader, config, on_record)
 }
 
+/// Stream trusted FASTQ from a reader using the direct scanner into a sink.
 pub fn pack_trusted_fastq_read_direct_sink<R: Read>(
     mut reader: R,
     config: FastqConfig,
@@ -443,6 +534,11 @@ enum TrustedScanKernel {
     Direct,
 }
 
+/// Stream ordered R1/R2 FASTQ inputs and emit trusted packed pairs.
+///
+/// Pair validation uses the supplied [`crate::PairValidation`] mode. This path
+/// does not synchronize reordered mates; it expects the two streams to be in
+/// lockstep order.
 pub fn pack_trusted_paired_fastq_read<R1: Read, R2: Read>(
     first: R1,
     second: R2,
@@ -705,10 +801,12 @@ struct TrustedRecordLines<'a> {
     qual: Line<'a>,
 }
 
+/// Return the number of bytes needed to store `base_count` two-bit bases.
 pub const fn packed_base_len(base_count: usize) -> usize {
     base_count / 4 + if base_count.is_multiple_of(4) { 0 } else { 1 }
 }
 
+/// Return the number of bytes needed for a one-bit-per-item mask.
 pub const fn bit_mask_len(bit_count: usize) -> usize {
     bit_count / 8 + if bit_count.is_multiple_of(8) { 0 } else { 1 }
 }
@@ -785,6 +883,7 @@ const fn quad_entry(c0: u8, c1: u8, c2: u8, c3: u8) -> u32 {
         | (counts[4] << 24)
 }
 
+/// Pack a sequence into newly allocated packed-base and ambiguity buffers.
 pub fn pack_bases(seq: &[u8]) -> PackedSequence {
     let mut bases = vec![0; packed_base_len(seq.len())];
     let mut n_mask = vec![0; bit_mask_len(seq.len())];
@@ -796,6 +895,7 @@ pub fn pack_bases(seq: &[u8]) -> PackedSequence {
     }
 }
 
+/// Pack a sequence into reusable `Vec` buffers and return base counts.
 pub fn pack_bases_into(seq: &[u8], bases: &mut Vec<u8>, n_mask: &mut Vec<u8>) -> BaseSummary {
     bases.clear();
     n_mask.clear();
@@ -804,6 +904,10 @@ pub fn pack_bases_into(seq: &[u8], bases: &mut Vec<u8>, n_mask: &mut Vec<u8>) ->
     pack_bases_exact(seq, bases, n_mask)
 }
 
+/// Pack bases and summarize Phred+33 qualities into reusable buffers.
+///
+/// When sequence and quality lengths match, the implementation may fuse base
+/// packing and quality summary work in one pass.
 #[inline]
 pub fn pack_bases_and_summarize_qualities_into(
     seq: &[u8],
@@ -826,6 +930,9 @@ pub fn pack_bases_and_summarize_qualities_into(
     }
 }
 
+/// Pack a sequence into caller-provided fixed-size slices.
+///
+/// The slices may be larger than needed; only the required prefix is written.
 pub fn pack_bases_into_slices(
     seq: &[u8],
     bases: &mut [u8],
@@ -855,6 +962,7 @@ pub fn pack_bases_into_slices(
     ))
 }
 
+/// Decode one base at `index` from packed-base and ambiguity buffers.
 pub fn packed_base_at(bases: &[u8], n_mask: &[u8], index: usize) -> Option<PackedBase> {
     let base_byte = *bases.get(index / 4)?;
     if is_masked(n_mask, index)? {
@@ -870,11 +978,13 @@ pub fn packed_base_at(bases: &[u8], n_mask: &[u8], index: usize) -> Option<Packe
     }
 }
 
+/// Return whether `index` is marked ambiguous in an ambiguity mask.
 pub fn is_masked(n_mask: &[u8], index: usize) -> Option<bool> {
     let mask_byte = *n_mask.get(index / 8)?;
     Some(((mask_byte >> (index % 8)) & 1) != 0)
 }
 
+/// Summarize a slice of Phred+33 quality bytes.
 pub fn summarize_qualities(qualities: &[u8]) -> Result<QualitySummary, PackError> {
     #[cfg(all(feature = "simd", target_arch = "x86_64"))]
     if qualities.len() >= 32 && std::is_x86_feature_detected!("avx2") {
@@ -1034,6 +1144,9 @@ pub fn bin_qualities_into(
     Ok(summary)
 }
 
+/// Bin Phred+33 qualities into a caller-provided output slice.
+///
+/// See [`bin_qualities_into`] for threshold semantics.
 pub fn bin_qualities_into_slice(
     qualities: &[u8],
     thresholds: &[u8],

@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a new parser, transport, packing, or benchmark capability.
+title: "[feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What scientific or systems workflow needs this?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed capability
+      description: Describe the API, behavior, or benchmark surface.
+    validations:
+      required: true
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Expected API tier
+      description: See docs/API_SURFACE.md.
+      options:
+        - primary FASTQ reader/opening surface
+        - advanced pack side channel
+        - BGZF transport/indexing surface
+        - benchmark or tooling surface
+        - internal implementation only
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Existing APIs, crates, or workflow tools that partially solve this.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence needed
+      description: Tests, fixtures, datasets, benchmark gates, or compatibility checks needed before merging.
+    validations:
+      required: true

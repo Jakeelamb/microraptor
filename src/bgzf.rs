@@ -1,3 +1,9 @@
+//! BGZF readers, writers, indexing, and parallel block helpers.
+//!
+//! BGZF is a blocked gzip variant used by htslib-compatible bioinformatics
+//! tools. Microraptor exposes these types so FASTQ callers can use the same
+//! parser over raw, ordinary gzip, and BGZF transports.
+
 use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
@@ -19,13 +25,17 @@ const BGZF_MAX_BLOCK_SIZE: usize = 64 * 1024;
 const BGZF_MAX_PAYLOAD: usize = 60 * 1024;
 const DEFAULT_PARALLEL_MIN_COMPRESSED_BYTES: u64 = 32 * 1024 * 1024;
 
+/// Canonical empty BGZF EOF marker block.
 pub const BGZF_EOF_BLOCK: &[u8] = &[
     31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0, 66, 67, 2, 0, 27, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
+/// Inflate backend used for BGZF block decompression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BgzfInflateBackend {
+    /// Use the `flate2` backend.
     Flate2,
+    /// Use libdeflate when the `libdeflate` feature is enabled.
     #[cfg(feature = "libdeflate")]
     Libdeflate,
 }
@@ -36,9 +46,12 @@ impl Default for BgzfInflateBackend {
     }
 }
 
+/// Deflate backend used for BGZF block compression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BgzfDeflateBackend {
+    /// Use the `flate2` backend.
     Flate2,
+    /// Use libdeflate when the `libdeflate` feature is enabled.
     #[cfg(feature = "libdeflate")]
     Libdeflate,
 }
@@ -50,6 +63,7 @@ impl Default for BgzfDeflateBackend {
 }
 
 impl BgzfDeflateBackend {
+    /// Return the fastest compiled-in deflate backend.
     pub const fn fastest_available() -> Self {
         #[cfg(feature = "libdeflate")]
         {
@@ -62,13 +76,20 @@ impl BgzfDeflateBackend {
     }
 }
 
+/// Configuration for bounded parallel BGZF decoding.
 #[derive(Debug, Clone)]
 pub struct BgzfParallelConfig {
+    /// Number of decode workers.
     pub workers: usize,
+    /// Bounded queue depth from reader to worker threads.
     pub job_queue_depth: usize,
+    /// Bounded queue depth from worker threads to the ordered output reader.
     pub result_queue_depth: usize,
+    /// Inflate backend used by workers.
     pub backend: BgzfInflateBackend,
+    /// Minimum compressed input size before adaptive readers choose parallel mode.
     pub parallel_min_compressed_bytes: u64,
+    /// Optional backpressure metrics collector.
     pub metrics: Option<Arc<BgzfPipelineMetrics>>,
 }
 
@@ -85,19 +106,24 @@ impl Default for BgzfParallelConfig {
     }
 }
 
+/// Shared counters for BGZF pipeline backpressure observations.
 #[derive(Debug, Default)]
 pub struct BgzfPipelineMetrics {
     job_queue_full: AtomicU64,
     result_queue_full: AtomicU64,
 }
 
+/// Snapshot of BGZF pipeline backpressure counters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BgzfPipelineMetricsSnapshot {
+    /// Number of times the reader observed a full job queue.
     pub job_queue_full: u64,
+    /// Number of times a worker observed a full result queue.
     pub result_queue_full: u64,
 }
 
 impl BgzfPipelineMetrics {
+    /// Read the current metric counters.
     pub fn snapshot(&self) -> BgzfPipelineMetricsSnapshot {
         BgzfPipelineMetricsSnapshot {
             job_queue_full: self.job_queue_full.load(Ordering::Relaxed),
@@ -124,6 +150,7 @@ enum BgzfBackpressureChannel {
 }
 
 impl BgzfParallelConfig {
+    /// Construct a parallel config for `workers` decode workers.
     pub fn new(workers: usize) -> Self {
         Self {
             workers,
@@ -132,33 +159,39 @@ impl BgzfParallelConfig {
         }
     }
 
+    /// Set the inflate backend.
     pub fn with_inflate_backend(mut self, backend: BgzfInflateBackend) -> Self {
         self.backend = backend;
         self
     }
 
+    /// Set bounded queue depths.
     pub fn with_queue_depths(mut self, job_queue_depth: usize, result_queue_depth: usize) -> Self {
         self.job_queue_depth = job_queue_depth.max(1);
         self.result_queue_depth = result_queue_depth.max(1);
         self
     }
 
+    /// Set the adaptive serial/parallel compressed-size threshold.
     pub fn with_parallel_min_compressed_bytes(mut self, bytes: u64) -> Self {
         self.parallel_min_compressed_bytes = bytes;
         self
     }
 
+    /// Attach a shared metrics collector.
     pub fn with_metrics(mut self, metrics: Arc<BgzfPipelineMetrics>) -> Self {
         self.metrics = Some(metrics);
         self
     }
 
+    /// Return true when this config should parallelize an input of `compressed_len`.
     pub fn should_parallelize(&self, compressed_len: u64) -> bool {
         self.workers > 1 && compressed_len >= self.parallel_min_compressed_bytes
     }
 }
 
 impl BgzfInflateBackend {
+    /// Return the fastest compiled-in inflate backend.
     pub const fn fastest_available() -> Self {
         #[cfg(feature = "libdeflate")]
         {
@@ -171,12 +204,17 @@ impl BgzfInflateBackend {
     }
 }
 
+/// BGZF virtual offset.
+///
+/// The upper 48 bits are the compressed block offset, and the lower 16 bits are
+/// the uncompressed offset inside that block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BgzfVirtualOffset(u64);
 
 impl BgzfVirtualOffset {
     const MAX_COMPRESSED_OFFSET: u64 = (1_u64 << 48) - 1;
 
+    /// Build a virtual offset from compressed and in-block offsets.
     pub fn from_parts(compressed_offset: u64, in_block_offset: u16) -> Result<Self> {
         if compressed_offset > Self::MAX_COMPRESSED_OFFSET {
             return Err(FastqError::Bgzf(
@@ -186,41 +224,53 @@ impl BgzfVirtualOffset {
         Ok(Self((compressed_offset << 16) | u64::from(in_block_offset)))
     }
 
+    /// Wrap a raw virtual-offset integer.
     pub fn from_raw(raw: u64) -> Self {
         Self(raw)
     }
 
+    /// Return the raw virtual-offset integer.
     pub fn raw(self) -> u64 {
         self.0
     }
 
+    /// Return the compressed block byte offset.
     pub fn compressed_offset(self) -> u64 {
         self.0 >> 16
     }
 
+    /// Return the uncompressed offset inside the BGZF block.
     pub fn in_block_offset(self) -> u16 {
         (self.0 & 0xffff) as u16
     }
 }
 
+/// One BGZF index entry for a compressed block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BgzfIndexEntry {
+    /// Compressed stream byte offset of the block.
     pub compressed_offset: u64,
+    /// Uncompressed stream byte offset of the block.
     pub uncompressed_offset: u64,
+    /// Compressed block size in bytes.
     pub compressed_size: u32,
+    /// Uncompressed block size in bytes.
     pub uncompressed_size: u32,
 }
 
 impl BgzfIndexEntry {
+    /// Return the virtual offset at the start of this block.
     pub fn block_virtual_offset(&self) -> Result<BgzfVirtualOffset> {
         BgzfVirtualOffset::from_parts(self.compressed_offset, 0)
     }
 
+    /// Return true if an uncompressed stream offset falls inside this block.
     pub fn contains_uncompressed_offset(&self, offset: u64) -> bool {
         offset >= self.uncompressed_offset
             && offset < self.uncompressed_offset + u64::from(self.uncompressed_size)
     }
 
+    /// Convert an uncompressed stream offset to a virtual offset if it is inside this block.
     pub fn virtual_offset_for(&self, offset: u64) -> Result<Option<BgzfVirtualOffset>> {
         if !self.contains_uncompressed_offset(offset) {
             return Ok(None);
@@ -232,6 +282,7 @@ impl BgzfIndexEntry {
     }
 }
 
+/// In-memory index of BGZF block offsets.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BgzfIndex {
     entries: Vec<BgzfIndexEntry>,
@@ -240,26 +291,32 @@ pub struct BgzfIndex {
 }
 
 impl BgzfIndex {
+    /// Return all block index entries.
     pub fn entries(&self) -> &[BgzfIndexEntry] {
         &self.entries
     }
 
+    /// Return total uncompressed stream length represented by the index.
     pub fn uncompressed_len(&self) -> u64 {
         self.uncompressed_len
     }
 
+    /// Return total compressed stream length consumed while building the index.
     pub fn compressed_len(&self) -> u64 {
         self.compressed_len
     }
 
+    /// Return true when the index has no data blocks.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
+    /// Return the number of indexed data blocks.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// Find the block containing an uncompressed stream offset.
     pub fn entry_for_uncompressed_offset(&self, offset: u64) -> Option<&BgzfIndexEntry> {
         if offset >= self.uncompressed_len {
             return None;
@@ -272,6 +329,7 @@ impl BgzfIndex {
             .filter(|entry| entry.contains_uncompressed_offset(offset))
     }
 
+    /// Convert an uncompressed stream offset into a BGZF virtual offset.
     pub fn virtual_offset_for_uncompressed_offset(
         &self,
         offset: u64,
@@ -307,6 +365,7 @@ pub fn is_bgzf_header(prefix: &[u8]) -> bool {
         && prefix[15] == 0
 }
 
+/// Serial BGZF reader implementing [`std::io::Read`].
 pub struct BgzfReader<R> {
     inner: R,
     backend: BgzfInflateBackend,
@@ -315,6 +374,7 @@ pub struct BgzfReader<R> {
     eof: bool,
 }
 
+/// Seekable BGZF reader using virtual offsets.
 pub struct BgzfSeekReader<R> {
     inner: R,
     backend: BgzfInflateBackend,
@@ -323,6 +383,7 @@ pub struct BgzfSeekReader<R> {
     eof: bool,
 }
 
+/// Bounded parallel BGZF reader preserving block order.
 pub struct BgzfParallelReader {
     result_rx: Receiver<ParallelMsg>,
     current: Vec<u8>,
@@ -335,8 +396,11 @@ pub struct BgzfParallelReader {
     handles: Vec<JoinHandle<()>>,
 }
 
+/// Adaptive BGZF reader that selects serial or parallel decoding.
 pub enum BgzfAutoReader<R> {
+    /// Serial reader variant.
     Serial(BgzfReader<R>),
+    /// Parallel reader variant.
     Parallel(BgzfParallelReader),
 }
 
@@ -352,10 +416,12 @@ enum ParallelMsg {
 }
 
 impl<R: Read> BgzfReader<R> {
+    /// Construct a serial BGZF reader using the default inflate backend.
     pub fn new(inner: R) -> Self {
         Self::with_inflate_backend(inner, BgzfInflateBackend::default())
     }
 
+    /// Construct a serial BGZF reader using an explicit inflate backend.
     pub fn with_inflate_backend(inner: R, backend: BgzfInflateBackend) -> Self {
         Self {
             inner,
@@ -409,10 +475,12 @@ impl<R: Read> Read for BgzfReader<R> {
 }
 
 impl<R: Read + Seek> BgzfSeekReader<R> {
+    /// Construct a seekable BGZF reader using the default inflate backend.
     pub fn new(inner: R) -> Self {
         Self::with_inflate_backend(inner, BgzfInflateBackend::default())
     }
 
+    /// Construct a seekable BGZF reader using an explicit inflate backend.
     pub fn with_inflate_backend(inner: R, backend: BgzfInflateBackend) -> Self {
         Self {
             inner,
@@ -423,6 +491,7 @@ impl<R: Read + Seek> BgzfSeekReader<R> {
         }
     }
 
+    /// Seek to a BGZF virtual offset.
     pub fn seek_virtual_offset(&mut self, offset: BgzfVirtualOffset) -> std::io::Result<()> {
         self.inner
             .seek(SeekFrom::Start(offset.compressed_offset()))?;
@@ -506,6 +575,7 @@ impl<R: Read + Seek> Read for BgzfSeekReader<R> {
 }
 
 impl BgzfParallelReader {
+    /// Construct a parallel BGZF reader with `workers` decode workers.
     pub fn new<R>(inner: R, workers: usize) -> Result<Self>
     where
         R: Read + Send + 'static,
@@ -513,6 +583,7 @@ impl BgzfParallelReader {
         Self::with_inflate_backend(inner, workers, BgzfInflateBackend::default())
     }
 
+    /// Construct a parallel BGZF reader with an explicit inflate backend.
     pub fn with_inflate_backend<R>(
         inner: R,
         workers: usize,
@@ -527,6 +598,7 @@ impl BgzfParallelReader {
         )
     }
 
+    /// Construct a parallel BGZF reader with full pipeline configuration.
     pub fn with_config<R>(inner: R, config: BgzfParallelConfig) -> Result<Self>
     where
         R: Read + Send + 'static,
@@ -637,6 +709,7 @@ impl<R> BgzfAutoReader<R>
 where
     R: Read + Send + 'static,
 {
+    /// Construct an adaptive BGZF reader from compressed input length and config.
     pub fn with_config(inner: R, compressed_len: u64, config: BgzfParallelConfig) -> Result<Self> {
         if config.should_parallelize(compressed_len) {
             Ok(Self::Parallel(BgzfParallelReader::with_config(
@@ -688,6 +761,7 @@ impl Drop for BgzfParallelReader {
     }
 }
 
+/// BGZF writer implementing [`std::io::Write`].
 pub struct BgzfWriter<W> {
     inner: Option<W>,
     pending: Vec<u8>,
@@ -696,10 +770,12 @@ pub struct BgzfWriter<W> {
 }
 
 impl<W: Write> BgzfWriter<W> {
+    /// Construct a BGZF writer using fast compression.
     pub fn new(inner: W) -> Self {
         Self::with_compression(inner, Compression::fast())
     }
 
+    /// Construct a BGZF writer using an explicit flate2 compression level.
     pub fn with_compression(inner: W, level: Compression) -> Self {
         Self {
             inner: Some(inner),
@@ -709,6 +785,7 @@ impl<W: Write> BgzfWriter<W> {
         }
     }
 
+    /// Construct a BGZF writer using an explicit deflate backend.
     pub fn with_deflate_backend(inner: W, backend: BgzfDeflateBackend) -> Self {
         Self {
             inner: Some(inner),
@@ -718,6 +795,7 @@ impl<W: Write> BgzfWriter<W> {
         }
     }
 
+    /// Finish the stream, write the EOF block, flush, and return the inner writer.
     pub fn finish(mut self) -> Result<W> {
         self.flush_pending()?;
         let mut inner = self
@@ -767,10 +845,12 @@ impl<W: Write> Write for BgzfWriter<W> {
     }
 }
 
+/// Decompress a complete BGZF stream using parallel block decoding.
 pub fn decompress_bgzf_parallel<R: Read>(reader: R, workers: usize) -> Result<Vec<u8>> {
     decompress_bgzf_parallel_with_inflate_backend(reader, workers, BgzfInflateBackend::default())
 }
 
+/// Decompress a complete BGZF stream using an explicit inflate backend.
 pub fn decompress_bgzf_parallel_with_inflate_backend<R: Read>(
     mut reader: R,
     workers: usize,
@@ -794,10 +874,12 @@ pub fn decompress_bgzf_parallel_with_inflate_backend<R: Read>(
     Ok(out)
 }
 
+/// Compress a complete buffer as BGZF using parallel block compression.
 pub fn compress_bgzf_parallel(input: &[u8], workers: usize) -> Result<Vec<u8>> {
     compress_bgzf_parallel_with_deflate_backend(input, workers, BgzfDeflateBackend::Flate2)
 }
 
+/// Compress a complete buffer as BGZF using an explicit deflate backend.
 pub fn compress_bgzf_parallel_with_deflate_backend(
     input: &[u8],
     workers: usize,
@@ -816,6 +898,7 @@ pub fn compress_bgzf_parallel_with_deflate_backend(
     Ok(out)
 }
 
+/// Build a BGZF block index from a complete BGZF stream.
 pub fn build_bgzf_index<R: Read>(mut reader: R) -> Result<BgzfIndex> {
     let mut entries = Vec::new();
     let mut compressed_offset = 0_u64;

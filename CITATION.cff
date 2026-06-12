@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use microraptor in scientific work, please cite the software repository and version used."
+title: "microraptor: slab-based FASTQ streaming and packing for Rust"
+type: software
+authors:
+  - family-names: Lamb
+    given-names: Jake
+repository-code: "https://github.com/Jakeelamb/microraptor"
+url: "https://github.com/Jakeelamb/microraptor"
+abstract: "Microraptor is a Rust library core for low-allocation FASTQ streaming and base/quality packing over raw, gzip, and BGZF inputs."
+keywords:
+  - FASTQ
+  - bioinformatics
+  - sequencing
+  - BGZF
+license: "MIT OR Apache-2.0"
+version: "0.1.0"

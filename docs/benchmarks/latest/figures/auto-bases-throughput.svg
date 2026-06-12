@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="436" viewBox="0 0 1120 436">
+<rect width="100%" height="100%" fill="white"/>
+<text x="24" y="28" font-family="Arial, sans-serif" font-size="18" font-weight="700">Microraptor auto parse throughput</text>
+<text x="24" y="46" font-family="Arial, sans-serif" font-size="12" fill="#555">bases/s; parse-only auto opener rows generated from benchmark JSONL</text>
+<text x="24" y="71" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq / file-auto</text>
+<rect x="310" y="58" width="297" height="18" fill="#1f766f"/>
+<text x="615" y="71" font-family="Arial, sans-serif" font-size="12" fill="#222">1.90 Gbases/s</text>
+<text x="24" y="101" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.gz / file-auto</text>
+<rect x="310" y="88" width="176" height="18" fill="#1f766f"/>
+<text x="494" y="101" font-family="Arial, sans-serif" font-size="12" fill="#222">1.12 Gbases/s</text>
+<text x="24" y="131" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.bgz / file-auto</text>
+<rect x="310" y="118" width="352" height="18" fill="#1f766f"/>
+<text x="670" y="131" font-family="Arial, sans-serif" font-size="12" fill="#222">2.25 Gbases/s</text>
+<text x="24" y="161" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq / file-auto</text>
+<rect x="310" y="148" width="634" height="18" fill="#1f766f"/>
+<text x="952" y="161" font-family="Arial, sans-serif" font-size="12" fill="#222">4.04 Gbases/s</text>
+<text x="24" y="191" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.gz / file-auto</text>
+<rect x="310" y="178" width="239" height="18" fill="#1f766f"/>
+<text x="557" y="191" font-family="Arial, sans-serif" font-size="12" fill="#222">1.52 Gbases/s</text>
+<text x="24" y="221" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.bgz / file-auto</text>
+<rect x="310" y="208" width="310" height="18" fill="#1f766f"/>
+<text x="628" y="221" font-family="Arial, sans-serif" font-size="12" fill="#222">1.98 Gbases/s</text>
+<text x="24" y="251" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq / file-auto</text>
+<rect x="310" y="238" width="633" height="18" fill="#1f766f"/>
+<text x="951" y="251" font-family="Arial, sans-serif" font-size="12" fill="#222">4.03 Gbases/s</text>
+<text x="24" y="281" font-family="Arial, sans-serif" font-size="12" fill="#222">r2.fastq / file-auto</text>
+<rect x="310" y="268" width="650" height="18" fill="#1f766f"/>
+<text x="968" y="281" font-family="Arial, sans-serif" font-size="12" fill="#222">4.14 Gbases/s</text>
+<text x="24" y="311" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq+r2.fastq / file-paired-auto</text>
+<rect x="310" y="298" width="325" height="18" fill="#1f766f"/>
+<text x="643" y="311" font-family="Arial, sans-serif" font-size="12" fill="#222">2.07 Gbases/s</text>
+<text x="24" y="341" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq.gz+r2.fastq.gz / file-paired-auto</text>
+<rect x="310" y="328" width="201" height="18" fill="#1f766f"/>
+<text x="519" y="341" font-family="Arial, sans-serif" font-size="12" fill="#222">1.29 Gbases/s</text>
+<text x="24" y="371" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq.bgz+r2.fastq.bgz / file-paired-auto</text>
+<rect x="310" y="358" width="227" height="18" fill="#1f766f"/>
+<text x="545" y="371" font-family="Arial, sans-serif" font-size="12" fill="#222">1.45 Gbases/s</text>
+</svg>

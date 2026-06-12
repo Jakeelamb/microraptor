@@ -8,10 +8,11 @@ workers="${MICRORAPTOR_WORKERS:-$(nproc)}"
 input_dir="${MICRORAPTOR_GAUNTLET_INPUT_DIR:-target/bench-inputs}"
 result_dir="${MICRORAPTOR_GAUNTLET_RESULT_DIR:-target/bench-results}"
 corpus_inputs="${MICRORAPTOR_GAUNTLET_CORPUS_INPUTS:-}"
+corpus_paired_inputs="${MICRORAPTOR_GAUNTLET_CORPUS_PAIRED_INPUTS:-}"
 
 mkdir -p "${input_dir}" "${result_dir}"
 
-cargo build --release --all-features --bin microraptor-bench --bin microraptor-fixture
+cargo +nightly build --release --all-features --bin microraptor-bench --bin microraptor-fixture
 target/release/microraptor-fixture \
   --out-dir "${input_dir}" \
   --records "${records}" \
@@ -19,7 +20,61 @@ target/release/microraptor-fixture \
 
 jsonl="${result_dir}/microraptor-gauntlet.jsonl"
 md="${result_dir}/microraptor-gauntlet.md"
+metadata="${result_dir}/microraptor-gauntlet-metadata.md"
+external_tsv="${result_dir}/external-tools.tsv"
 : > "${jsonl}"
+: > "${external_tsv}"
+
+command_version() {
+  local command_name="$1"
+  shift
+  if command -v "${command_name}" >/dev/null 2>&1; then
+    "$@" 2>&1 | sed -n '1,3p' || true
+  else
+    printf '%s not installed\n' "${command_name}"
+  fi
+}
+
+{
+  printf '# microraptor benchmark metadata\n\n'
+  printf -- '- generated_at_utc: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  printf -- '- git_commit: %s\n' "$(git rev-parse --short HEAD 2>/dev/null || printf unknown)"
+  printf -- '- git_dirty: %s\n' "$(if [[ -n "$(git status --short 2>/dev/null)" ]]; then printf true; else printf false; fi)"
+  printf -- '- rustc: %s\n' "$(rustc --version)"
+  printf -- '- cargo: %s\n' "$(cargo --version)"
+  printf -- '- cargo_nightly: %s\n' "$(cargo +nightly --version)"
+  printf -- '- build_profile: release\n'
+  printf -- '- feature_flags: all-features\n'
+  printf -- '- kernel: %s\n' "$(uname -srmo)"
+  printf -- '- cpu: %s\n' "$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -n 1)"
+  printf -- '- logical_cpus: %s\n' "$(nproc)"
+  printf -- '- memory: %s\n' "$(free -h | awk '/^Mem:/ { print $2 }')"
+  printf -- '- filesystem: %s\n' "$(df -T . | awk 'NR == 2 { printf "%s", $2 }')"
+  printf -- '- storage_available: %s\n' "$(df -h . | awk 'NR == 2 { printf "%s", $4 }')"
+  printf -- '- records: %s\n' "${records}"
+  printf -- '- read_len: %s\n' "${read_len}"
+  printf -- '- iters: %s\n' "${iters}"
+  printf -- '- workers: %s\n\n' "${workers}"
+  printf '## Tool versions\n\n'
+  printf '### microraptor\n\n```text\n'
+  target/release/microraptor-bench --help 2>&1 | sed -n '1p' || true
+  printf '```\n\n'
+  printf '### seqkit\n\n```text\n'
+  command_version seqkit seqkit version
+  printf '```\n\n'
+  printf '### seqtk\n\n```text\n'
+  command_version seqtk seqtk
+  printf '```\n\n'
+  printf '### samtools\n\n```text\n'
+  command_version samtools samtools --version
+  printf '```\n\n'
+  printf '### bgzip\n\n```text\n'
+  command_version bgzip bgzip --version
+  printf '```\n\n'
+  printf '### fastp\n\n```text\n'
+  command_version fastp fastp --version
+  printf '```\n'
+} > "${metadata}"
 
 {
   printf '# microraptor benchmark gauntlet\n\n'
@@ -29,6 +84,8 @@ md="${result_dir}/microraptor-gauntlet.md"
   printf -- '- workers: %s\n\n' "${workers}"
   printf '## microraptor\n\n'
 } > "${md}"
+
+printf 'label\ttool\tstatus\telapsed_s\tcommand\n' > "${external_tsv}"
 
 run_microraptor() {
   local label="$1"
@@ -108,27 +165,78 @@ run_microraptor_paired() {
   } >> "${md}"
 }
 
+run_microraptor_paired_optional() {
+  local label="$1"
+  local first="$2"
+  local second="$3"
+  [[ -f "${first}" && -f "${second}" ]] || return 0
+
+  printf 'running microraptor %s: %s %s\n' "${label}" "${first}" "${second}"
+  set +e
+  local json_output
+  json_output="$(
+    target/release/microraptor-bench \
+      --paired-inputs "${first}" "${second}" \
+      --iters "${iters}" \
+      --workers "${workers}" \
+      --json 2>&1
+  )"
+  local json_status="$?"
+  set -e
+
+  {
+    printf '### %s\n\n' "${label}"
+    printf '```text\n'
+    printf '%s\n' "${json_output}"
+    printf 'exit_status\t%s\n' "${json_status}"
+    printf '```\n\n'
+  } >> "${md}"
+
+  if [[ "${json_status}" -eq 0 ]]; then
+    printf '%s\n' "${json_output}" >> "${jsonl}"
+  fi
+}
+
 run_external() {
   local label="$1"
   local command_name="$2"
   shift 2
+  local command_display="$*"
 
   {
     printf '### %s\n\n' "${label}"
     if command -v "${command_name}" >/dev/null 2>&1; then
       printf '```text\n'
       set +e
-      /usr/bin/time -f 'elapsed_s\t%e' "$@" 2>&1
+      local output
+      output="$(/usr/bin/time -f 'elapsed_s\t%e' "$@" 2>&1)"
       local status="$?"
       set -e
+      printf '%s\n' "${output}"
+      local elapsed
+      elapsed="$(printf '%s\n' "${output}" | awk -F '\t' '$1 == "elapsed_s" { value = $2 } END { print value }')"
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "${label}" \
+        "${command_name}" \
+        "${status}" \
+        "${elapsed:-NA}" \
+        "${command_display}" >> "${external_tsv}"
       if [[ "${status}" -ne 0 ]]; then
         printf 'exit_status\t%s\n' "${status}"
       fi
       printf '```\n\n'
     else
       printf '`%s` not installed; skipped.\n\n' "${command_name}"
+      printf '%s\t%s\tskipped\tNA\t%s\n' \
+        "${label}" \
+        "${command_name}" \
+        "${command_display}" >> "${external_tsv}"
     fi
   } >> "${md}"
+}
+
+safe_artifact_label() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_'
 }
 
 run_microraptor "single/raw" "${input_dir}/single.fastq"
@@ -149,6 +257,14 @@ if [[ -n "${corpus_inputs}" ]]; then
   done
 fi
 
+if [[ -n "${corpus_paired_inputs}" ]]; then
+  for corpus_pair in ${corpus_paired_inputs}; do
+    IFS=',' read -r first second label <<< "${corpus_pair}"
+    label="${label:-$(basename "${first}")+$(basename "${second}")}"
+    run_microraptor_paired_optional "corpus-paired/${label}" "${first}" "${second}"
+  done
+fi
+
 {
   printf '## external tools\n\n'
 } >> "${md}"
@@ -162,9 +278,12 @@ run_external "seqkit stats paired/r1/gzip" seqkit seqkit stats "${input_dir}/r1.
 run_external "seqkit stats paired/r2/gzip" seqkit seqkit stats "${input_dir}/r2.fastq.gz"
 run_external "seqkit stats paired/r1/bgzf" seqkit seqkit stats "${input_dir}/r1.fastq.bgz"
 run_external "seqkit stats paired/r2/bgzf" seqkit seqkit stats "${input_dir}/r2.fastq.bgz"
-run_external "seqtk size single/raw" seqtk seqtk size "${input_dir}/single.fastq"
-run_external "seqtk size single/gzip" seqtk seqtk size "${input_dir}/single.fastq.gz"
-run_external "seqtk size single/bgzf" seqtk seqtk size "${input_dir}/single.fastq.bgz"
+run_external "seqtk comp single/raw" seqtk bash -lc \
+  "seqtk comp '${input_dir}/single.fastq' >/dev/null"
+run_external "seqtk comp single/gzip" seqtk bash -lc \
+  "seqtk comp '${input_dir}/single.fastq.gz' >/dev/null"
+run_external "seqtk comp single/bgzf" seqtk bash -lc \
+  "seqtk comp '${input_dir}/single.fastq.bgz' >/dev/null"
 run_external "seqtk fqchk single/raw" seqtk seqtk fqchk "${input_dir}/single.fastq"
 run_external "bgzip test single/bgzf" bgzip bgzip -t "${input_dir}/single.fastq.bgz"
 run_external "bgzip decompress single/bgzf" bgzip bash -lc \
@@ -199,5 +318,44 @@ run_external "fastp paired/gzip" fastp bash -lc \
 run_external "fastp paired/bgzf" fastp bash -lc \
   "fastp --in1 '${input_dir}/r1.fastq.bgz' --in2 '${input_dir}/r2.fastq.bgz' --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread '${workers}' --json '${result_dir}/fastp-bgzf.json' --html '${result_dir}/fastp-bgzf.html' >/dev/null"
 
+if [[ -n "${corpus_paired_inputs}" ]]; then
+  for corpus_pair in ${corpus_paired_inputs}; do
+    IFS=',' read -r first second label <<< "${corpus_pair}"
+    label="${label:-$(basename "${first}")+$(basename "${second}")}"
+    run_external "seqkit stats corpus-paired/${label}/r1" seqkit seqkit stats "${first}"
+    run_external "seqkit stats corpus-paired/${label}/r2" seqkit seqkit stats "${second}"
+    run_external "seqtk fqchk corpus-paired/${label}/r1" seqtk seqtk fqchk "${first}"
+    run_external "seqtk fqchk corpus-paired/${label}/r2" seqtk seqtk fqchk "${second}"
+    run_external "samtools import corpus-paired/${label}" samtools samtools import \
+      -1 "${first}" \
+      -2 "${second}" \
+      -o /dev/null \
+      -O BAM \
+      -@ "${workers}"
+    run_external "fastp corpus-paired/${label}" fastp bash -lc \
+      "fastp --in1 '${first}' --in2 '${second}' --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread '${workers}' --json '${result_dir}/fastp-${label}.json' --html '${result_dir}/fastp-${label}.html' >/dev/null"
+  done
+fi
+
+if [[ -n "${corpus_inputs}" ]]; then
+  for corpus_input in ${corpus_inputs}; do
+    label="corpus/$(basename "${corpus_input}")"
+    artifact_label="$(safe_artifact_label "${label}")"
+    run_external "seqkit stats ${label}" seqkit seqkit stats "${corpus_input}"
+    run_external "seqtk comp ${label}" seqtk bash -lc \
+      "seqtk comp '${corpus_input}' >/dev/null"
+    run_external "seqtk fqchk ${label}" seqtk seqtk fqchk "${corpus_input}"
+    run_external "samtools import ${label}" samtools samtools import \
+      -0 "${corpus_input}" \
+      -o /dev/null \
+      -O BAM \
+      -@ "${workers}"
+    run_external "fastp ${label}" fastp bash -lc \
+      "fastp --in1 '${corpus_input}' --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread '${workers}' --json '${result_dir}/fastp-${artifact_label}.json' --html '${result_dir}/fastp-${artifact_label}.html' >/dev/null"
+  done
+fi
+
 printf 'wrote %s\n' "${jsonl}"
 printf 'wrote %s\n' "${md}"
+printf 'wrote %s\n' "${metadata}"
+printf 'wrote %s\n' "${external_tsv}"

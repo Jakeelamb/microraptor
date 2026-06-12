@@ -1,0 +1,72 @@
+name: Parser or BGZF bug
+description: Report incorrect FASTQ parsing, pairing, packing, or BGZF behavior.
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the incorrect behavior and why it is wrong.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - FASTQ reader
+        - paired FASTQ reader
+        - interleaved pairs
+        - pack side channel
+        - gzip opener
+        - BGZF reader
+        - BGZF writer
+        - BGZF index or seek
+        - benchmark tooling
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal reproducer
+      description: Include the smallest synthetic input and exact command or API call.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Include full error text, panic output, checksum mismatch, or count mismatch.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Microraptor version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Rust version, OS, feature flags, and relevant compression/backend details.
+      render: text
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Scope check
+      options:
+        - label: The reproducer does not require multiline FASTQ support.
+        - label: The reproducer does not require synchronizing reordered paired-end files.
+        - label: Large biological input files are not attached to this issue.

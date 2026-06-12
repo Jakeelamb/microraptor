@@ -6,11 +6,25 @@ use crate::scan::scan_newlines;
 
 const DEFAULT_SLAB_SIZE: usize = 8 * 1024 * 1024;
 
+/// Configuration for FASTQ batch readers.
+///
+/// The default is a validated, unpaired reader with an 8 MiB slab and full pair
+/// identifier validation when pairing APIs are used.
 #[derive(Debug, Clone)]
 pub struct FastqConfig {
+    /// Target slab size in bytes.
+    ///
+    /// Values below 1024 are raised to 1024. Larger slabs reduce carry
+    /// frequency for long records but increase the reusable buffer size.
     pub slab_size: usize,
+    /// Validate FASTQ structure while framing records.
+    ///
+    /// Validation checks the leading `@`, leading `+`, and sequence/quality
+    /// length equality. Disable only for trusted inputs.
     pub validate: bool,
+    /// Whether a single stream should be interpreted as unpaired or interleaved.
     pub pairing: PairingMode,
+    /// Identifier validation policy for paired APIs.
     pub pair_validation: PairValidation,
 }
 
@@ -26,38 +40,61 @@ impl Default for FastqConfig {
 }
 
 impl FastqConfig {
+    /// Treat a single FASTQ stream as adjacent interleaved read pairs.
     pub fn interleaved(mut self) -> Self {
         self.pairing = PairingMode::Interleaved;
         self
     }
 
+    /// Set the paired-read identifier validation policy.
     pub fn pair_validation(mut self, pair_validation: PairValidation) -> Self {
         self.pair_validation = pair_validation;
         self
     }
 }
 
+/// Pairing interpretation for a single FASTQ stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PairingMode {
+    /// Records are yielded independently.
     None,
+    /// Adjacent records are expected to be ordered mates.
     Interleaved,
 }
 
+/// Identifier validation policy for paired-end data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PairValidation {
+    /// Compare normalized first-token identifiers after removing `/1` or `/2`.
     Full,
+    /// Fast path for ordered `/1` and `/2` mate suffixes, with fallback to
+    /// [`Full`](Self::Full) when that shape is not present.
     FastSlash,
+    /// Skip identifier checks for trusted, already synchronized inputs.
     None,
 }
 
+/// Byte ranges for a four-line FASTQ record within a batch slab.
+///
+/// Ranges are local to [`FastqBatch::bytes`]. They are exposed for callers that
+/// want to build their own zero-copy views without using [`FastqRecord`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordRef {
+    /// Header line, including the leading `@` and excluding the newline.
     pub name: Range<u32>,
+    /// Sequence line, excluding the newline.
     pub seq: Range<u32>,
+    /// Plus line, excluding the newline.
     pub plus: Range<u32>,
+    /// Quality line, excluding the newline.
     pub qual: Range<u32>,
 }
 
+/// Borrowed view of one FASTQ record inside a [`FastqBatch`].
+///
+/// The record borrows from the batch's slab buffer and cannot outlive the
+/// batch. Accessors return byte slices rather than UTF-8 strings because FASTQ
+/// names and qualities are byte-oriented.
 #[derive(Debug, Clone, Copy)]
 pub struct FastqRecord<'a> {
     bytes: &'a [u8],
@@ -65,15 +102,18 @@ pub struct FastqRecord<'a> {
 }
 
 impl<'a> FastqRecord<'a> {
+    /// Return the header line including the leading `@`.
     pub fn name(self) -> &'a [u8] {
         &self.bytes[to_usize(self.record.name.clone())]
     }
 
+    /// Return the header line without a leading `@`.
     pub fn name_without_at(self) -> &'a [u8] {
         let name = self.name();
         name.strip_prefix(b"@").unwrap_or(name)
     }
 
+    /// Return the first whitespace-delimited identifier token.
     pub fn id_token(self) -> &'a [u8] {
         let name = self.name_without_at();
         let end = name
@@ -83,23 +123,28 @@ impl<'a> FastqRecord<'a> {
         &name[..end]
     }
 
+    /// Return the identifier token with a trailing `/1` or `/2` removed.
     pub fn pair_normalized_id(self) -> &'a [u8] {
         strip_pair_suffix(self.id_token())
     }
 
+    /// Return the sequence line.
     pub fn seq(self) -> &'a [u8] {
         &self.bytes[to_usize(self.record.seq.clone())]
     }
 
+    /// Return the plus line.
     pub fn plus(self) -> &'a [u8] {
         &self.bytes[to_usize(self.record.plus.clone())]
     }
 
+    /// Return the quality line.
     pub fn qual(self) -> &'a [u8] {
         &self.bytes[to_usize(self.record.qual.clone())]
     }
 }
 
+/// Borrowed view of an ordered read pair.
 #[derive(Debug, Clone, Copy)]
 pub struct FastqPair<'a> {
     first: FastqRecord<'a>,
@@ -107,19 +152,23 @@ pub struct FastqPair<'a> {
 }
 
 impl<'a> FastqPair<'a> {
+    /// First mate.
     pub fn first(&self) -> FastqRecord<'a> {
         self.first
     }
 
+    /// Second mate.
     pub fn second(&self) -> FastqRecord<'a> {
         self.second
     }
 
+    /// Normalized pair identifier from the first mate.
     pub fn pair_id(&self) -> &'a [u8] {
         self.first.pair_normalized_id()
     }
 }
 
+/// Strip a terminal `/1` or `/2` pair suffix from an identifier token.
 pub fn strip_pair_suffix(id: &[u8]) -> &[u8] {
     if id.len() >= 2 && (id.ends_with(b"/1") || id.ends_with(b"/2")) {
         &id[..id.len() - 2]
@@ -128,39 +177,56 @@ pub fn strip_pair_suffix(id: &[u8]) -> &[u8] {
     }
 }
 
+/// A batch of borrowed FASTQ records from one reader slab.
+///
+/// The batch is invalidated by the next mutable call on the reader that
+/// produced it. Process records before requesting another batch.
 #[derive(Debug)]
 pub struct FastqBatch<'a> {
     bytes: &'a [u8],
     records: &'a [RecordRef],
     base_offset: u64,
     first_record_index: u64,
+    pair_validation: PairValidation,
 }
 
 impl<'a> FastqBatch<'a> {
+    /// Number of records in the batch.
     pub fn len(&self) -> usize {
         self.records.len()
     }
 
+    /// Whether the batch has no records.
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 
+    /// Raw slab bytes backing this batch.
     pub fn bytes(&self) -> &'a [u8] {
         self.bytes
     }
 
+    /// Record ranges within [`bytes`](Self::bytes).
     pub fn record_refs(&self) -> &'a [RecordRef] {
         self.records
     }
 
+    /// Absolute byte offset of `bytes()[0]` in the original stream.
     pub fn base_offset(&self) -> u64 {
         self.base_offset
     }
 
+    /// Zero-based index of the first record in this batch.
     pub fn first_record_index(&self) -> u64 {
         self.first_record_index
     }
 
+    /// Pair validation mode inherited from the producing reader.
+    pub fn pair_validation(&self) -> PairValidation {
+        self.pair_validation
+    }
+
+    /// Iterate borrowed record views.
     pub fn records(&self) -> impl Iterator<Item = FastqRecord<'a>> + 'a {
         let bytes = self.bytes;
         let records: &'a [RecordRef] = self.records;
@@ -169,15 +235,20 @@ impl<'a> FastqBatch<'a> {
             .map(move |record| FastqRecord { bytes, record })
     }
 
+    /// Validate and iterate adjacent interleaved read pairs.
+    ///
+    /// Returns an error if the batch has an odd record count or mate
+    /// identifiers fail the configured [`PairValidation`] mode.
     pub fn interleaved_pairs(&'a self) -> Result<InterleavedPairs<'a>> {
         validate_even_pair_count(self)?;
-        validate_pair_ids(self, self)?;
+        validate_interleaved_pair_ids(self, self.pair_validation)?;
         Ok(InterleavedPairs {
             batch: self,
             next: 0,
         })
     }
 
+    /// Validate and zip this batch with a mate batch from a separate reader.
     pub fn paired_with(&'a self, mate: &'a FastqBatch<'a>) -> Result<PairedRecords<'a>> {
         validate_paired_batches(self, mate)?;
         Ok(PairedRecords {
@@ -196,6 +267,7 @@ impl<'a> FastqBatch<'a> {
     }
 }
 
+/// Iterator over adjacent pairs in an interleaved [`FastqBatch`].
 #[derive(Debug)]
 pub struct InterleavedPairs<'a> {
     batch: &'a FastqBatch<'a>,
@@ -218,6 +290,7 @@ impl<'a> Iterator for InterleavedPairs<'a> {
     }
 }
 
+/// Iterator over paired records from two separate [`FastqBatch`] values.
 #[derive(Debug)]
 pub struct PairedRecords<'a> {
     first: &'a FastqBatch<'a>,
@@ -241,6 +314,7 @@ impl<'a> Iterator for PairedRecords<'a> {
     }
 }
 
+/// Validate and zip two separate FASTQ batches by ordered mate identifiers.
 pub fn paired_records<'a>(
     first: &'a FastqBatch<'a>,
     second: &'a FastqBatch<'a>,
@@ -248,6 +322,11 @@ pub fn paired_records<'a>(
     first.paired_with(second)
 }
 
+/// A paired-end batch produced by [`PairedFastqReader`].
+///
+/// The batch contains the validated common prefix from the two underlying
+/// readers. If one reader yields more records than the other in a slab, the
+/// extra records are retained for the next call.
 #[derive(Debug)]
 pub struct PairedFastqBatch<'a> {
     first_bytes: &'a [u8],
@@ -257,14 +336,17 @@ pub struct PairedFastqBatch<'a> {
 }
 
 impl<'a> PairedFastqBatch<'a> {
+    /// Number of read pairs in the batch.
     pub fn len(&self) -> usize {
         self.first_records.len()
     }
 
+    /// Whether this batch contains no read pairs.
     pub fn is_empty(&self) -> bool {
         self.first_records.is_empty()
     }
 
+    /// Iterate borrowed read-pair views.
     pub fn pairs(&'a self) -> PairedFastqPairs<'a> {
         PairedFastqPairs {
             batch: self,
@@ -287,6 +369,7 @@ impl<'a> PairedFastqBatch<'a> {
     }
 }
 
+/// Iterator over read pairs in a [`PairedFastqBatch`].
 #[derive(Debug)]
 pub struct PairedFastqPairs<'a> {
     batch: &'a PairedFastqBatch<'a>,
@@ -309,6 +392,10 @@ impl<'a> Iterator for PairedFastqPairs<'a> {
     }
 }
 
+/// Stateful reader for ordered separate-file paired-end FASTQ streams.
+///
+/// This reader validates matching records as it advances both streams. It does
+/// not reorder or synchronize mates that appear in different orders.
 #[derive(Debug)]
 pub struct PairedFastqReader<R1, R2> {
     first: FastqReader<R1>,
@@ -317,10 +404,12 @@ pub struct PairedFastqReader<R1, R2> {
 }
 
 impl<R1: Read, R2: Read> PairedFastqReader<R1, R2> {
+    /// Create a paired reader with default FASTQ configuration.
     pub fn new(first: R1, second: R2) -> Self {
         Self::with_config(first, second, FastqConfig::default())
     }
 
+    /// Create a paired reader using the same configuration for both streams.
     pub fn with_config(first: R1, second: R2, config: FastqConfig) -> Self {
         Self::with_configs(
             first,
@@ -336,6 +425,7 @@ impl<R1: Read, R2: Read> PairedFastqReader<R1, R2> {
         )
     }
 
+    /// Create a paired reader with separate per-stream configurations.
     pub fn with_configs(
         first: R1,
         first_config: FastqConfig,
@@ -362,6 +452,7 @@ impl<R1: Read, R2: Read> PairedFastqReader<R1, R2> {
         }
     }
 
+    /// Create a paired reader from two existing [`FastqReader`] values.
     pub fn from_fastq_readers(first: FastqReader<R1>, second: FastqReader<R2>) -> Self {
         Self {
             pair_validation: first.config.pair_validation,
@@ -370,11 +461,15 @@ impl<R1: Read, R2: Read> PairedFastqReader<R1, R2> {
         }
     }
 
+    /// Override the paired identifier validation policy.
     pub fn with_pair_validation(mut self, pair_validation: PairValidation) -> Self {
         self.pair_validation = pair_validation;
         self
     }
 
+    /// Read the next validated paired batch.
+    ///
+    /// Returns `Ok(None)` when both streams end together.
     pub fn next_pair_batch(&mut self) -> Result<Option<PairedFastqBatch<'_>>> {
         let first = self.first.next_batch()?;
         let second = self.second.next_batch()?;
@@ -458,6 +553,14 @@ fn retain_from(batch: &FastqBatch<'_>, index: usize) -> Option<(usize, usize)> {
     ))
 }
 
+/// Slab-based FASTQ reader over any [`Read`] input.
+///
+/// The reader frames four-line FASTQ records from a reusable byte slab. Records
+/// crossing slab boundaries are carried into the next read. Returned batches
+/// borrow from the reader and must be consumed before calling [`next_batch`]
+/// again.
+///
+/// [`next_batch`]: Self::next_batch
 #[derive(Debug)]
 pub struct FastqReader<R> {
     reader: R,
@@ -473,10 +576,12 @@ pub struct FastqReader<R> {
 }
 
 impl<R: Read> FastqReader<R> {
+    /// Create a reader with [`FastqConfig::default`].
     pub fn new(reader: R) -> Self {
         Self::with_config(reader, FastqConfig::default())
     }
 
+    /// Create a reader with explicit configuration.
     pub fn with_config(reader: R, config: FastqConfig) -> Self {
         let slab_size = config.slab_size.max(1024);
         let buf = vec![0; slab_size];
@@ -497,10 +602,15 @@ impl<R: Read> FastqReader<R> {
         }
     }
 
+    /// Return the wrapped reader.
     pub fn into_inner(self) -> R {
         self.reader
     }
 
+    /// Read the next batch of FASTQ records.
+    ///
+    /// Returns `Ok(None)` at EOF. Format errors include byte offset, record
+    /// index, and line index when the failing location is known.
     pub fn next_batch(&mut self) -> Result<Option<FastqBatch<'_>>> {
         self.compact_carry();
         self.fill_slab()?;
@@ -535,6 +645,7 @@ impl<R: Read> FastqReader<R> {
             records: &self.records,
             base_offset: self.base_offset,
             first_record_index,
+            pair_validation: self.config.pair_validation,
         }))
     }
 
@@ -635,22 +746,28 @@ fn validate_paired_batches(first: &FastqBatch<'_>, second: &FastqBatch<'_>) -> R
 }
 
 fn validate_pair_ids(first: &FastqBatch<'_>, second: &FastqBatch<'_>) -> Result<()> {
-    if std::ptr::eq(first, second) {
-        for index in (0..first.records.len()).step_by(2) {
-            let r1 = first.record_at(index);
-            let r2 = first.record_at(index + 1);
-            if !pair_ids_match(r1, r2, PairValidation::Full) {
-                return Err(pair_id_mismatch(first, index + 1));
-            }
-        }
-        return Ok(());
-    }
-
     for index in 0..first.records.len() {
         let r1 = first.record_at(index);
         let r2 = second.record_at(index);
         if !pair_ids_match(r1, r2, PairValidation::Full) {
             return Err(pair_id_mismatch(second, index));
+        }
+    }
+    Ok(())
+}
+
+fn validate_interleaved_pair_ids(
+    batch: &FastqBatch<'_>,
+    pair_validation: PairValidation,
+) -> Result<()> {
+    if pair_validation == PairValidation::None {
+        return Ok(());
+    }
+    for index in (0..batch.records.len()).step_by(2) {
+        let r1 = batch.record_at(index);
+        let r2 = batch.record_at(index + 1);
+        if !pair_ids_match(r1, r2, pair_validation) {
+            return Err(pair_id_mismatch(batch, index + 1));
         }
     }
     Ok(())
@@ -687,12 +804,10 @@ fn pair_ids_match(first: FastqRecord<'_>, second: FastqRecord<'_>, mode: PairVal
 fn fast_slash_pair_ids_match(first_name: &[u8], second_name: &[u8]) -> Option<bool> {
     let first = first_name.strip_prefix(b"@").unwrap_or(first_name);
     let second = second_name.strip_prefix(b"@").unwrap_or(second_name);
-    if first.len() >= 3
-        && first.len() == second.len()
-        && first.ends_with(b"/1")
-        && second.ends_with(b"/2")
-    {
-        return Some(first[..first.len() - 2] == second[..second.len() - 2]);
+    if first.len() >= 3 && first.len() == second.len() && first.ends_with(b"/1") {
+        return Some(
+            second.ends_with(b"/2") && first[..first.len() - 2] == second[..second.len() - 2],
+        );
     }
 
     let first_end = token_end(first);
@@ -704,10 +819,10 @@ fn fast_slash_pair_ids_match(first_name: &[u8], second_name: &[u8]) -> Option<bo
     }
     let first_suffix = &first[first.len() - 2..];
     let second_suffix = &second[second.len() - 2..];
-    if first_suffix != b"/1" || second_suffix != b"/2" || first.len() != second.len() {
+    if first_suffix != b"/1" || first.len() != second.len() {
         return None;
     }
-    Some(first[..first.len() - 2] == second[..second.len() - 2])
+    Some(second_suffix == b"/2" && first[..first.len() - 2] == second[..second.len() - 2])
 }
 
 fn token_end(bytes: &[u8]) -> usize {
@@ -749,6 +864,10 @@ fn frame_records(
     first_record_index: u64,
     records: &mut Vec<RecordRef>,
 ) -> Result<usize> {
+    let has_partial_trailing_line = !eof
+        && newline_offsets
+            .last()
+            .map_or(!bytes.is_empty(), |&nl| nl + 1 < bytes.len());
     let has_final_line = eof
         && newline_offsets
             .last()
@@ -792,7 +911,7 @@ fn frame_records(
         });
     }
 
-    if complete_lines == line_count {
+    if complete_lines == line_count && !has_partial_trailing_line {
         Ok(bytes.len())
     } else {
         Ok(line_start(newline_offsets, complete_lines))

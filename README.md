@@ -1,8 +1,36 @@
 # microraptor
 
-Microraptor is a slab-based FASTQ streaming core. It is built around one invariant:
-raw FASTQ, gzip FASTQ, and BGZF/ISA-L paths all produce the same
-decompressed byte slabs, and the parser only sees bytes.
+Microraptor is a slab-based FASTQ streaming and packing core for Rust. It is
+designed for downstream scientific tools that need raw, gzip, and BGZF FASTQ
+input to converge on one low-allocation parser path.
+
+The framework is built around one invariant: decompression is a transport layer.
+Raw FASTQ, gzip FASTQ, and BGZF paths produce the same decompressed byte slabs,
+and the parser only sees bytes.
+
+Microraptor is intentionally not an all-in-one preprocessing suite. It does not
+trim adapters, filter reads, produce QC reports, align reads, or synchronize
+reordered paired-end files. Its useful surface is narrower: validated FASTQ
+batches, ordered mate validation, BGZF-aware input, and optional packed
+base/quality side channels.
+
+Publication surfaces:
+
+- [docs/FRAMEWORK.md](docs/FRAMEWORK.md): framework analysis, competitors, and
+  claim boundaries.
+- [BENCHMARKING.md](BENCHMARKING.md): benchmark commands, interpretation, and
+  reproducibility protocol.
+- [docs/API_SURFACE.md](docs/API_SURFACE.md): public API tiering and `0.1.x`
+  release-surface decision.
+- [docs/REPLICATION.md](docs/REPLICATION.md): release-commit regeneration,
+  replication-kit, and independent-machine evidence protocol.
+- [docs/PUBLISHING.md](docs/PUBLISHING.md): release-readiness checklist.
+- [docs/RELEASE_AUDIT.md](docs/RELEASE_AUDIT.md): current requirement matrix
+  and remaining public-release gaps.
+- [CHANGELOG.md](CHANGELOG.md): release notes and benchmark-evidence summary.
+- [SECURITY.md](SECURITY.md): vulnerability reporting scope for parser, pack,
+  and BGZF issues.
+- [CITATION.cff](CITATION.cff): citation metadata for scientific use.
 
 Current slice:
 
@@ -15,8 +43,8 @@ Current slice:
 - optional libdeflate BGZF inflate and deflate backends
 - explicit buffered libdeflate gzip opener for bounded single gzip inputs
 - reusable slab buffer with carry handling for records crossing slab boundaries
-- SIMD newline scan on nightly through `std::simd`, with scalar fallback when the
-  `simd` feature is disabled
+- stable default `memchr` newline scanner, with nightly `std::simd`
+  acceleration behind the explicit `simd` feature
 - borrowed `RecordRef` ranges instead of per-record allocation
 - optional 2-bit base packing with an ambiguity mask
 - Phred+33 quality summaries and threshold binning
@@ -62,7 +90,8 @@ Default streamer boundary:
 
 Features:
 
-- `simd`: nightly portable-SIMD newline scanner
+- default: stable Rust raw/gzip/BGZF streaming
+- `simd`: nightly portable-SIMD newline and pack-path acceleration
 - `gzip`: ordinary gzip input by gzip magic
 - `bgzf`: BGZF reader, writer, detection, and parallel block helpers
 - `libdeflate`: optional libdeflate BGZF inflate/deflate backends and explicit
@@ -77,20 +106,67 @@ Current limitations:
 
 Benchmarking:
 
-- `cargo bench --all-features`
+- `cargo +nightly bench --all-features`
 - `cargo run --release --bin microraptor-bench -- --records 500000 --iters 7`
 - `scripts/bench.sh`
 - `scripts/benchmark-gauntlet.sh`
+- `scripts/render-benchmark-report.sh`
+- `scripts/check-benchmark-snapshots.sh`
+- `scripts/benchmark-rust-peers.sh`
+- `scripts/check-replication-host.sh`
+- `scripts/discover-local-benchmark-corpus.sh`
 - `scripts/profile-perf.sh`
 - `scripts/profile-hotpath.sh`
+- `scripts/release-gate.sh`
+- `scripts/export-replication-kit.sh`
 
 See `BENCHMARKING.md` for profiling details and result interpretation.
+
+Current local benchmark snapshots:
+
+- [docs/benchmarks/drosophila-1m/summary.md](docs/benchmarks/drosophila-1m/summary.md):
+  1M ordered Drosophila Illumina read pairs from the local benchmark corpus,
+  plus installed `seqkit`, `seqtk`, `samtools`, and `fastp` wall-clock rows.
+- [docs/benchmarks/drosophila-compressed/summary.md](docs/benchmarks/drosophila-compressed/summary.md):
+  real Drosophila-derived gzip and BGZF rows, including a combined BGZF input
+  above the adaptive parallel threshold.
+- [docs/benchmarks/drosophila-read-types/summary.md](docs/benchmarks/drosophila-read-types/summary.md):
+  real Drosophila Illumina PE, PacBio CLR, and ONT FASTQ rows from the local
+  benchmark corpus with installed command-line comparator timings.
+- [docs/benchmarks/independent-organisms/summary.md](docs/benchmarks/independent-organisms/summary.md):
+  independent non-Drosophila E. coli and yeast paired FASTQ rows from the local
+  benchmark corpus with installed command-line comparator timings.
+- [docs/benchmarks/latest/summary.md](docs/benchmarks/latest/summary.md):
+  deterministic synthetic fixture gauntlet.
+- [docs/benchmarks/rust-peers/summary.md](docs/benchmarks/rust-peers/summary.md):
+  synthetic raw FASTQ parser-library comparison against `seq_io`,
+  `noodles-fastq`, and `bio`.
+- [docs/benchmarks/rust-peers-drosophila-r1/summary.md](docs/benchmarks/rust-peers-drosophila-r1/summary.md):
+  Drosophila R1 raw FASTQ parser-library comparison against the same Rust
+  peers.
+
+For public performance claims, regenerate the gauntlet from the current commit,
+render the benchmark summary/figure, and record hardware plus comparator
+versions. Target artifacts checked into a local workspace are development
+evidence, not publication evidence.
 
 Robustness:
 
 - `cargo fuzz run fastq_reader`
 - `cargo fuzz run pack`
 - `cargo fuzz run bgzf_roundtrip`
+
+Citation:
+
+If you use microraptor in scientific work, cite the repository and exact version
+or commit used. Citation metadata is provided in [CITATION.cff](CITATION.cff).
+
+Contributing:
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Performance or benchmark contributions
+must include exact commands, environment, comparator versions, raw outputs, and
+generated figures; timing-only claims without reproducible evidence should not
+be merged.
 
 Example:
 
@@ -136,3 +212,12 @@ for pair in batch.interleaved_pairs()? {
 }
 # Ok::<(), microraptor::FastqError>(())
 ```
+
+## License
+
+Licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.

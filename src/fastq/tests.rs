@@ -50,6 +50,19 @@ fn carries_split_records() {
 }
 
 #[test]
+fn frame_records_carries_partial_line_after_complete_record() {
+    let input = b"@r1\nACGT\n+\nIIII\n@partial";
+    let mut newlines = Vec::new();
+    scan_newlines(input, &mut newlines);
+    let mut records = Vec::new();
+
+    let next_start = frame_records(input, &newlines, false, true, 0, 0, &mut records).unwrap();
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(next_start, b"@r1\nACGT\n+\nIIII\n".len());
+}
+
+#[test]
 fn rejects_bad_plus_line() {
     let err = collect_records(b"@r1\nACGT\n-\nIIII\n", 1024).unwrap_err();
     assert!(err.to_string().contains("plus line"));
@@ -322,6 +335,20 @@ fn paired_reader_fast_slash_validation_falls_back_for_non_slash_ids() {
 }
 
 #[test]
+fn paired_reader_fast_slash_validation_rejects_wrong_mate_suffixes() {
+    let r1 = b"@frag1/1\nACGT\n+\nIIII\n";
+    let r2 = b"@frag1/1\nTGCA\n+\nJJJJ\n";
+    let mut reader = PairedFastqReader::with_config(
+        &r1[..],
+        &r2[..],
+        FastqConfig::default().pair_validation(PairValidation::FastSlash),
+    );
+    let err = reader.next_pair_batch().unwrap_err();
+    assert!(err.to_string().contains("identifiers do not match"));
+    assert_eq!(error_position(&err), Some(FastqPosition::new(0, 0, 0)));
+}
+
+#[test]
 fn paired_reader_can_skip_pair_id_validation() {
     let r1 = b"@frag1/1\nACGT\n+\nIIII\n";
     let r2 = b"@other/2\nTGCA\n+\nJJJJ\n";
@@ -362,6 +389,38 @@ fn interleaved_pairs_iterates_valid_pairs() {
 fn interleaved_pairs_rejects_identifier_mismatch() {
     let input = b"@frag1/1\nACGT\n+\nIIII\n@other/2\nACGA\n+\nHHHH\n";
     let mut reader = FastqReader::with_config(&input[..], FastqConfig::default().interleaved());
+    let batch = reader.next_batch().unwrap().unwrap();
+
+    let err = batch.interleaved_pairs().unwrap_err();
+    assert!(err.to_string().contains("identifiers do not match"));
+    assert_eq!(error_position(&err), Some(FastqPosition::new(21, 1, 0)));
+}
+
+#[test]
+fn interleaved_pairs_use_reader_pair_validation_mode() {
+    let input = b"@frag1/1\nACGT\n+\nIIII\n@other/2\nACGA\n+\nHHHH\n";
+    let mut reader = FastqReader::with_config(
+        &input[..],
+        FastqConfig::default()
+            .interleaved()
+            .pair_validation(PairValidation::None),
+    );
+    let batch = reader.next_batch().unwrap().unwrap();
+    assert_eq!(batch.pair_validation(), PairValidation::None);
+
+    let pairs = batch.interleaved_pairs().unwrap().collect::<Vec<_>>();
+    assert_eq!(pairs.len(), 1);
+}
+
+#[test]
+fn interleaved_fast_slash_validation_rejects_wrong_mate_suffixes() {
+    let input = b"@frag1/1\nACGT\n+\nIIII\n@frag1/1\nACGA\n+\nHHHH\n";
+    let mut reader = FastqReader::with_config(
+        &input[..],
+        FastqConfig::default()
+            .interleaved()
+            .pair_validation(PairValidation::FastSlash),
+    );
     let batch = reader.next_batch().unwrap().unwrap();
 
     let err = batch.interleaved_pairs().unwrap_err();

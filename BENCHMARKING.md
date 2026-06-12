@@ -1,14 +1,25 @@
 # Benchmarking
 
-Microraptor has five benchmark surfaces:
+Microraptor has ten benchmark surfaces:
 
-- `cargo bench --all-features`: nightly microbenchmarks using Rust's built-in
+- `cargo +nightly bench --all-features`: nightly microbenchmarks using Rust's built-in
   benchmark harness.
 - `cargo run --release --bin microraptor-bench -- ...`: release-mode throughput
   benchmark with table or JSON output.
 - `scripts/profile-perf.sh`: Linux `perf stat` plus sampled call graph output.
 - `scripts/benchmark-gauntlet.sh`: generated real-file gauntlet covering raw,
   gzip, BGZF, paired R1/R2, and interleaved inputs.
+- `scripts/render-benchmark-report.sh`: JSONL-to-Markdown/SVG renderer for
+  publishable benchmark snapshots.
+- `scripts/check-benchmark-snapshots.sh`: checked-artifact verifier that
+  re-renders stored gauntlet JSONL and Rust peer TSV snapshots, then diffs
+  summaries/figures.
+- `scripts/benchmark-rust-peers.sh`: script-generated Rust parser-library peer
+  comparison against `seq_io`, `noodles-fastq`, and `bio`.
+- `scripts/check-replication-host.sh`: local host/toolchain/comparator
+  preflight for release and benchmark regeneration.
+- `scripts/discover-local-benchmark-corpus.sh`: local biological FASTQ corpus
+  discovery for the `~/Projects/Benchmarks` workspace.
 - `scripts/profile-hotpath.sh`: isolated parse-vs-pack profiling output.
 
 The benchmark binary generates deterministic synthetic FASTQ in memory, then
@@ -31,15 +42,22 @@ does not synchronize reordered mates.
 
 ```bash
 cargo test --all
-cargo clippy --all-targets --all-features -- -D warnings
-cargo clippy --all-targets --no-default-features -- -D warnings
-cargo bench --all-features
+cargo +nightly clippy --all-targets --all-features -- -D warnings
+cargo +nightly clippy --all-targets --no-default-features -- -D warnings
+cargo +nightly bench --all-features
 scripts/bench.sh
+scripts/prepare-real-benchmark-inputs.sh
 scripts/benchmark-gauntlet.sh
+scripts/render-benchmark-report.sh
+scripts/check-benchmark-snapshots.sh
+scripts/benchmark-rust-peers.sh
+scripts/check-replication-host.sh --strict
 scripts/check-pack-regression.sh
 scripts/check-pack-instructions.sh
 scripts/check-slab-autotune.sh
 scripts/asm-pack.sh
+scripts/release-gate.sh --allow-dirty
+scripts/export-replication-kit.sh
 ```
 
 For machine-readable output:
@@ -94,13 +112,22 @@ without checking datasets into the repository. These external corpus rows are
 evidence capture, not a hard repository gate: successful rows are appended to the
 JSONL output, and failed rows stay in the markdown report with their exit status
 so malformed or unsupported local datasets do not hide the synthetic gauntlet
-result.
+result. Single-file corpus inputs also get command-line comparator rows for
+`seqkit`, `seqtk`, `samtools import -0`, and single-end `fastp` when those tools
+are available on `PATH`.
+
+Set `MICRORAPTOR_GAUNTLET_CORPUS_PAIRED_INPUTS` to a space-separated list of
+`R1,R2,label` triples to add real paired-end rows. The label is optional but
+recommended for stable report names. These paired corpus rows are also included
+in external comparator commands when `seqkit`, `seqtk`, `samtools`, or `fastp`
+are available on `PATH`.
 
 Recommended corpus pass:
 
 ```bash
 MICRORAPTOR_GAUNTLET_RESULT_DIR=target/bench-results-real \
 MICRORAPTOR_GAUNTLET_CORPUS_INPUTS="/path/to/r1.fastq.gz /path/to/r2.fastq.gz /path/to/reads.fastq.bgz" \
+MICRORAPTOR_GAUNTLET_CORPUS_PAIRED_INPUTS="/path/to/r1.fastq.gz,/path/to/r2.fastq.gz,real-r1-r2" \
 scripts/benchmark-gauntlet.sh
 ```
 
@@ -109,6 +136,134 @@ short-read R1/R2 gzip pair and one BGZF file large enough to cross the adaptive
 parallel threshold. If a local file fails parsing, keep the markdown report; the
 failure is useful compatibility evidence but should not be counted as biological
 throughput proof.
+
+Prepare local Drosophila gzip/BGZF derivatives with:
+
+```bash
+PATH=~/miniconda3/envs/bench/bin:$PATH scripts/prepare-real-benchmark-inputs.sh
+```
+
+This writes `target/bench-real-inputs/drosophila_melanogaster/manifest.tsv`.
+The combined BGZF derivative is intentionally built from the real R1 and R2
+FASTQ files to exceed the adaptive BGZF threshold while keeping the source data
+outside git.
+
+Discover the broader local biological corpus with:
+
+```bash
+scripts/discover-local-benchmark-corpus.sh
+```
+
+The script reads `~/Projects/Benchmarks` by default and writes
+`target/bench-corpus/local-corpus.tsv` plus
+`target/bench-corpus/recommended-gauntlet.env`. The recommended env file
+includes the bounded Drosophila ONT/PacBio single-end rows and the 1M paired
+Illumina row when present. It also writes
+`target/bench-corpus/independent-gauntlet.env` for bounded non-Drosophila E.
+coli and yeast paired rows, and `target/bench-corpus/larger-gauntlet.env` for
+explicit larger paired-end rows such as 5M. See `docs/benchmarks/CORPUS.md` for
+the corpus ladder and stress run boundaries.
+
+The checked local Drosophila snapshot was generated from the prepared benchmark
+corpus with:
+
+```bash
+PATH=~/miniconda3/envs/bench/bin:$PATH \
+MICRORAPTOR_GAUNTLET_RESULT_DIR=target/bench-results-drosophila-1m \
+MICRORAPTOR_GAUNTLET_CORPUS_PAIRED_INPUTS=~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq,~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r2.1m.fq,drosophila_illumina_1m \
+scripts/benchmark-gauntlet.sh
+
+scripts/render-benchmark-report.sh \
+  target/bench-results-drosophila-1m/microraptor-gauntlet.jsonl \
+  docs/benchmarks/drosophila-1m
+```
+
+The rendered artifact is
+`docs/benchmarks/drosophila-1m/summary.md`. The same directory contains the
+sanitized raw `microraptor-gauntlet.jsonl` used to render the tables. It
+includes 2,000,000 FASTQ records, 72,000,000 sequenced bases, tool versions,
+exact comparator commands, and SVG figures generated by repository scripts.
+
+The checked compressed Drosophila snapshot was generated with:
+
+```bash
+PATH=~/miniconda3/envs/bench/bin:$PATH \
+MICRORAPTOR_GAUNTLET_RESULT_DIR=target/bench-results-drosophila-compressed \
+MICRORAPTOR_GAUNTLET_CORPUS_INPUTS=target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r1_r2.1m-combined.fq.bgz \
+MICRORAPTOR_GAUNTLET_CORPUS_PAIRED_INPUTS="target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r1.1m.fq.gz,target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r2.1m.fq.gz,drosophila_illumina_1m_gzip target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r1.1m.fq.bgz,target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r2.1m.fq.bgz,drosophila_illumina_1m_bgzf" \
+scripts/benchmark-gauntlet.sh
+
+cp target/bench-real-inputs/drosophila_melanogaster/manifest.tsv \
+  docs/benchmarks/drosophila-compressed/input-manifest.tsv
+
+scripts/render-benchmark-report.sh \
+  target/bench-results-drosophila-compressed/microraptor-gauntlet.jsonl \
+  docs/benchmarks/drosophila-compressed
+```
+
+The rendered artifact is
+`docs/benchmarks/drosophila-compressed/summary.md`. The same directory contains
+the sanitized raw `microraptor-gauntlet.jsonl` used to render the tables. It
+includes a real paired gzip pass and a combined real BGZF input with
+`54,594,251` compressed bytes, above the default `32 MiB` adaptive parallel
+threshold.
+
+The checked Drosophila read-type snapshot was generated with:
+
+```bash
+PATH=~/miniconda3/envs/bench/bin:$PATH \
+scripts/discover-local-benchmark-corpus.sh
+
+source target/bench-corpus/recommended-gauntlet.env
+
+PATH=~/miniconda3/envs/bench/bin:$PATH \
+MICRORAPTOR_GAUNTLET_RESULT_DIR=target/bench-results-drosophila-read-types \
+scripts/benchmark-gauntlet.sh
+
+cp target/bench-corpus/local-corpus.tsv \
+  docs/benchmarks/drosophila-read-types/input-manifest.tsv
+
+scripts/render-benchmark-report.sh \
+  target/bench-results-drosophila-read-types/microraptor-gauntlet.jsonl \
+  docs/benchmarks/drosophila-read-types
+```
+
+The rendered artifact is
+`docs/benchmarks/drosophila-read-types/summary.md`. The same directory contains
+the sanitized raw `microraptor-gauntlet.jsonl` used to render the tables. It
+includes real Drosophila Illumina PE, PacBio CLR, and ONT FASTQ rows plus
+installed `seqkit`, `seqtk`, `samtools`, and `fastp` comparator timings. The 5M
+paired-end row is excluded from the recommended env because external workflow
+comparators can dominate wall time; source
+`target/bench-corpus/larger-gauntlet.env` explicitly when that cost is intended.
+
+The checked independent-organism snapshot was generated with:
+
+```bash
+PATH=~/miniconda3/envs/bench/bin:$PATH \
+scripts/discover-local-benchmark-corpus.sh
+
+source target/bench-corpus/independent-gauntlet.env
+
+PATH=~/miniconda3/envs/bench/bin:$PATH \
+MICRORAPTOR_GAUNTLET_RESULT_DIR=target/bench-results-independent-organisms \
+scripts/benchmark-gauntlet.sh
+
+cp target/bench-corpus/local-corpus.tsv \
+  docs/benchmarks/independent-organisms/input-manifest.tsv
+
+scripts/render-benchmark-report.sh \
+  target/bench-results-independent-organisms/microraptor-gauntlet.jsonl \
+  docs/benchmarks/independent-organisms
+```
+
+The rendered artifact is
+`docs/benchmarks/independent-organisms/summary.md`. The same directory contains
+the sanitized raw `microraptor-gauntlet.jsonl` used to render the tables. It
+includes real E. coli MG1655 and Saccharomyces cerevisiae BTT paired-end FASTQ
+rows plus installed `seqkit`, `seqtk`, `samtools`, and `fastp` comparator
+timings. This is independent organism coverage on the same workstation, not
+independent-machine replication.
 
 For a real dataset:
 
@@ -123,9 +278,87 @@ The gauntlet writes:
 
 - `target/bench-results/microraptor-gauntlet.jsonl`
 - `target/bench-results/microraptor-gauntlet.md`
+- `target/bench-results/microraptor-gauntlet-metadata.md`
+- `target/bench-results/external-tools.tsv`
 
 It also records whether optional external comparators such as `seqkit` or
-`fastp` were installed and runnable.
+`fastp` were installed and runnable. Metadata includes git commit and dirty
+state, Rust and Cargo versions, release/all-feature build mode, CPU, logical CPU
+count, RAM, kernel, filesystem class, available storage, comparator versions,
+and gauntlet parameters.
+
+Render the Microraptor auto-parse summary and SVG figure from the gauntlet JSONL:
+
+```bash
+scripts/render-benchmark-report.sh
+```
+
+By default this writes:
+
+- `docs/benchmarks/latest/summary.md`
+- `docs/benchmarks/latest/microraptor-gauntlet.jsonl`
+- `docs/benchmarks/latest/metadata.md` when gauntlet metadata is available
+- `docs/benchmarks/latest/external-tools.tsv` when external timings are available
+- `docs/benchmarks/latest/figures/auto-bases-throughput.svg`
+
+Use an explicit input/output pair for real-data snapshots:
+
+```bash
+scripts/render-benchmark-report.sh \
+  target/bench-results-real/microraptor-gauntlet.jsonl \
+  docs/benchmarks/real-snapshot
+```
+
+Verify that checked gauntlet and Rust peer summaries and SVG figures still
+match their stored raw JSONL/TSV inputs with:
+
+```bash
+scripts/check-benchmark-snapshots.sh
+```
+
+Export a replication bundle for another machine with:
+
+```bash
+scripts/export-replication-kit.sh
+```
+
+See `docs/REPLICATION.md` for independent-machine evidence requirements.
+
+Run Rust parser-library peer comparisons separately from the gauntlet:
+
+```bash
+MICRORAPTOR_RUST_PEER_ITERS=3 scripts/benchmark-rust-peers.sh
+
+MICRORAPTOR_RUST_PEER_ITERS=3 \
+MICRORAPTOR_RUST_PEER_OUT_DIR=docs/benchmarks/rust-peers-drosophila-r1 \
+MICRORAPTOR_RUST_PEER_INPUT=~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq \
+scripts/benchmark-rust-peers.sh
+```
+
+The script writes `rust-library-peers.tsv`, `summary.md`, `metadata.md`, and an
+SVG throughput figure. It generates a temporary Cargo project under
+`target/rust-peer-bench` so peer crates do not become normal crate dependencies.
+The comparison is raw FASTQ parser-library evidence only; do not use it to make
+claims about gzip, BGZF, command-line preprocessing, trimming, or filtering
+behavior.
+
+Use the opt-in diagnostic mode to investigate microraptor internals without
+changing the normal published peer table:
+
+```bash
+MICRORAPTOR_RUST_PEER_DIAGNOSTICS=1 scripts/benchmark-rust-peers.sh
+
+MICRORAPTOR_RUST_PEER_CARGO='cargo +nightly' \
+MICRORAPTOR_RUST_PEER_MICRORAPTOR_FEATURES=simd \
+MICRORAPTOR_RUST_PEER_INPUT=~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq \
+scripts/benchmark-rust-peers.sh
+```
+
+The diagnostic rows split validated microraptor parsing from no-validation and
+direct `record_refs` iteration. On the local Drosophila R1 row, those variants
+showed that validation and accessors were not the main loss; newline discovery
+was. Stable default newline search now uses `memchr`, while the nightly `simd`
+feature remains the highest-throughput parser-only path in this harness.
 
 Build with `--features libdeflate` or `--all-features` to include explicit
 `bgzf-libdeflate-*` rows for synthetic BGZF and `file-bgzf-libdeflate-*` rows
@@ -223,17 +456,58 @@ for `.bgz` inputs. `bgzf-adaptive-pack-seq-qual` and
 
 ## CI Parity
 
-The GitHub Actions workflow uses nightly Rust from `rust-toolchain.toml` and
-checks:
+The GitHub Actions workflow splits crate-readiness from the nightly performance
+surface.
+
+Stable crate surface:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo clippy --all-targets --no-default-features -- -D warnings
-cargo test --all-features
-cargo test --no-default-features
-cargo fuzz build
+cargo clippy --lib -- -D warnings
+cargo test --lib
+cargo package
+```
+
+Nightly all-feature surface:
+
+```bash
+cargo +nightly clippy --all-targets --all-features -- -D warnings
+cargo +nightly clippy --all-targets --no-default-features -- -D warnings
+cargo +nightly test --all-features
+cargo +nightly test --no-default-features
+cargo +nightly fuzz build
 ```
 
 `cargo fuzz build` only compiles the fuzz targets. It does not run long fuzzing
 campaigns in CI.
+
+## Publication Protocol
+
+A public benchmark claim needs more than a local timing table. Before publishing
+numbers, capture:
+
+- Microraptor git commit and feature flags.
+- Rust stable and nightly versions.
+- CPU model, physical/logical core count, RAM, kernel, OS, and storage class.
+- Input source, read length distribution, compression format, compressed bytes,
+  records, and bases.
+- Comparator versions and exact commands.
+- Raw JSONL, rendered summary, and SVG figures generated by repository scripts.
+- Checksum or count parity for every row used in a comparison.
+- Separation between command-line workflow comparisons and Rust parser-library
+  comparisons.
+
+Minimum matrix for a paper-style result:
+
+- Synthetic single-end raw/gzip/BGZF.
+- Synthetic paired R1/R2 raw/gzip/BGZF.
+- Synthetic interleaved raw/gzip/BGZF.
+- At least one real short-read paired gzip dataset.
+- At least one real BGZF dataset above the adaptive parallel threshold.
+- Comparator rows for available command-line tools: `fastp`, `seqkit`, `seqtk`,
+  `samtools import`, and `bgzip` where each tool meaningfully supports the task.
+- Rust parser-library peer rows for `seq_io`, `noodles-fastq`, and `bio`.
+
+Do not compare compressed `input_mib_s` against raw `input_mib_s` as a biological
+throughput claim. Prefer `records_s` and `bases_s`, and state whether the row is
+parse-only, pack-only, or parse-plus-pack.

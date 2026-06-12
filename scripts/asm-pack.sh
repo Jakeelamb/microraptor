@@ -4,7 +4,7 @@ set -euo pipefail
 out_dir="${MICRORAPTOR_ASM_DIR:-target/asm}"
 mkdir -p "${out_dir}"
 
-cargo rustc --release --all-features --lib -- --emit=asm
+cargo +nightly rustc --release --all-features --lib -- --emit=asm
 
 asm_file="$(
   find target/release/deps -maxdepth 1 -type f -name 'microraptor-*.s' \

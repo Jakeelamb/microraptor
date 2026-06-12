@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="1246" viewBox="0 0 980 1246">
+<rect width="100%" height="100%" fill="white"/>
+<text x="24" y="28" font-family="Arial, sans-serif" font-size="18" font-weight="700">External tool wall-clock timings</text>
+<text x="24" y="46" font-family="Arial, sans-serif" font-size="12" fill="#555">seconds; only installed tools with successful exit status are shown</text>
+<text x="24" y="71" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats single/raw</text>
+<rect x="290" y="58" width="8" height="18" fill="#7a4a1d"/>
+<text x="306" y="71" font-family="Arial, sans-serif" font-size="12" fill="#222">0.04 s</text>
+<text x="24" y="101" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats single/gzip</text>
+<rect x="290" y="88" width="12" height="18" fill="#7a4a1d"/>
+<text x="310" y="101" font-family="Arial, sans-serif" font-size="12" fill="#222">0.06 s</text>
+<text x="24" y="131" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats single/bgzf</text>
+<rect x="290" y="118" width="12" height="18" fill="#7a4a1d"/>
+<text x="310" y="131" font-family="Arial, sans-serif" font-size="12" fill="#222">0.06 s</text>
+<text x="24" y="161" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats paired/r1/raw</text>
+<rect x="290" y="148" width="14" height="18" fill="#7a4a1d"/>
+<text x="312" y="161" font-family="Arial, sans-serif" font-size="12" fill="#222">0.07 s</text>
+<text x="24" y="191" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats paired/r2/raw</text>
+<rect x="290" y="178" width="14" height="18" fill="#7a4a1d"/>
+<text x="312" y="191" font-family="Arial, sans-serif" font-size="12" fill="#222">0.07 s</text>
+<text x="24" y="221" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats paired/r1/gzip</text>
+<rect x="290" y="208" width="10" height="18" fill="#7a4a1d"/>
+<text x="308" y="221" font-family="Arial, sans-serif" font-size="12" fill="#222">0.05 s</text>
+<text x="24" y="251" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats paired/r2/gzip</text>
+<rect x="290" y="238" width="12" height="18" fill="#7a4a1d"/>
+<text x="310" y="251" font-family="Arial, sans-serif" font-size="12" fill="#222">0.06 s</text>
+<text x="24" y="281" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats paired/r1/bgzf</text>
+<rect x="290" y="268" width="16" height="18" fill="#7a4a1d"/>
+<text x="314" y="281" font-family="Arial, sans-serif" font-size="12" fill="#222">0.08 s</text>
+<text x="24" y="311" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats paired/r2/bgzf</text>
+<rect x="290" y="298" width="12" height="18" fill="#7a4a1d"/>
+<text x="310" y="311" font-family="Arial, sans-serif" font-size="12" fill="#222">0.06 s</text>
+<text x="24" y="341" font-family="Arial, sans-serif" font-size="12" fill="#222">seqtk comp single/raw</text>
+<rect x="290" y="328" width="33" height="18" fill="#7a4a1d"/>
+<text x="331" y="341" font-family="Arial, sans-serif" font-size="12" fill="#222">0.16 s</text>
+<text x="24" y="371" font-family="Arial, sans-serif" font-size="12" fill="#222">seqtk comp single/gzip</text>
+<rect x="290" y="358" width="37" height="18" fill="#7a4a1d"/>
+<text x="335" y="371" font-family="Arial, sans-serif" font-size="12" fill="#222">0.18 s</text>
+<text x="24" y="401" font-family="Arial, sans-serif" font-size="12" fill="#222">seqtk comp single/bgzf</text>
+<rect x="290" y="388" width="37" height="18" fill="#7a4a1d"/>
+<text x="335" y="401" font-family="Arial, sans-serif" font-size="12" fill="#222">0.18 s</text>
+<text x="24" y="431" font-family="Arial, sans-serif" font-size="12" fill="#222">seqtk fqchk single/raw</text>
+<rect x="290" y="418" width="6" height="18" fill="#7a4a1d"/>
+<text x="304" y="431" font-family="Arial, sans-serif" font-size="12" fill="#222">0.03 s</text>
+<text x="24" y="461" font-family="Arial, sans-serif" font-size="12" fill="#222">bgzip test single/bgzf</text>
+<rect x="290" y="448" width="0" height="18" fill="#7a4a1d"/>
+<text x="298" y="461" font-family="Arial, sans-serif" font-size="12" fill="#222">0.00 s</text>
+<text x="24" y="491" font-family="Arial, sans-serif" font-size="12" fill="#222">bgzip decompress single/bgzf</text>
+<rect x="290" y="478" width="4" height="18" fill="#7a4a1d"/>
+<text x="302" y="491" font-family="Arial, sans-serif" font-size="12" fill="#222">0.02 s</text>
+<text x="24" y="521" font-family="Arial, sans-serif" font-size="12" fill="#222">samtools import single/raw</text>
+<rect x="290" y="508" width="18" height="18" fill="#7a4a1d"/>
+<text x="316" y="521" font-family="Arial, sans-serif" font-size="12" fill="#222">0.09 s</text>
+<text x="24" y="551" font-family="Arial, sans-serif" font-size="12" fill="#222">samtools import paired/raw</text>
+<rect x="290" y="538" width="42" height="18" fill="#7a4a1d"/>
+<text x="340" y="551" font-family="Arial, sans-serif" font-size="12" fill="#222">0.20 s</text>
+<text x="24" y="581" font-family="Arial, sans-serif" font-size="12" fill="#222">samtools import paired/gzip</text>
+<rect x="290" y="568" width="37" height="18" fill="#7a4a1d"/>
+<text x="335" y="581" font-family="Arial, sans-serif" font-size="12" fill="#222">0.18 s</text>
+<text x="24" y="611" font-family="Arial, sans-serif" font-size="12" fill="#222">samtools import paired/bgzf</text>
+<rect x="290" y="598" width="27" height="18" fill="#7a4a1d"/>
+<text x="325" y="611" font-family="Arial, sans-serif" font-size="12" fill="#222">0.13 s</text>
+<text x="24" y="641" font-family="Arial, sans-serif" font-size="12" fill="#222">fastp paired/raw</text>
+<rect x="290" y="628" width="96" height="18" fill="#7a4a1d"/>
+<text x="394" y="641" font-family="Arial, sans-serif" font-size="12" fill="#222">0.46 s</text>
+<text x="24" y="671" font-family="Arial, sans-serif" font-size="12" fill="#222">fastp paired/gzip</text>
+<rect x="290" y="658" width="84" height="18" fill="#7a4a1d"/>
+<text x="382" y="671" font-family="Arial, sans-serif" font-size="12" fill="#222">0.40 s</text>
+<text x="24" y="701" font-family="Arial, sans-serif" font-size="12" fill="#222">fastp paired/bgzf</text>
+<rect x="290" y="688" width="35" height="18" fill="#7a4a1d"/>
+<text x="333" y="701" font-family="Arial, sans-serif" font-size="12" fill="#222">0.17 s</text>
+<text x="24" y="731" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats corpus-paired/drosophila_illumina_1m_raw/r1</text>
+<rect x="290" y="718" width="46" height="18" fill="#7a4a1d"/>
+<text x="344" y="731" font-family="Arial, sans-serif" font-size="12" fill="#222">0.22 s</text>
+<text x="24" y="761" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats corpus-paired/drosophila_illumina_1m_raw/r2</text>
+<rect x="290" y="748" width="33" height="18" fill="#7a4a1d"/>
+<text x="331" y="761" font-family="Arial, sans-serif" font-size="12" fill="#222">0.16 s</text>
+<text x="24" y="791" font-family="Arial, sans-serif" font-size="12" fill="#222">seqtk fqchk corpus-paired/drosophila_illumina_1m_raw/r1</text>
+<rect x="290" y="778" width="29" height="18" fill="#7a4a1d"/>
+<text x="327" y="791" font-family="Arial, sans-serif" font-size="12" fill="#222">0.14 s</text>
+<text x="24" y="821" font-family="Arial, sans-serif" font-size="12" fill="#222">seqtk fqchk corpus-paired/drosophila_illumina_1m_raw/r2</text>
+<rect x="290" y="808" width="29" height="18" fill="#7a4a1d"/>
+<text x="327" y="821" font-family="Arial, sans-serif" font-size="12" fill="#222">0.14 s</text>
+<text x="24" y="851" font-family="Arial, sans-serif" font-size="12" fill="#222">samtools import corpus-paired/drosophila_illumina_1m_raw</text>
+<rect x="290" y="838" width="189" height="18" fill="#7a4a1d"/>
+<text x="487" y="851" font-family="Arial, sans-serif" font-size="12" fill="#222">0.90 s</text>
+<text x="24" y="881" font-family="Arial, sans-serif" font-size="12" fill="#222">fastp corpus-paired/drosophila_illumina_1m_raw</text>
+<rect x="290" y="868" width="399" height="18" fill="#7a4a1d"/>
+<text x="697" y="881" font-family="Arial, sans-serif" font-size="12" fill="#222">1.90 s</text>
+<text x="24" y="911" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats corpus/pacbio_clr_subreads.50k.fq</text>
+<rect x="290" y="898" width="18" height="18" fill="#7a4a1d"/>
+<text x="316" y="911" font-family="Arial, sans-serif" font-size="12" fill="#222">0.09 s</text>
+<text x="24" y="941" font-family="Arial, sans-serif" font-size="12" fill="#222">seqtk comp corpus/pacbio_clr_subreads.50k.fq</text>
+<rect x="290" y="928" width="141" height="18" fill="#7a4a1d"/>
+<text x="439" y="941" font-family="Arial, sans-serif" font-size="12" fill="#222">0.67 s</text>
+<text x="24" y="971" font-family="Arial, sans-serif" font-size="12" fill="#222">seqtk fqchk corpus/pacbio_clr_subreads.50k.fq</text>
+<rect x="290" y="958" width="119" height="18" fill="#7a4a1d"/>
+<text x="417" y="971" font-family="Arial, sans-serif" font-size="12" fill="#222">0.57 s</text>
+<text x="24" y="1001" font-family="Arial, sans-serif" font-size="12" fill="#222">samtools import corpus/pacbio_clr_subreads.50k.fq</text>
+<rect x="290" y="988" width="147" height="18" fill="#7a4a1d"/>
+<text x="445" y="1001" font-family="Arial, sans-serif" font-size="12" fill="#222">0.70 s</text>
+<text x="24" y="1031" font-family="Arial, sans-serif" font-size="12" fill="#222">fastp corpus/pacbio_clr_subreads.50k.fq</text>
+<rect x="290" y="1018" width="484" height="18" fill="#7a4a1d"/>
+<text x="782" y="1031" font-family="Arial, sans-serif" font-size="12" fill="#222">2.30 s</text>
+<text x="24" y="1061" font-family="Arial, sans-serif" font-size="12" fill="#222">seqkit stats corpus/ont.50k.fq</text>
+<rect x="290" y="1048" width="77" height="18" fill="#7a4a1d"/>
+<text x="375" y="1061" font-family="Arial, sans-serif" font-size="12" fill="#222">0.37 s</text>
+<text x="24" y="1091" font-family="Arial, sans-serif" font-size="12" fill="#222">seqtk comp corpus/ont.50k.fq</text>
+<rect x="290" y="1078" width="233" height="18" fill="#7a4a1d"/>
+<text x="531" y="1091" font-family="Arial, sans-serif" font-size="12" fill="#222">1.11 s</text>
+<text x="24" y="1121" font-family="Arial, sans-serif" font-size="12" fill="#222">seqtk fqchk corpus/ont.50k.fq</text>
+<rect x="290" y="1108" width="181" height="18" fill="#7a4a1d"/>
+<text x="479" y="1121" font-family="Arial, sans-serif" font-size="12" fill="#222">0.86 s</text>
+<text x="24" y="1151" font-family="Arial, sans-serif" font-size="12" fill="#222">samtools import corpus/ont.50k.fq</text>
+<rect x="290" y="1138" width="176" height="18" fill="#7a4a1d"/>
+<text x="474" y="1151" font-family="Arial, sans-serif" font-size="12" fill="#222">0.84 s</text>
+<text x="24" y="1181" font-family="Arial, sans-serif" font-size="12" fill="#222">fastp corpus/ont.50k.fq</text>
+<rect x="290" y="1168" width="560" height="18" fill="#7a4a1d"/>
+<text x="858" y="1181" font-family="Arial, sans-serif" font-size="12" fill="#222">2.66 s</text>
+</svg>

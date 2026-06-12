@@ -1,0 +1,68 @@
+name: Benchmark or performance claim
+description: Propose benchmark evidence or a change to performance wording.
+title: "[benchmark]: "
+labels: ["benchmark"]
+body:
+  - type: textarea
+    id: claim
+    attributes:
+      label: Claim or result
+      description: State the exact wording or benchmark result being proposed.
+    validations:
+      required: true
+  - type: dropdown
+    id: comparison
+    attributes:
+      label: Comparison type
+      options:
+        - Microraptor regression check
+        - command-line workflow tool comparison
+        - Rust parser-library comparison
+        - compression backend comparison
+        - real biological dataset snapshot
+        - synthetic fixture snapshot
+    validations:
+      required: true
+  - type: textarea
+    id: commands
+    attributes:
+      label: Exact commands
+      description: Include environment variables and feature flags.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Artifacts
+      description: Link or list raw JSONL/TSV outputs, rendered summaries, metadata, and figures.
+    validations:
+      required: true
+  - type: textarea
+    id: inputs
+    attributes:
+      label: Dataset or fixture provenance
+      description: Record source, format, read type, record/base counts, compression, and whether references are available.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Machine and toolchain
+      description: CPU, RAM, storage class, OS/kernel, Rust versions, comparator versions.
+      render: text
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Claim boundary
+      options:
+        - label: Parser-only rows are not compared directly with workflow-tool rows without explaining task differences.
+          required: true
+        - label: Raw and compressed input throughput are not compared as equivalent biological throughput.
+          required: true
+        - label: Checksums, record counts, or base counts are included where relevant.
+          required: true
+        - label: The wording does not imply universal superiority from one local machine run.
+          required: true
