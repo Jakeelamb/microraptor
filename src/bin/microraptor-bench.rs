@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use microraptor::benchutil::{StreamStats, consume_fastq, synthetic_fastq};
+use microraptor::benchutil::{
+    StreamStats, consume_fastq, consume_trusted_fastq_with_pack, synthetic_fastq,
+};
 use microraptor::pack::pack_bases_and_summarize_qualities_into;
 use microraptor::{FastqConfig, FastqReader, PairValidation, Result};
 
@@ -123,6 +125,11 @@ fn run() -> Result<()> {
     }
     if config.mode.includes_pack() {
         measurements.push(measure_pack("pack-seq-qual", &raw, &config)?);
+        measurements.push(measure_trusted_pack(
+            "trusted-pack-seq-qual",
+            &raw,
+            &config,
+        )?);
     }
 
     #[cfg(feature = "gzip")]
@@ -408,6 +415,12 @@ fn measure_pack(name: &str, input: &[u8], config: &Config) -> Result<Measurement
             },
         );
         consume_fastq_with_pack(&mut reader)
+    })
+}
+
+fn measure_trusted_pack(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
+    measure(name, input.len(), config.iters, || {
+        consume_trusted_fastq_with_pack(input)
     })
 }
 
