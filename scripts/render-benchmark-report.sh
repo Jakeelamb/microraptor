@@ -20,26 +20,27 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+write_sanitized_file() {
+  local src="$1"
+  local dst="$2"
+  local tmp
+  tmp="$(mktemp "${dst}.tmp.XXXXXX")"
+  if [[ -n "${HOME:-}" ]]; then
+    awk -v home="${HOME}" '{ gsub(home, "~"); print }' "${src}" > "${tmp}"
+  else
+    cp "${src}" "${tmp}"
+  fi
+  mv "${tmp}" "${dst}"
+}
+
 mkdir -p "${fig_dir}"
 
-if [[ -n "${HOME:-}" ]]; then
-  awk -v home="${HOME}" '{ gsub(home, "~"); print }' "${jsonl}" > "${raw_jsonl_out}"
-else
-  cp "${jsonl}" "${raw_jsonl_out}"
-fi
+write_sanitized_file "${jsonl}" "${raw_jsonl_out}"
 if [[ -f "${metadata}" ]]; then
-  if [[ -n "${HOME:-}" ]]; then
-    awk -v home="${HOME}" '{ gsub(home, "~"); print }' "${metadata}" > "${metadata_out}"
-  else
-    cp "${metadata}" "${metadata_out}"
-  fi
+  write_sanitized_file "${metadata}" "${metadata_out}"
 fi
 if [[ -f "${external_tsv}" ]]; then
-  if [[ -n "${HOME:-}" ]]; then
-    awk -v home="${HOME}" '{ gsub(home, "~"); print }' "${external_tsv}" > "${external_tsv_out}"
-  else
-    cp "${external_tsv}" "${external_tsv_out}"
-  fi
+  write_sanitized_file "${external_tsv}" "${external_tsv_out}"
 fi
 
 rows="$(mktemp)"

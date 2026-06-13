@@ -19,8 +19,9 @@ use std::simd::{
     cmp::{SimdPartialEq, SimdPartialOrd},
 };
 
+use crate::fastq_frame::{self, RecordLines, RecordValidation};
 use crate::scan::scan_newlines;
-use crate::{FastqConfig, FastqError, FastqPosition, Result as FastqResult};
+use crate::{FastqConfig, FastqError, Result as FastqResult};
 
 /// Summary of a packed DNA sequence.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -197,7 +198,7 @@ pub struct PackedRecordSummary {
 /// or copy them before the next callback invocation.
 #[derive(Debug, Clone, Copy)]
 pub struct TrustedPackedRecord<'a> {
-    /// Record name without the leading `@`.
+    /// Header line, including the leading `@` and excluding the newline.
     pub name: &'a [u8],
     /// Original sequence bytes.
     pub seq: &'a [u8],
@@ -583,30 +584,29 @@ pub fn pack_trusted_paired_fastq_read<R1: Read, R2: Read>(
             let first_record_index = first_reader.record_index + index as u64;
             let second_record_index = second_reader.record_index + index as u64;
 
-            validate_trusted_record_lines(
-                first.name,
-                first.seq,
-                first.plus,
-                first.qual,
+            fastq_frame::validate_record(
+                first,
                 first_reader.base_offset,
                 first_record_index,
+                RecordValidation::TRUSTED_PACK,
             )?;
-            validate_trusted_record_lines(
-                second.name,
-                second.seq,
-                second.plus,
-                second.qual,
+            fastq_frame::validate_record(
+                second,
                 second_reader.base_offset,
                 second_record_index,
+                RecordValidation::TRUSTED_PACK,
             )?;
 
             if pair_validation != crate::PairValidation::None
                 && !trusted_pair_ids_match(first.name.bytes, second.name.bytes, pair_validation)
             {
-                return Err(FastqError::FormatAt {
-                    message: "paired FASTQ record identifiers do not match".into(),
-                    position: FastqPosition::new(0, pair_index, 0),
-                });
+                return Err(fastq_frame::format_at(
+                    "paired FASTQ record identifiers do not match",
+                    0,
+                    0,
+                    pair_index,
+                    0,
+                ));
             }
 
             let first_summary = pack_bases_and_summarize_qualities_into(
@@ -616,7 +616,7 @@ pub fn pack_trusted_paired_fastq_read<R1: Read, R2: Read>(
                 &mut first_n_mask,
             )
             .map_err(|err| {
-                format_fastq_at(
+                fastq_frame::format_at(
                     err.to_string(),
                     first_reader.base_offset,
                     first.qual.start,
@@ -631,7 +631,7 @@ pub fn pack_trusted_paired_fastq_read<R1: Read, R2: Read>(
                 &mut second_n_mask,
             )
             .map_err(|err| {
-                format_fastq_at(
+                fastq_frame::format_at(
                     err.to_string(),
                     second_reader.base_offset,
                     second.qual.start,
@@ -727,10 +727,10 @@ impl<R: Read> TrustedFastqLineReader<R> {
         self.line_count = self.newlines.len() + usize::from(has_final_line);
         if self.eof && !self.line_count.is_multiple_of(4) {
             let record_index = self.record_index + (self.line_count / 4) as u64;
-            return Err(format_fastq_at(
+            return Err(fastq_frame::format_at(
                 "truncated FASTQ record",
                 self.base_offset,
-                line_start(&self.newlines, (self.line_count / 4) * 4),
+                fastq_frame::line_start(&self.newlines, (self.line_count / 4) * 4),
                 record_index,
                 (self.line_count % 4) as u8,
             ));
@@ -751,14 +751,9 @@ impl<R: Read> TrustedFastqLineReader<R> {
         self.eof && self.len == 0
     }
 
-    fn record_lines(&self, index: usize) -> TrustedRecordLines<'_> {
+    fn record_lines(&self, index: usize) -> RecordLines<'_> {
         let line = index * 4;
-        TrustedRecordLines {
-            name: line_range(&self.buf[..self.len], &self.newlines, line),
-            seq: line_range(&self.buf[..self.len], &self.newlines, line + 1),
-            plus: line_range(&self.buf[..self.len], &self.newlines, line + 2),
-            qual: line_range(&self.buf[..self.len], &self.newlines, line + 3),
-        }
+        fastq_frame::record_lines(&self.buf[..self.len], &self.newlines, line)
     }
 
     fn consume_records(&mut self, records: usize) -> FastqResult<()> {
@@ -769,7 +764,7 @@ impl<R: Read> TrustedFastqLineReader<R> {
         let next_start = if self.eof && consumed_lines == self.line_count {
             self.len
         } else {
-            line_start(&self.newlines, consumed_lines)
+            fastq_frame::line_start(&self.newlines, consumed_lines)
         };
         if next_start == self.len {
             self.base_offset += self.len as u64;
@@ -791,14 +786,6 @@ impl<R: Read> TrustedFastqLineReader<R> {
         self.available_records = 0;
         Ok(())
     }
-}
-
-#[derive(Clone, Copy)]
-struct TrustedRecordLines<'a> {
-    name: Line<'a>,
-    seq: Line<'a>,
-    plus: Line<'a>,
-    qual: Line<'a>,
 }
 
 /// Return the number of bytes needed to store `base_count` two-bit bases.
@@ -1181,35 +1168,24 @@ fn pack_trusted_fastq_slab(
     scan_newlines(input, newlines);
     let mut records = 0_u64;
 
-    let has_final_line = context.eof
-        && newlines
-            .last()
-            .map_or(!input.is_empty(), |&nl| nl + 1 < input.len());
-    let line_count = newlines.len() + usize::from(has_final_line);
-    if context.eof && !line_count.is_multiple_of(4) {
-        let record_index = context.first_record_index + (line_count / 4) as u64;
-        return Err(format_fastq_at(
+    let layout = fastq_frame::slab_line_layout(input, newlines, context.eof);
+    if context.eof && !layout.line_count.is_multiple_of(4) {
+        let record_index = context.first_record_index + (layout.line_count / 4) as u64;
+        return Err(fastq_frame::format_at(
             "truncated FASTQ record",
             context.base_offset,
-            line_start(newlines, (line_count / 4) * 4),
+            fastq_frame::line_start(newlines, (layout.line_count / 4) * 4),
             record_index,
-            (line_count % 4) as u8,
+            (layout.line_count % 4) as u8,
         ));
     }
-    let complete_lines = (line_count / 4) * 4;
 
-    for line in (0..complete_lines).step_by(4) {
+    for line in (0..layout.complete_lines).step_by(4) {
         let record_index = context.first_record_index + (line / 4) as u64;
-        let name = line_range(input, newlines, line);
-        let seq = line_range(input, newlines, line + 1);
-        let plus = line_range(input, newlines, line + 2);
-        let qual = line_range(input, newlines, line + 3);
+        let record = fastq_frame::record_lines(input, newlines, line);
 
         observe_trusted_packed_record(
-            name,
-            seq,
-            plus,
-            qual,
+            record,
             context.base_offset,
             record_index,
             bases,
@@ -1219,14 +1195,14 @@ fn pack_trusted_fastq_slab(
         records += 1;
     }
 
-    if complete_lines == line_count && context.eof {
+    if layout.complete_lines == layout.line_count && context.eof {
         Ok(SlabResult {
             next_start: input.len(),
             records,
         })
     } else {
-        let next_start = line_start(newlines, complete_lines);
-        if complete_lines == line_count && next_start == input.len() {
+        let next_start = fastq_frame::line_start(newlines, layout.complete_lines);
+        if layout.complete_lines == layout.line_count && next_start == input.len() {
             return Ok(SlabResult {
                 next_start: input.len(),
                 records,
@@ -1251,27 +1227,30 @@ fn pack_trusted_fastq_direct_slab(
 
     while cursor < input.len() {
         let record_start = cursor;
-        let Some(name) = direct_line(input, &mut cursor, context.eof) else {
+        let Some(name) = fastq_frame::direct_line(input, &mut cursor, context.eof) else {
             return Ok(SlabResult {
                 next_start: record_start,
                 records,
             });
         };
-        let Some(seq) = direct_line(input, &mut cursor, context.eof) else {
+        let Some(seq) = fastq_frame::direct_line(input, &mut cursor, context.eof) else {
             return incomplete_or_truncated_direct(input, context, record_start, records, 1);
         };
-        let Some(plus) = direct_line(input, &mut cursor, context.eof) else {
+        let Some(plus) = fastq_frame::direct_line(input, &mut cursor, context.eof) else {
             return incomplete_or_truncated_direct(input, context, record_start, records, 2);
         };
-        let Some(qual) = direct_line(input, &mut cursor, context.eof) else {
+        let Some(qual) = fastq_frame::direct_line(input, &mut cursor, context.eof) else {
             return incomplete_or_truncated_direct(input, context, record_start, records, 3);
         };
-
-        observe_trusted_packed_record(
+        let record = RecordLines {
             name,
             seq,
             plus,
             qual,
+        };
+
+        observe_trusted_packed_record(
+            record,
             context.base_offset,
             context.first_record_index + records,
             bases,
@@ -1295,7 +1274,7 @@ fn incomplete_or_truncated_direct(
     line_index: u8,
 ) -> FastqResult<SlabResult> {
     if context.eof {
-        Err(format_fastq_at(
+        Err(fastq_frame::format_at(
             "truncated FASTQ record",
             context.base_offset,
             input.len(),
@@ -1308,28 +1287,6 @@ fn incomplete_or_truncated_direct(
             records,
         })
     }
-}
-
-fn direct_line<'a>(input: &'a [u8], cursor: &mut usize, eof: bool) -> Option<Line<'a>> {
-    let start = *cursor;
-    if start >= input.len() {
-        return None;
-    }
-
-    let mut end = start;
-    while end < input.len() && input[end] != b'\n' {
-        end += 1;
-    }
-    if end == input.len() && !eof {
-        return None;
-    }
-
-    *cursor = if end < input.len() { end + 1 } else { end };
-    let end = trim_cr_end(input, start, end);
-    Some(Line {
-        bytes: &input[start..end],
-        start,
-    })
 }
 
 #[derive(Clone, Copy)]
@@ -1345,74 +1302,40 @@ struct SlabResult {
     records: u64,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn observe_trusted_packed_record(
-    name: Line<'_>,
-    seq: Line<'_>,
-    plus: Line<'_>,
-    qual: Line<'_>,
+    record: RecordLines<'_>,
     base_offset: u64,
     record_index: u64,
     bases: &mut Vec<u8>,
     n_mask: &mut Vec<u8>,
     sink: &mut impl TrustedPackSink,
 ) -> FastqResult<()> {
-    validate_trusted_record_lines(name, seq, plus, qual, base_offset, record_index)?;
+    fastq_frame::validate_record(
+        record,
+        base_offset,
+        record_index,
+        RecordValidation::TRUSTED_PACK,
+    )?;
 
-    let summary = pack_bases_and_summarize_qualities_into(seq.bytes, qual.bytes, bases, n_mask)
-        .map_err(|err| {
-            format_fastq_at(err.to_string(), base_offset, qual.start, record_index, 3)
-        })?;
+    let summary =
+        pack_bases_and_summarize_qualities_into(record.seq.bytes, record.qual.bytes, bases, n_mask)
+            .map_err(|err| {
+                fastq_frame::format_at(
+                    err.to_string(),
+                    base_offset,
+                    record.qual.start,
+                    record_index,
+                    3,
+                )
+            })?;
     sink.record(TrustedPackedRecord {
-        name: name.bytes,
-        seq: seq.bytes,
-        qual: qual.bytes,
+        name: record.name.bytes,
+        seq: record.seq.bytes,
+        qual: record.qual.bytes,
         bases: &bases[..],
         n_mask: &n_mask[..],
         summary,
     })
-}
-
-fn validate_trusted_record_lines(
-    name: Line<'_>,
-    seq: Line<'_>,
-    plus: Line<'_>,
-    qual: Line<'_>,
-    base_offset: u64,
-    record_index: u64,
-) -> FastqResult<()> {
-    if name.bytes.first() != Some(&b'@') {
-        return Err(format_fastq_at(
-            "header must start with `@`",
-            base_offset,
-            name.start,
-            record_index,
-            0,
-        ));
-    }
-    if plus.bytes.first() != Some(&b'+') {
-        return Err(format_fastq_at(
-            "plus line must start with `+`",
-            base_offset,
-            plus.start,
-            record_index,
-            2,
-        ));
-    }
-    if seq.len() != qual.len() {
-        return Err(format_fastq_at(
-            format!(
-                "quality length {} != sequence length {}",
-                qual.len(),
-                seq.len()
-            ),
-            base_offset,
-            qual.start,
-            record_index,
-            3,
-        ));
-    }
-    Ok(())
 }
 
 fn trusted_pair_ids_match(
@@ -1422,46 +1345,17 @@ fn trusted_pair_ids_match(
 ) -> bool {
     match mode {
         crate::PairValidation::None => true,
-        crate::PairValidation::FastSlash => fast_slash_pair_ids_match(first_name, second_name)
-            .unwrap_or_else(|| normalized_pair_id(first_name) == normalized_pair_id(second_name)),
+        crate::PairValidation::FastSlash => {
+            fastq_frame::fast_slash_pair_ids_match(first_name, second_name).unwrap_or_else(|| {
+                fastq_frame::normalized_pair_id(first_name)
+                    == fastq_frame::normalized_pair_id(second_name)
+            })
+        }
         crate::PairValidation::Full => {
-            normalized_pair_id(first_name) == normalized_pair_id(second_name)
+            fastq_frame::normalized_pair_id(first_name)
+                == fastq_frame::normalized_pair_id(second_name)
         }
     }
-}
-
-fn fast_slash_pair_ids_match(first_name: &[u8], second_name: &[u8]) -> Option<bool> {
-    let first = first_name.strip_prefix(b"@").unwrap_or(first_name);
-    let second = second_name.strip_prefix(b"@").unwrap_or(second_name);
-    let first_end = token_end(first);
-    let second_end = token_end(second);
-    let first = &first[..first_end];
-    let second = &second[..second_end];
-    if first.len() < 3 || second.len() < 3 || first.len() != second.len() {
-        return None;
-    }
-    if !first.ends_with(b"/1") || !second.ends_with(b"/2") {
-        return None;
-    }
-    Some(first[..first.len() - 2] == second[..second.len() - 2])
-}
-
-fn normalized_pair_id(name: &[u8]) -> &[u8] {
-    let name = name.strip_prefix(b"@").unwrap_or(name);
-    let token = &name[..token_end(name)];
-    if token.len() >= 2 && (token.ends_with(b"/1") || token.ends_with(b"/2")) {
-        &token[..token.len() - 2]
-    } else {
-        token
-    }
-}
-
-fn token_end(bytes: &[u8]) -> usize {
-    let mut end = 0;
-    while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
-        end += 1;
-    }
-    end
 }
 
 fn pack_bases_exact(seq: &[u8], bases: &mut [u8], n_mask: &mut [u8]) -> BaseSummary {
@@ -1968,61 +1862,6 @@ fn quality_bin(phred: u8, thresholds: &[u8]) -> u8 {
     bin
 }
 
-#[derive(Clone, Copy)]
-struct Line<'a> {
-    bytes: &'a [u8],
-    start: usize,
-}
-
-impl Line<'_> {
-    fn len(self) -> usize {
-        self.bytes.len()
-    }
-}
-
-fn line_range<'a>(input: &'a [u8], newline_offsets: &[usize], line: usize) -> Line<'a> {
-    let start = line_start(newline_offsets, line);
-    let end = if line < newline_offsets.len() {
-        newline_offsets[line]
-    } else {
-        input.len()
-    };
-    let end = trim_cr_end(input, start, end);
-    Line {
-        bytes: &input[start..end],
-        start,
-    }
-}
-
-fn line_start(newline_offsets: &[usize], line: usize) -> usize {
-    if line == 0 {
-        0
-    } else {
-        newline_offsets[line - 1] + 1
-    }
-}
-
-fn format_fastq_at(
-    message: impl Into<String>,
-    base_offset: u64,
-    byte_offset: usize,
-    record_index: u64,
-    line_index: u8,
-) -> FastqError {
-    FastqError::FormatAt {
-        message: message.into(),
-        position: FastqPosition::new(base_offset + byte_offset as u64, record_index, line_index),
-    }
-}
-
-fn trim_cr_end(bytes: &[u8], start: usize, end: usize) -> usize {
-    if end > start && bytes[end - 1] == b'\r' {
-        end - 1
-    } else {
-        end
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2287,6 +2126,7 @@ mod tests {
         let mut seen = Vec::new();
         pack_trusted_fastq(b"@r0\nACGTN\n+\nIIIII\n", |record| {
             seen.push((
+                record.name.to_vec(),
                 record.bases.to_vec(),
                 record.n_mask.to_vec(),
                 record.summary,
@@ -2296,9 +2136,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(seen.len(), 1);
-        assert_eq!(seen[0].0, vec![0b1110_0100, 0]);
-        assert_eq!(seen[0].1, vec![0b0001_0000]);
-        assert_eq!(seen[0].2.bases.n, 1);
+        assert_eq!(seen[0].0, b"@r0");
+        assert_eq!(seen[0].1, vec![0b1110_0100, 0]);
+        assert_eq!(seen[0].2, vec![0b0001_0000]);
+        assert_eq!(seen[0].3.bases.n, 1);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use crate::FastqPosition;
 
 fn collect_records(input: &[u8], slab_size: usize) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
     let mut reader = FastqReader::with_config(
@@ -222,6 +223,24 @@ fn paired_records_rejects_identifier_mismatch() {
     let err = paired_records(&first_batch, &second_batch).unwrap_err();
     assert!(err.to_string().contains("identifiers do not match"));
     assert_eq!(error_position(&err), Some(FastqPosition::new(0, 0, 0)));
+}
+
+#[test]
+fn paired_records_use_first_batch_pair_validation_mode() {
+    let r1 = b"@frag1/1\nACGT\n+\nIIII\n";
+    let r2 = b"@other/2\nACGA\n+\nHHHH\n";
+    let mut first = FastqReader::with_config(
+        &r1[..],
+        FastqConfig::default().pair_validation(PairValidation::None),
+    );
+    let mut second = FastqReader::new(&r2[..]);
+    let first_batch = first.next_batch().unwrap().unwrap();
+    let second_batch = second.next_batch().unwrap().unwrap();
+
+    let pairs = paired_records(&first_batch, &second_batch)
+        .unwrap()
+        .collect::<Vec<_>>();
+    assert_eq!(pairs.len(), 1);
 }
 
 #[test]

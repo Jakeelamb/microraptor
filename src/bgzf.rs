@@ -1107,11 +1107,12 @@ where
 
 fn read_block<R: Read>(reader: &mut R) -> std::io::Result<Option<CompressedBlock>> {
     let mut header = [0_u8; BGZF_HEADER_LEN];
-    match reader.read_exact(&mut header) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+    match reader.read(&mut header[..1]) {
+        Ok(0) => return Ok(None),
+        Ok(_) => {}
         Err(e) => return Err(e),
     }
+    reader.read_exact(&mut header[1..])?;
     if !is_bgzf_header(&header) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

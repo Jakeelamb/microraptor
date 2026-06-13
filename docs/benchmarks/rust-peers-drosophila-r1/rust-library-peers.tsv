@@ -1,6 +1,6 @@
 tool	records	bases	best_ms	records_s	bases_s	checksum	input_bytes	iters	source
-microraptor-stream	1000000	36000000	71.795	13928602	501429680	3183102030297224004	130328422	9	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-microraptor-slice-visitor	1000000	36000000	53.572	18666397	671990323	3183102030297224004	130328422	9	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-seq_io	1000000	36000000	59.935	16684685	600648680	3183102030297224004	130328422	9	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-noodles-fastq	1000000	36000000	106.550	9385306	337871025	3183102030297224004	130328422	9	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-bio	1000000	36000000	265.511	3766329	135587855	3183102030297224004	130328422	9	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+microraptor-stream	1000000	36000000	77.517	12900333	464412010	3183102030297224004	130328422	5	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+microraptor-slice-visitor	1000000	36000000	52.887	18908402	680702474	3183102030297224004	130328422	5	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+seq_io	1000000	36000000	61.215	16335868	588091250	3183102030297224004	130328422	5	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+noodles-fastq	1000000	36000000	107.618	9292103	334515710	3183102030297224004	130328422	5	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+bio	1000000	36000000	273.673	3653994	131543799	3183102030297224004	130328422	5	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq

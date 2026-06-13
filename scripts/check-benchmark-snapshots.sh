@@ -15,6 +15,19 @@ normalize_summary() {
   awk '$0 !~ /^Source JSONL:/ { print }' "$1"
 }
 
+check_external_tool_commands() {
+  local tsv="$1"
+  awk -F '\t' '
+    NR > 1 && $5 ~ /(^|[[:space:]])bash[[:space:]]+-lc([[:space:]]|$)/ {
+      printf "%s:%d: legacy shell-wrapped external command: %s\n", FILENAME, NR, $5 > "/dev/stderr"
+      bad = 1
+    }
+    END {
+      exit bad
+    }
+  ' "${tsv}"
+}
+
 render_rust_peer_snapshot() {
   local tsv="$1"
   local rendered_dir="$2"
@@ -98,6 +111,7 @@ for jsonl in "${root}"/*/microraptor-gauntlet.jsonl; do
     cp "${snapshot_dir}/metadata.md" "${source_dir}/microraptor-gauntlet-metadata.md"
   fi
   if [[ -f "${snapshot_dir}/external-tools.tsv" ]]; then
+    check_external_tool_commands "${snapshot_dir}/external-tools.tsv"
     cp "${snapshot_dir}/external-tools.tsv" "${source_dir}/external-tools.tsv"
   fi
   if [[ -f "${snapshot_dir}/input-manifest.tsv" ]]; then

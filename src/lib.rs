@@ -87,6 +87,7 @@ pub mod benchutil;
 mod bgzf;
 mod error;
 mod fastq;
+mod fastq_frame;
 /// Base/quality packing and trusted four-line FASTQ pack paths.
 ///
 /// The high-level FASTQ readers expose borrowed records. This module provides

@@ -53,6 +53,19 @@ fn streaming_parallel_reader_round_trip_with_tiny_reads() {
 }
 
 #[test]
+fn reader_rejects_truncated_trailing_header() {
+    let input = patterned_input(BGZF_MAX_PAYLOAD + 17);
+    let mut encoded = compress_bgzf_parallel(&input, 2).unwrap();
+    encoded.truncate(encoded.len() - (BGZF_EOF_BLOCK.len() - 5));
+
+    let mut reader = BgzfReader::new(&encoded[..]);
+    let mut decoded = Vec::new();
+    let err = reader.read_to_end(&mut decoded).unwrap_err();
+
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[test]
 fn bounded_send_records_full_queue_metric() {
     let metrics = BgzfPipelineMetrics::default();
     let cancel = AtomicBool::new(false);

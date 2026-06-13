@@ -1,7 +1,8 @@
 use std::io::Read;
 use std::ops::Range;
 
-use crate::error::{FastqError, FastqPosition, Result};
+use crate::error::{FastqError, Result};
+use crate::fastq_frame::{self, RecordValidation};
 use crate::scan::scan_newlines;
 
 const DEFAULT_SLAB_SIZE: usize = 8 * 1024 * 1024;
@@ -205,11 +206,7 @@ impl<'a> FastqPair<'a> {
 
 /// Strip a terminal `/1` or `/2` pair suffix from an identifier token.
 pub fn strip_pair_suffix(id: &[u8]) -> &[u8] {
-    if id.len() >= 2 && (id.ends_with(b"/1") || id.ends_with(b"/2")) {
-        &id[..id.len() - 2]
-    } else {
-        id
-    }
+    fastq_frame::strip_pair_suffix(id)
 }
 
 /// A batch of borrowed FASTQ records from one reader slab.
@@ -284,8 +281,10 @@ impl<'a> FastqBatch<'a> {
     }
 
     /// Validate and zip this batch with a mate batch from a separate reader.
+    ///
+    /// Identifier checks use this batch's configured [`PairValidation`] mode.
     pub fn paired_with(&'a self, mate: &'a FastqBatch<'a>) -> Result<PairedRecords<'a>> {
-        validate_paired_batches(self, mate)?;
+        validate_paired_batches(self, mate, self.pair_validation)?;
         Ok(PairedRecords {
             first: self,
             second: mate,
@@ -776,7 +775,7 @@ impl<R: Read> FastqReader<R> {
             return Ok(());
         };
         if self.eof {
-            return Err(format_at(
+            return Err(fastq_frame::format_at(
                 "interleaved FASTQ ended with an unpaired record",
                 self.base_offset,
                 last.name.start as usize,
@@ -841,7 +840,7 @@ fn validate_even_pair_count(batch: &FastqBatch<'_>) -> Result<()> {
     let Some(last) = batch.records.last() else {
         return Ok(());
     };
-    Err(format_at(
+    Err(fastq_frame::format_at(
         "interleaved FASTQ batch has an odd record count",
         batch.base_offset,
         last.name.start as usize,
@@ -850,9 +849,13 @@ fn validate_even_pair_count(batch: &FastqBatch<'_>) -> Result<()> {
     ))
 }
 
-fn validate_paired_batches(first: &FastqBatch<'_>, second: &FastqBatch<'_>) -> Result<()> {
+fn validate_paired_batches(
+    first: &FastqBatch<'_>,
+    second: &FastqBatch<'_>,
+    pair_validation: PairValidation,
+) -> Result<()> {
     if first.records.len() == second.records.len() {
-        return validate_pair_ids(first, second);
+        return validate_pair_ids(first, second, pair_validation);
     }
 
     let (batch, index) = if first.records.len() > second.records.len() {
@@ -861,7 +864,7 @@ fn validate_paired_batches(first: &FastqBatch<'_>, second: &FastqBatch<'_>) -> R
         (second, first.records.len())
     };
     let record = &batch.records[index];
-    Err(format_at(
+    Err(fastq_frame::format_at(
         "paired FASTQ batches have different record counts",
         batch.base_offset,
         record.name.start as usize,
@@ -870,11 +873,18 @@ fn validate_paired_batches(first: &FastqBatch<'_>, second: &FastqBatch<'_>) -> R
     ))
 }
 
-fn validate_pair_ids(first: &FastqBatch<'_>, second: &FastqBatch<'_>) -> Result<()> {
+fn validate_pair_ids(
+    first: &FastqBatch<'_>,
+    second: &FastqBatch<'_>,
+    pair_validation: PairValidation,
+) -> Result<()> {
+    if pair_validation == PairValidation::None {
+        return Ok(());
+    }
     for index in 0..first.records.len() {
         let r1 = first.record_at(index);
         let r2 = second.record_at(index);
-        if !pair_ids_match(r1, r2, PairValidation::Full) {
+        if !pair_ids_match(r1, r2, pair_validation) {
             return Err(pair_id_mismatch(second, index));
         }
     }
@@ -921,46 +931,16 @@ fn pair_ids_match(first: FastqRecord<'_>, second: FastqRecord<'_>, mode: PairVal
     match mode {
         PairValidation::None => true,
         PairValidation::Full => first.pair_normalized_id() == second.pair_normalized_id(),
-        PairValidation::FastSlash => fast_slash_pair_ids_match(first.name(), second.name())
-            .unwrap_or_else(|| first.pair_normalized_id() == second.pair_normalized_id()),
+        PairValidation::FastSlash => {
+            fastq_frame::fast_slash_pair_ids_match(first.name(), second.name())
+                .unwrap_or_else(|| first.pair_normalized_id() == second.pair_normalized_id())
+        }
     }
-}
-
-fn fast_slash_pair_ids_match(first_name: &[u8], second_name: &[u8]) -> Option<bool> {
-    let first = first_name.strip_prefix(b"@").unwrap_or(first_name);
-    let second = second_name.strip_prefix(b"@").unwrap_or(second_name);
-    if first.len() >= 3 && first.len() == second.len() && first.ends_with(b"/1") {
-        return Some(
-            second.ends_with(b"/2") && first[..first.len() - 2] == second[..second.len() - 2],
-        );
-    }
-
-    let first_end = token_end(first);
-    let second_end = token_end(second);
-    let first = &first[..first_end];
-    let second = &second[..second_end];
-    if first.len() < 3 || second.len() < 3 {
-        return None;
-    }
-    let first_suffix = &first[first.len() - 2..];
-    let second_suffix = &second[second.len() - 2..];
-    if first_suffix != b"/1" || first.len() != second.len() {
-        return None;
-    }
-    Some(second_suffix == b"/2" && first[..first.len() - 2] == second[..second.len() - 2])
-}
-
-fn token_end(bytes: &[u8]) -> usize {
-    let mut end = 0;
-    while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
-        end += 1;
-    }
-    end
 }
 
 fn pair_id_mismatch(batch: &FastqBatch<'_>, index: usize) -> FastqError {
     let record = &batch.records[index];
-    format_at(
+    fastq_frame::format_at(
         "paired FASTQ record identifiers do not match",
         batch.base_offset,
         record.name.start as usize,
@@ -971,7 +951,7 @@ fn pair_id_mismatch(batch: &FastqBatch<'_>, index: usize) -> FastqError {
 
 fn extra_record_error(batch: &FastqBatch<'_>, index: usize) -> FastqError {
     let record = &batch.records[index];
-    format_at(
+    fastq_frame::format_at(
         "paired FASTQ inputs have different record counts",
         batch.base_offset,
         record.name.start as usize,
@@ -989,63 +969,51 @@ fn frame_records(
     first_record_index: u64,
     records: &mut Vec<RecordRef>,
 ) -> Result<usize> {
-    let has_partial_trailing_line = !eof
-        && newline_offsets
-            .last()
-            .map_or(!bytes.is_empty(), |&nl| nl + 1 < bytes.len());
-    let has_final_line = eof
-        && newline_offsets
-            .last()
-            .map_or(!bytes.is_empty(), |&nl| nl + 1 < bytes.len());
-    let line_count = newline_offsets.len() + usize::from(has_final_line);
-    if eof && !line_count.is_multiple_of(4) {
-        let start = line_start(newline_offsets, (line_count / 4) * 4);
-        return Err(format_at(
+    let layout = fastq_frame::slab_line_layout(bytes, newline_offsets, eof);
+    if eof && !layout.line_count.is_multiple_of(4) {
+        let start = fastq_frame::line_start(newline_offsets, (layout.line_count / 4) * 4);
+        return Err(fastq_frame::format_at(
             "truncated FASTQ record",
             base_offset,
             start,
             first_record_index + records.len() as u64,
-            (line_count % 4) as u8,
+            (layout.line_count % 4) as u8,
         ));
     }
-    let complete_lines = (line_count / 4) * 4;
     if bytes.len() > u32::MAX as usize {
         return Err(FastqError::Format(
             "FASTQ slab byte offsets exceed u32 range".into(),
         ));
     }
-    records.reserve(complete_lines / 4);
+    records.reserve(layout.complete_lines / 4);
 
-    for i in (0..complete_lines).step_by(4) {
-        let name = line_range(bytes, newline_offsets, i);
-        let seq = line_range(bytes, newline_offsets, i + 1);
-        let plus = line_range(bytes, newline_offsets, i + 2);
-        let qual = line_range(bytes, newline_offsets, i + 3);
+    for i in (0..layout.complete_lines).step_by(4) {
+        let record = fastq_frame::record_lines(bytes, newline_offsets, i);
 
         if validate {
-            validate_record(
-                bytes,
-                &name,
-                &seq,
-                &plus,
-                &qual,
+            fastq_frame::validate_record(
+                record,
                 base_offset,
                 first_record_index + records.len() as u64,
+                RecordValidation::DEFAULT,
             )?;
         }
 
         records.push(RecordRef {
-            name: to_u32_range(name),
-            seq: to_u32_range(seq),
-            plus: to_u32_range(plus),
-            qual: to_u32_range(qual),
+            name: to_u32_range(record.name.range()),
+            seq: to_u32_range(record.seq.range()),
+            plus: to_u32_range(record.plus.range()),
+            qual: to_u32_range(record.qual.range()),
         });
     }
 
-    if complete_lines == line_count && !has_partial_trailing_line {
+    if layout.complete_lines == layout.line_count && !layout.has_partial_trailing_line {
         Ok(bytes.len())
     } else {
-        Ok(line_start(newline_offsets, complete_lines))
+        Ok(fastq_frame::line_start(
+            newline_offsets,
+            layout.complete_lines,
+        ))
     }
 }
 
@@ -1062,64 +1030,47 @@ fn visit_records_in_slab_from_newlines<F>(
 where
     F: FnMut(FastqVisitRecord<'_>) -> Result<()>,
 {
-    let has_partial_trailing_line = !eof
-        && newline_offsets
-            .last()
-            .map_or(!bytes.is_empty(), |&nl| nl + 1 < bytes.len());
-    let has_final_line = eof
-        && newline_offsets
-            .last()
-            .map_or(!bytes.is_empty(), |&nl| nl + 1 < bytes.len());
-    let line_count = newline_offsets.len() + usize::from(has_final_line);
-    if eof && !line_count.is_multiple_of(4) {
-        let records = (line_count / 4) as u64;
-        return Err(format_at(
+    let layout = fastq_frame::slab_line_layout(bytes, newline_offsets, eof);
+    if eof && !layout.line_count.is_multiple_of(4) {
+        let records = (layout.line_count / 4) as u64;
+        return Err(fastq_frame::format_at(
             "truncated FASTQ record",
             base_offset,
-            line_start(newline_offsets, (line_count / 4) * 4),
+            fastq_frame::line_start(newline_offsets, (layout.line_count / 4) * 4),
             first_record_index + records,
-            (line_count % 4) as u8,
+            (layout.line_count % 4) as u8,
         ));
     }
-    let complete_lines = (line_count / 4) * 4;
     let mut records = 0_u64;
 
-    for line in (0..complete_lines).step_by(4) {
-        let name = line_bounds(bytes, newline_offsets, line);
-        let seq = line_bounds(bytes, newline_offsets, line + 1);
-        let plus = line_bounds(bytes, newline_offsets, line + 2);
-        let qual = line_bounds(bytes, newline_offsets, line + 3);
+    for line in (0..layout.complete_lines).step_by(4) {
+        let record = fastq_frame::record_lines(bytes, newline_offsets, line);
         let record_index = first_record_index + records;
 
         if validate {
-            validate_record_parts(
-                bytes,
-                name.0,
-                name.1,
-                seq.0,
-                seq.1,
-                plus.0,
-                qual.0,
-                qual.1,
+            fastq_frame::validate_record(
+                record,
                 base_offset,
                 record_index,
+                RecordValidation::DEFAULT,
             )?;
         }
 
         visit(FastqVisitRecord {
-            name: &bytes[name.0..name.1],
-            seq: &bytes[seq.0..seq.1],
-            plus: &bytes[plus.0..plus.1],
-            qual: &bytes[qual.0..qual.1],
+            name: record.name.bytes,
+            seq: record.seq.bytes,
+            plus: record.plus.bytes,
+            qual: record.qual.bytes,
         })?;
         records += 1;
     }
 
-    let next_start = if complete_lines == line_count && !has_partial_trailing_line {
-        bytes.len()
-    } else {
-        line_start(newline_offsets, complete_lines)
-    };
+    let next_start =
+        if layout.complete_lines == layout.line_count && !layout.has_partial_trailing_line {
+            bytes.len()
+        } else {
+            fastq_frame::line_start(newline_offsets, layout.complete_lines)
+        };
     Ok((next_start, records))
 }
 
@@ -1176,26 +1127,26 @@ where
         };
 
         let record_index = first_record_index + records;
+        let record = fastq_frame::RecordLines {
+            name,
+            seq,
+            plus,
+            qual,
+        };
         if validate {
-            validate_record_parts(
-                bytes,
-                name.0,
-                name.1,
-                seq.0,
-                seq.1,
-                plus.0,
-                qual.0,
-                qual.1,
+            fastq_frame::validate_record(
+                record,
                 base_offset,
                 record_index,
+                RecordValidation::DEFAULT,
             )?;
         }
 
         visit(FastqVisitRecord {
-            name: &bytes[name.0..name.1],
-            seq: &bytes[seq.0..seq.1],
-            plus: &bytes[plus.0..plus.1],
-            qual: &bytes[qual.0..qual.1],
+            name: record.name.bytes,
+            seq: record.seq.bytes,
+            plus: record.plus.bytes,
+            qual: record.qual.bytes,
         })?;
         records += 1;
     }
@@ -1204,20 +1155,20 @@ where
 }
 
 #[cfg(not(feature = "simd"))]
-fn next_visit_line(
-    bytes: &[u8],
+fn next_visit_line<'a>(
+    bytes: &'a [u8],
     cursor: &mut usize,
     newlines: &mut impl Iterator<Item = usize>,
     eof: bool,
-) -> Option<(usize, usize)> {
+) -> Option<fastq_frame::Line<'a>> {
     let start = *cursor;
     if let Some(end) = newlines.next() {
         *cursor = end + 1;
-        return Some((start, trim_cr_end(bytes, start, end)));
+        return Some(fastq_frame::line_from_bounds(bytes, start, end));
     }
     if eof && start < bytes.len() {
         *cursor = bytes.len();
-        return Some((start, trim_cr_end(bytes, start, bytes.len())));
+        return Some(fastq_frame::line_from_bounds(bytes, start, bytes.len()));
     }
     None
 }
@@ -1232,7 +1183,7 @@ fn incomplete_or_truncated_visit(
     line_index: u8,
 ) -> Result<(usize, u64)> {
     if eof {
-        return Err(format_at(
+        return Err(fastq_frame::format_at(
             "truncated FASTQ record",
             base_offset,
             record_start,
@@ -1241,154 +1192,6 @@ fn incomplete_or_truncated_visit(
         ));
     }
     Ok((record_start, records))
-}
-
-fn line_bounds(bytes: &[u8], newline_offsets: &[usize], line: usize) -> (usize, usize) {
-    let start = line_start(newline_offsets, line);
-    let end = if line < newline_offsets.len() {
-        newline_offsets[line]
-    } else {
-        bytes.len()
-    };
-    (start, trim_cr_end(bytes, start, end))
-}
-
-fn line_range(bytes: &[u8], newline_offsets: &[usize], line: usize) -> Range<usize> {
-    let (start, end) = line_bounds(bytes, newline_offsets, line);
-    start..end
-}
-
-fn line_start(newline_offsets: &[usize], line: usize) -> usize {
-    if line == 0 {
-        0
-    } else {
-        newline_offsets[line - 1] + 1
-    }
-}
-
-fn validate_record(
-    bytes: &[u8],
-    name: &Range<usize>,
-    seq: &Range<usize>,
-    plus: &Range<usize>,
-    qual: &Range<usize>,
-    base_offset: u64,
-    record_index: u64,
-) -> Result<()> {
-    if bytes.get(name.start) != Some(&b'@') {
-        return Err(format_at(
-            "header must start with `@`",
-            base_offset,
-            name.start,
-            record_index,
-            0,
-        ));
-    }
-    if name.end == name.start + 1 {
-        return Err(format_at(
-            "empty FASTQ id",
-            base_offset,
-            name.start,
-            record_index,
-            0,
-        ));
-    }
-    if bytes.get(plus.start) != Some(&b'+') {
-        return Err(format_at(
-            "plus line must start with `+`",
-            base_offset,
-            plus.start,
-            record_index,
-            2,
-        ));
-    }
-    let seq_len = seq.end - seq.start;
-    let qual_len = qual.end - qual.start;
-    if seq_len != qual_len {
-        return Err(format_at(
-            format!("quality length {qual_len} != sequence length {seq_len}"),
-            base_offset,
-            qual.start,
-            record_index,
-            3,
-        ));
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn validate_record_parts(
-    bytes: &[u8],
-    name_start: usize,
-    name_end: usize,
-    seq_start: usize,
-    seq_end: usize,
-    plus_start: usize,
-    qual_start: usize,
-    qual_end: usize,
-    base_offset: u64,
-    record_index: u64,
-) -> Result<()> {
-    if bytes.get(name_start) != Some(&b'@') {
-        return Err(format_at(
-            "header must start with `@`",
-            base_offset,
-            name_start,
-            record_index,
-            0,
-        ));
-    }
-    if name_end == name_start + 1 {
-        return Err(format_at(
-            "empty FASTQ id",
-            base_offset,
-            name_start,
-            record_index,
-            0,
-        ));
-    }
-    if bytes.get(plus_start) != Some(&b'+') {
-        return Err(format_at(
-            "plus line must start with `+`",
-            base_offset,
-            plus_start,
-            record_index,
-            2,
-        ));
-    }
-    let seq_len = seq_end - seq_start;
-    let qual_len = qual_end - qual_start;
-    if seq_len != qual_len {
-        return Err(format_at(
-            format!("quality length {qual_len} != sequence length {seq_len}"),
-            base_offset,
-            qual_start,
-            record_index,
-            3,
-        ));
-    }
-    Ok(())
-}
-
-fn format_at(
-    message: impl Into<String>,
-    base_offset: u64,
-    local_offset: usize,
-    record_index: u64,
-    line_index: u8,
-) -> FastqError {
-    FastqError::FormatAt {
-        message: message.into(),
-        position: FastqPosition::new(base_offset + local_offset as u64, record_index, line_index),
-    }
-}
-
-fn trim_cr_end(bytes: &[u8], start: usize, end: usize) -> usize {
-    if end > start && bytes[end - 1] == b'\r' {
-        end - 1
-    } else {
-        end
-    }
 }
 
 fn to_u32_range(range: Range<usize>) -> Range<u32> {

@@ -27,7 +27,7 @@ the release commit.
 | Framework is ruthlessly analyzed | `docs/FRAMEWORK.md` defines the model, competitor categories, local evidence, and explicit "do claim" / "do not claim" boundaries | Satisfied |
 | Independent replication protocol exists | `docs/REPLICATION.md`, `scripts/check-replication-host.sh`, and `scripts/export-replication-kit.sh` define host preflight, release-commit regeneration, replication-kit contents, independent-machine evidence fields, and claim boundaries | Satisfied |
 | Benchmark protocol is reproducible | `BENCHMARKING.md`, `scripts/benchmark-gauntlet.sh`, `scripts/render-benchmark-report.sh`, `scripts/check-benchmark-snapshots.sh`, `scripts/benchmark-rust-peers.sh`, `scripts/prepare-real-benchmark-inputs.sh`, and `scripts/discover-local-benchmark-corpus.sh`; gauntlet metadata records commit state, toolchains, all-feature release mode, machine class, filesystem, comparator versions, and parameters | Satisfied |
-| Benchmark figures and raw measurement artifacts are generated from scripts | `docs/benchmarks/*/figures/*.svg`, `docs/benchmarks/*/microraptor-gauntlet.jsonl`, `docs/benchmarks/*/external-tools.tsv`, and `docs/benchmarks/*/rust-library-peers.tsv` rendered or copied by repository scripts with local home paths sanitized; `scripts/check-benchmark-snapshots.sh` re-renders checked gauntlet and Rust peer snapshots and diffs summaries/figures | Satisfied |
+| Benchmark figures and raw measurement artifacts are generated from scripts | `docs/benchmarks/*/figures/*.svg`, `docs/benchmarks/*/microraptor-gauntlet.jsonl`, `docs/benchmarks/*/external-tools.tsv`, and `docs/benchmarks/*/rust-library-peers.tsv` rendered or copied by repository scripts with local home paths sanitized; `scripts/check-benchmark-snapshots.sh` re-renders checked gauntlet and Rust peer snapshots, diffs summaries/figures, and rejects legacy shell-wrapped external command records | Satisfied |
 | Command-line competitor comparisons exist | `docs/benchmarks/drosophila-1m`, `docs/benchmarks/drosophila-compressed`, `docs/benchmarks/drosophila-read-types`, and `docs/benchmarks/independent-organisms` include `seqkit`, `seqtk`, `samtools`, and `fastp` rows where available | Satisfied |
 | Rust parser-library peer comparisons exist | `docs/benchmarks/rust-peers` and `docs/benchmarks/rust-peers-drosophila-r1` compare `seq_io`, `noodles-fastq`, `bio`, and microraptor | Satisfied |
 | Real biological datasets are covered | Local Drosophila Illumina PE, PacBio CLR, ONT, E. coli MG1655 paired-end, and yeast BTT paired-end rows are discovered and summarized; gzip/BGZF derivatives are benchmarked | Satisfied |
@@ -56,12 +56,13 @@ no-default-feature tests, fuzz target compilation, and `cargo package
 
 Observed test coverage from that run:
 
-- Stable/default: 77 library tests, 5 benchmark-binary tests, 2 doctests.
-- Nightly/all-features: 83 library tests, 5 benchmark-binary tests, 2 doctests.
-- Nightly/no-default-features: 59 library tests, 5 benchmark-binary tests, 2
+- Stable/default: 83 library tests, 5 benchmark-binary tests, 2 doctests.
+- Nightly/all-features: 89 library tests, 5 benchmark-binary tests, 2 doctests.
+- Nightly/no-default-features: 64 library tests, 5 benchmark-binary tests, 2
   doctests.
 - Snapshot verifier: 5 gauntlet snapshots and 2 Rust peer snapshots.
-- Package dry run: 102 files, 691.8 KiB unpacked, 129.9 KiB compressed.
+- Package dry run: 104 files, 720.5 KiB unpacked, approximately 137 KiB
+  compressed.
 
 This is strong development evidence, but it is not a clean release-commit gate
 because the current tree is intentionally dirty while release work is being

@@ -9,6 +9,32 @@ input_dir="${MICRORAPTOR_GAUNTLET_INPUT_DIR:-target/bench-inputs}"
 result_dir="${MICRORAPTOR_GAUNTLET_RESULT_DIR:-target/bench-results}"
 corpus_inputs="${MICRORAPTOR_GAUNTLET_CORPUS_INPUTS:-}"
 corpus_paired_inputs="${MICRORAPTOR_GAUNTLET_CORPUS_PAIRED_INPUTS:-}"
+corpus_input_list=()
+corpus_paired_input_list=()
+
+parse_corpus_list() {
+  local value="$1"
+  local list_name="$2"
+  local -n list_ref="${list_name}"
+  list_ref=()
+
+  [[ -n "${value}" ]] || return 0
+  if [[ "${value}" == *$'\n'* ]]; then
+    local item
+    while IFS= read -r item; do
+      [[ -n "${item}" ]] || continue
+      list_ref+=("${item}")
+    done <<< "${value}"
+  else
+    # Backward-compatible parser for the older space-separated env format.
+    # New generated env files are newline-delimited so paths may contain spaces.
+    # shellcheck disable=SC2206
+    list_ref=(${value})
+  fi
+}
+
+parse_corpus_list "${corpus_inputs}" corpus_input_list
+parse_corpus_list "${corpus_paired_inputs}" corpus_paired_input_list
 
 mkdir -p "${input_dir}" "${result_dir}"
 
@@ -235,6 +261,44 @@ run_external() {
   } >> "${md}"
 }
 
+run_external_stdout_null() {
+  local label="$1"
+  local command_name="$2"
+  shift 2
+  local command_display="$*"
+
+  {
+    printf '### %s\n\n' "${label}"
+    if command -v "${command_name}" >/dev/null 2>&1; then
+      printf '```text\n'
+      set +e
+      local output
+      output="$({ /usr/bin/time -f 'elapsed_s\t%e' "$@" >/dev/null; } 2>&1)"
+      local status="$?"
+      set -e
+      printf '%s\n' "${output}"
+      local elapsed
+      elapsed="$(printf '%s\n' "${output}" | awk -F '\t' '$1 == "elapsed_s" { value = $2 } END { print value }')"
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "${label}" \
+        "${command_name}" \
+        "${status}" \
+        "${elapsed:-NA}" \
+        "${command_display}" >> "${external_tsv}"
+      if [[ "${status}" -ne 0 ]]; then
+        printf 'exit_status\t%s\n' "${status}"
+      fi
+      printf '```\n\n'
+    else
+      printf '`%s` not installed; skipped.\n\n' "${command_name}"
+      printf '%s\t%s\tskipped\tNA\t%s\n' \
+        "${label}" \
+        "${command_name}" \
+        "${command_display}" >> "${external_tsv}"
+    fi
+  } >> "${md}"
+}
+
 safe_artifact_label() {
   printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_'
 }
@@ -251,14 +315,14 @@ run_microraptor_paired "paired/raw" "${input_dir}/r1.fastq" "${input_dir}/r2.fas
 run_microraptor_paired "paired/gzip" "${input_dir}/r1.fastq.gz" "${input_dir}/r2.fastq.gz"
 run_microraptor_paired "paired/bgzf" "${input_dir}/r1.fastq.bgz" "${input_dir}/r2.fastq.bgz"
 
-if [[ -n "${corpus_inputs}" ]]; then
-  for corpus_input in ${corpus_inputs}; do
+if [[ "${#corpus_input_list[@]}" -gt 0 ]]; then
+  for corpus_input in "${corpus_input_list[@]}"; do
     run_microraptor_optional "corpus/$(basename "${corpus_input}")" "${corpus_input}"
   done
 fi
 
-if [[ -n "${corpus_paired_inputs}" ]]; then
-  for corpus_pair in ${corpus_paired_inputs}; do
+if [[ "${#corpus_paired_input_list[@]}" -gt 0 ]]; then
+  for corpus_pair in "${corpus_paired_input_list[@]}"; do
     IFS=',' read -r first second label <<< "${corpus_pair}"
     label="${label:-$(basename "${first}")+$(basename "${second}")}"
     run_microraptor_paired_optional "corpus-paired/${label}" "${first}" "${second}"
@@ -278,16 +342,12 @@ run_external "seqkit stats paired/r1/gzip" seqkit seqkit stats "${input_dir}/r1.
 run_external "seqkit stats paired/r2/gzip" seqkit seqkit stats "${input_dir}/r2.fastq.gz"
 run_external "seqkit stats paired/r1/bgzf" seqkit seqkit stats "${input_dir}/r1.fastq.bgz"
 run_external "seqkit stats paired/r2/bgzf" seqkit seqkit stats "${input_dir}/r2.fastq.bgz"
-run_external "seqtk comp single/raw" seqtk bash -lc \
-  "seqtk comp '${input_dir}/single.fastq' >/dev/null"
-run_external "seqtk comp single/gzip" seqtk bash -lc \
-  "seqtk comp '${input_dir}/single.fastq.gz' >/dev/null"
-run_external "seqtk comp single/bgzf" seqtk bash -lc \
-  "seqtk comp '${input_dir}/single.fastq.bgz' >/dev/null"
+run_external_stdout_null "seqtk comp single/raw" seqtk seqtk comp "${input_dir}/single.fastq"
+run_external_stdout_null "seqtk comp single/gzip" seqtk seqtk comp "${input_dir}/single.fastq.gz"
+run_external_stdout_null "seqtk comp single/bgzf" seqtk seqtk comp "${input_dir}/single.fastq.bgz"
 run_external "seqtk fqchk single/raw" seqtk seqtk fqchk "${input_dir}/single.fastq"
 run_external "bgzip test single/bgzf" bgzip bgzip -t "${input_dir}/single.fastq.bgz"
-run_external "bgzip decompress single/bgzf" bgzip bash -lc \
-  "bgzip -dc '${input_dir}/single.fastq.bgz' >/dev/null"
+run_external_stdout_null "bgzip decompress single/bgzf" bgzip bgzip -dc "${input_dir}/single.fastq.bgz"
 run_external "samtools import single/raw" samtools samtools import \
   -0 "${input_dir}/single.fastq" \
   -o /dev/null \
@@ -311,17 +371,42 @@ run_external "samtools import paired/bgzf" samtools samtools import \
   -o /dev/null \
   -O BAM \
   -@ "${workers}"
-run_external "fastp paired/raw" fastp bash -lc \
-  "fastp --in1 '${input_dir}/r1.fastq' --in2 '${input_dir}/r2.fastq' --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread '${workers}' --json '${result_dir}/fastp.json' --html '${result_dir}/fastp.html' >/dev/null"
-run_external "fastp paired/gzip" fastp bash -lc \
-  "fastp --in1 '${input_dir}/r1.fastq.gz' --in2 '${input_dir}/r2.fastq.gz' --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread '${workers}' --json '${result_dir}/fastp-gzip.json' --html '${result_dir}/fastp-gzip.html' >/dev/null"
-run_external "fastp paired/bgzf" fastp bash -lc \
-  "fastp --in1 '${input_dir}/r1.fastq.bgz' --in2 '${input_dir}/r2.fastq.bgz' --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread '${workers}' --json '${result_dir}/fastp-bgzf.json' --html '${result_dir}/fastp-bgzf.html' >/dev/null"
+run_external_stdout_null "fastp paired/raw" fastp fastp \
+  --in1 "${input_dir}/r1.fastq" \
+  --in2 "${input_dir}/r2.fastq" \
+  --stdout \
+  --disable_adapter_trimming \
+  --disable_quality_filtering \
+  --disable_length_filtering \
+  --thread "${workers}" \
+  --json "${result_dir}/fastp.json" \
+  --html "${result_dir}/fastp.html"
+run_external_stdout_null "fastp paired/gzip" fastp fastp \
+  --in1 "${input_dir}/r1.fastq.gz" \
+  --in2 "${input_dir}/r2.fastq.gz" \
+  --stdout \
+  --disable_adapter_trimming \
+  --disable_quality_filtering \
+  --disable_length_filtering \
+  --thread "${workers}" \
+  --json "${result_dir}/fastp-gzip.json" \
+  --html "${result_dir}/fastp-gzip.html"
+run_external_stdout_null "fastp paired/bgzf" fastp fastp \
+  --in1 "${input_dir}/r1.fastq.bgz" \
+  --in2 "${input_dir}/r2.fastq.bgz" \
+  --stdout \
+  --disable_adapter_trimming \
+  --disable_quality_filtering \
+  --disable_length_filtering \
+  --thread "${workers}" \
+  --json "${result_dir}/fastp-bgzf.json" \
+  --html "${result_dir}/fastp-bgzf.html"
 
-if [[ -n "${corpus_paired_inputs}" ]]; then
-  for corpus_pair in ${corpus_paired_inputs}; do
+if [[ "${#corpus_paired_input_list[@]}" -gt 0 ]]; then
+  for corpus_pair in "${corpus_paired_input_list[@]}"; do
     IFS=',' read -r first second label <<< "${corpus_pair}"
     label="${label:-$(basename "${first}")+$(basename "${second}")}"
+    artifact_label="$(safe_artifact_label "${label}")"
     run_external "seqkit stats corpus-paired/${label}/r1" seqkit seqkit stats "${first}"
     run_external "seqkit stats corpus-paired/${label}/r2" seqkit seqkit stats "${second}"
     run_external "seqtk fqchk corpus-paired/${label}/r1" seqtk seqtk fqchk "${first}"
@@ -332,26 +417,40 @@ if [[ -n "${corpus_paired_inputs}" ]]; then
       -o /dev/null \
       -O BAM \
       -@ "${workers}"
-    run_external "fastp corpus-paired/${label}" fastp bash -lc \
-      "fastp --in1 '${first}' --in2 '${second}' --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread '${workers}' --json '${result_dir}/fastp-${label}.json' --html '${result_dir}/fastp-${label}.html' >/dev/null"
+    run_external_stdout_null "fastp corpus-paired/${label}" fastp fastp \
+      --in1 "${first}" \
+      --in2 "${second}" \
+      --stdout \
+      --disable_adapter_trimming \
+      --disable_quality_filtering \
+      --disable_length_filtering \
+      --thread "${workers}" \
+      --json "${result_dir}/fastp-${artifact_label}.json" \
+      --html "${result_dir}/fastp-${artifact_label}.html"
   done
 fi
 
-if [[ -n "${corpus_inputs}" ]]; then
-  for corpus_input in ${corpus_inputs}; do
+if [[ "${#corpus_input_list[@]}" -gt 0 ]]; then
+  for corpus_input in "${corpus_input_list[@]}"; do
     label="corpus/$(basename "${corpus_input}")"
     artifact_label="$(safe_artifact_label "${label}")"
     run_external "seqkit stats ${label}" seqkit seqkit stats "${corpus_input}"
-    run_external "seqtk comp ${label}" seqtk bash -lc \
-      "seqtk comp '${corpus_input}' >/dev/null"
+    run_external_stdout_null "seqtk comp ${label}" seqtk seqtk comp "${corpus_input}"
     run_external "seqtk fqchk ${label}" seqtk seqtk fqchk "${corpus_input}"
     run_external "samtools import ${label}" samtools samtools import \
       -0 "${corpus_input}" \
       -o /dev/null \
       -O BAM \
       -@ "${workers}"
-    run_external "fastp ${label}" fastp bash -lc \
-      "fastp --in1 '${corpus_input}' --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread '${workers}' --json '${result_dir}/fastp-${artifact_label}.json' --html '${result_dir}/fastp-${artifact_label}.html' >/dev/null"
+    run_external_stdout_null "fastp ${label}" fastp fastp \
+      --in1 "${corpus_input}" \
+      --stdout \
+      --disable_adapter_trimming \
+      --disable_quality_filtering \
+      --disable_length_filtering \
+      --thread "${workers}" \
+      --json "${result_dir}/fastp-${artifact_label}.json" \
+      --html "${result_dir}/fastp-${artifact_label}.html"
   done
 fi
 

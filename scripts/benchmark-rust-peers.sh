@@ -25,6 +25,19 @@ display_path() {
   fi
 }
 
+write_sanitized_file() {
+  local src="$1"
+  local dst="$2"
+  local tmp
+  tmp="$(mktemp "${dst}.tmp.XXXXXX")"
+  if [[ -n "${HOME:-}" ]]; then
+    awk -v home="${HOME}" '{ gsub(home, "~"); print }' "${src}" > "${tmp}"
+  else
+    cp "${src}" "${tmp}"
+  fi
+  mv "${tmp}" "${dst}"
+}
+
 mkdir -p "${project_dir}/src" "${out_dir}" "${fig_dir}"
 
 if [[ -n "${microraptor_features}" ]]; then
@@ -485,11 +498,7 @@ fi
 read -r -a cargo_cmd <<< "${cargo_command}"
 MICRORAPTOR_RUST_PEER_CONSUMER="${consumer}" "${cargo_cmd[@]}" run --release --manifest-path "${project_dir}/Cargo.toml" -- "${args[@]}"
 
-if [[ -n "${HOME:-}" ]]; then
-  awk -v home="${HOME}" '{ gsub(home, "~"); print }' "${raw_tsv}" > "${tsv}"
-else
-  cp "${raw_tsv}" "${tsv}"
-fi
+write_sanitized_file "${raw_tsv}" "${tsv}"
 
 awk -F '\t' '
   NR > 1 {

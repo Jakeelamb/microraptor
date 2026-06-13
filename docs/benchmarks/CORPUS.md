@@ -44,6 +44,12 @@ This writes:
 - `target/bench-corpus/larger-gauntlet.env`: optional shell variables for larger
   paired-end rows that should be run deliberately.
 
+The generated `MICRORAPTOR_GAUNTLET_CORPUS_INPUTS` and
+`MICRORAPTOR_GAUNTLET_CORPUS_PAIRED_INPUTS` values are newline-delimited shell
+strings, not space-delimited lists. This keeps arbitrary local dataset paths
+with spaces intact after the env files are sourced and exported to the gauntlet
+script.
+
 ## Recommended Release Pass
 
 Use the benchmark conda environment for `seqkit`, `seqtk`, `samtools`, `bgzip`,
