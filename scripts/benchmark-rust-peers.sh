@@ -174,6 +174,12 @@ fn main() -> AppResult<()> {
             config.iters,
             parse_microraptor_slice_visitor,
         )?,
+        measure(
+            "microraptor-stream-visitor",
+            &input,
+            config.iters,
+            parse_microraptor_visitor,
+        )?,
     ];
     if env::var_os("MICRORAPTOR_RUST_PEER_DIAGNOSTICS").is_some() {
         rows.push(measure(
@@ -181,12 +187,6 @@ fn main() -> AppResult<()> {
             &input,
             config.iters,
             parse_microraptor_slice_visitor_no_validate,
-        )?);
-        rows.push(measure(
-            "microraptor-visitor",
-            &input,
-            config.iters,
-            parse_microraptor_visitor,
         )?);
         rows.push(measure(
             "microraptor-visitor-no-validate",

@@ -1,7 +1,7 @@
 # microraptor benchmark metadata
 
-- generated_at_utc: 2026-06-13T04:58:13Z
-- git_commit: 574fa99
+- generated_at_utc: 2026-06-13T05:27:49Z
+- git_commit: a623201
 - git_dirty: true
 - rustc: rustc 1.92.0 (ded5c06cf 2025-12-08)
 - cargo: cargo 1.92.0 (344c4567c 2025-10-21)
@@ -13,7 +13,7 @@
 - logical_cpus: 24
 - memory: 93Gi
 - filesystem: btrfs
-- storage_available: 383G
+- storage_available: 381G
 - records: 100000
 - read_len: 150
 - iters: 3

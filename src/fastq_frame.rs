@@ -100,16 +100,6 @@ pub(crate) fn line<'a>(bytes: &'a [u8], newline_offsets: &[usize], line_index: u
 }
 
 #[inline]
-#[cfg(not(feature = "simd"))]
-pub(crate) fn line_from_bounds(bytes: &[u8], start: usize, raw_end: usize) -> Line<'_> {
-    let end = trim_cr_end(bytes, start, raw_end);
-    Line {
-        bytes: &bytes[start..end],
-        start,
-    }
-}
-
-#[inline]
 pub(crate) fn record_lines<'a>(
     bytes: &'a [u8],
     newline_offsets: &[usize],
@@ -245,7 +235,7 @@ pub(crate) fn format_at(
 }
 
 #[inline]
-fn trim_cr_end(bytes: &[u8], start: usize, end: usize) -> usize {
+pub(crate) fn trim_cr_end(bytes: &[u8], start: usize, end: usize) -> usize {
     if end > start && bytes[end - 1] == b'\r' {
         end - 1
     } else {

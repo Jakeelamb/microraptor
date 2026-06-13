@@ -23,7 +23,7 @@ const BGZF_HEADER_LEN: usize = 18;
 const GZIP_TRAILER_LEN: usize = 8;
 const BGZF_MAX_BLOCK_SIZE: usize = 64 * 1024;
 const BGZF_MAX_PAYLOAD: usize = 60 * 1024;
-const DEFAULT_PARALLEL_MIN_COMPRESSED_BYTES: u64 = 32 * 1024 * 1024;
+const DEFAULT_PARALLEL_MIN_COMPRESSED_BYTES: u64 = 512 * 1024;
 
 /// Canonical empty BGZF EOF marker block.
 pub const BGZF_EOF_BLOCK: &[u8] = &[

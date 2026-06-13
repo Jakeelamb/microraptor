@@ -1092,10 +1092,10 @@ where
 
     while cursor < bytes.len() {
         let record_start = cursor;
-        let Some(name) = next_visit_line(bytes, &mut cursor, &mut newlines, eof) else {
+        let Some(name) = next_visit_line_bounds(bytes, &mut cursor, &mut newlines, eof) else {
             return Ok((record_start, records));
         };
-        let Some(seq) = next_visit_line(bytes, &mut cursor, &mut newlines, eof) else {
+        let Some(seq) = next_visit_line_bounds(bytes, &mut cursor, &mut newlines, eof) else {
             return incomplete_or_truncated_visit(
                 eof,
                 base_offset,
@@ -1105,7 +1105,7 @@ where
                 1,
             );
         };
-        let Some(plus) = next_visit_line(bytes, &mut cursor, &mut newlines, eof) else {
+        let Some(plus) = next_visit_line_bounds(bytes, &mut cursor, &mut newlines, eof) else {
             return incomplete_or_truncated_visit(
                 eof,
                 base_offset,
@@ -1115,7 +1115,7 @@ where
                 2,
             );
         };
-        let Some(qual) = next_visit_line(bytes, &mut cursor, &mut newlines, eof) else {
+        let Some(qual) = next_visit_line_bounds(bytes, &mut cursor, &mut newlines, eof) else {
             return incomplete_or_truncated_visit(
                 eof,
                 base_offset,
@@ -1127,26 +1127,15 @@ where
         };
 
         let record_index = first_record_index + records;
-        let record = fastq_frame::RecordLines {
-            name,
-            seq,
-            plus,
-            qual,
-        };
         if validate {
-            fastq_frame::validate_record(
-                record,
-                base_offset,
-                record_index,
-                RecordValidation::DEFAULT,
-            )?;
+            validate_visit_record_bounds(bytes, name, seq, plus, qual, base_offset, record_index)?;
         }
 
         visit(FastqVisitRecord {
-            name: record.name.bytes,
-            seq: record.seq.bytes,
-            plus: record.plus.bytes,
-            qual: record.qual.bytes,
+            name: &bytes[name.0..name.1],
+            seq: &bytes[seq.0..seq.1],
+            plus: &bytes[plus.0..plus.1],
+            qual: &bytes[qual.0..qual.1],
         })?;
         records += 1;
     }
@@ -1155,22 +1144,75 @@ where
 }
 
 #[cfg(not(feature = "simd"))]
-fn next_visit_line<'a>(
-    bytes: &'a [u8],
+fn next_visit_line_bounds(
+    bytes: &[u8],
     cursor: &mut usize,
     newlines: &mut impl Iterator<Item = usize>,
     eof: bool,
-) -> Option<fastq_frame::Line<'a>> {
+) -> Option<(usize, usize)> {
     let start = *cursor;
     if let Some(end) = newlines.next() {
         *cursor = end + 1;
-        return Some(fastq_frame::line_from_bounds(bytes, start, end));
+        let end = fastq_frame::trim_cr_end(bytes, start, end);
+        return Some((start, end));
     }
     if eof && start < bytes.len() {
         *cursor = bytes.len();
-        return Some(fastq_frame::line_from_bounds(bytes, start, bytes.len()));
+        let end = fastq_frame::trim_cr_end(bytes, start, bytes.len());
+        return Some((start, end));
     }
     None
+}
+
+#[cfg(not(feature = "simd"))]
+fn validate_visit_record_bounds(
+    bytes: &[u8],
+    name: (usize, usize),
+    seq: (usize, usize),
+    plus: (usize, usize),
+    qual: (usize, usize),
+    base_offset: u64,
+    record_index: u64,
+) -> Result<()> {
+    if bytes.get(name.0) != Some(&b'@') {
+        return Err(fastq_frame::format_at(
+            "header must start with `@`",
+            base_offset,
+            name.0,
+            record_index,
+            0,
+        ));
+    }
+    if name.1 == name.0 + 1 {
+        return Err(fastq_frame::format_at(
+            "empty FASTQ id",
+            base_offset,
+            name.0,
+            record_index,
+            0,
+        ));
+    }
+    if bytes.get(plus.0) != Some(&b'+') {
+        return Err(fastq_frame::format_at(
+            "plus line must start with `+`",
+            base_offset,
+            plus.0,
+            record_index,
+            2,
+        ));
+    }
+    let seq_len = seq.1 - seq.0;
+    let qual_len = qual.1 - qual.0;
+    if seq_len != qual_len {
+        return Err(fastq_frame::format_at(
+            format!("quality length {qual_len} != sequence length {seq_len}"),
+            base_offset,
+            qual.0,
+            record_index,
+            3,
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(not(feature = "simd"))]
