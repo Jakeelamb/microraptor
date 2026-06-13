@@ -5,11 +5,11 @@ use crate::error::{FastqError, Result};
 use crate::fastq_frame::{self, RecordValidation};
 use crate::scan::scan_newlines;
 
-const DEFAULT_SLAB_SIZE: usize = 8 * 1024 * 1024;
+const DEFAULT_SLAB_SIZE: usize = 256 * 1024;
 
 /// Configuration for FASTQ batch readers.
 ///
-/// The default is a validated, unpaired reader with an 8 MiB slab and full pair
+/// The default is a validated, unpaired reader with a 256 KiB slab and full pair
 /// identifier validation when pairing APIs are used.
 #[derive(Debug, Clone)]
 pub struct FastqConfig {
@@ -631,8 +631,8 @@ impl<R: Read> FastqReader<R> {
             base_offset: 0,
             record_index: 0,
             eof: false,
-            newlines: Vec::with_capacity(slab_size / 48),
-            records: Vec::with_capacity((slab_size / 128).max(8192)),
+            newlines: Vec::new(),
+            records: Vec::new(),
         }
     }
 

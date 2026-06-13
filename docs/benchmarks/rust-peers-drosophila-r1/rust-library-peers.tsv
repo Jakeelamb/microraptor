@@ -1,7 +1,7 @@
 tool	records	bases	best_ms	records_s	bases_s	checksum	input_bytes	iters	source
-microraptor-stream	1000000	36000000	77.819	12850414	462614930	3183102030297224004	130328422	7	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-microraptor-slice-visitor	1000000	36000000	50.915	19640637	707062967	3183102030297224004	130328422	7	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-microraptor-stream-visitor	1000000	36000000	57.700	17330972	623915016	3183102030297224004	130328422	7	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-seq_io	1000000	36000000	58.113	17207956	619486430	3183102030297224004	130328422	7	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-noodles-fastq	1000000	36000000	107.282	9321222	335563994	3183102030297224004	130328422	7	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-bio	1000000	36000000	278.735	3587637	129154936	3183102030297224004	130328422	7	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+microraptor-stream	1000000	36000000	72.075	13874448	499480159	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+microraptor-slice-visitor	1000000	36000000	51.235	19518053	702649942	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+microraptor-stream-visitor	1000000	36000000	56.446	17716149	637781371	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+seq_io	1000000	36000000	58.753	17020522	612738809	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+noodles-fastq	1000000	36000000	104.188	9598004	345528157	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+bio	1000000	36000000	281.455	3552966	127906796	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq

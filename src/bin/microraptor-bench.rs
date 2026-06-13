@@ -57,7 +57,7 @@ impl Default for Config {
             records: 200_000,
             read_len: 150,
             iters: 5,
-            slab_size: 8 * 1024 * 1024,
+            slab_size: 256 * 1024,
             workers: std::thread::available_parallelism().map_or(1, usize::from),
             bgzf_parallel_min_bytes: 512 * 1024,
             json: false,

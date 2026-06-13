@@ -135,6 +135,29 @@ fn consumer() -> Consumer {
     })
 }
 
+fn microraptor_slab_size() -> Option<usize> {
+    static SLAB_SIZE: OnceLock<Option<usize>> = OnceLock::new();
+    *SLAB_SIZE.get_or_init(|| match env::var("MICRORAPTOR_RUST_PEER_SLAB_SIZE") {
+        Ok(value) if !value.is_empty() => Some(
+            value
+                .parse()
+                .unwrap_or_else(|_| panic!("invalid MICRORAPTOR_RUST_PEER_SLAB_SIZE={value}")),
+        ),
+        _ => None,
+    })
+}
+
+fn microraptor_config(validate: bool) -> FastqConfig {
+    let mut config = FastqConfig {
+        validate,
+        ..FastqConfig::default()
+    };
+    if let Some(slab_size) = microraptor_slab_size() {
+        config.slab_size = slab_size;
+    }
+    config
+}
+
 #[derive(Debug)]
 struct Row {
     tool: &'static str,
@@ -323,13 +346,7 @@ fn measure(
 }
 
 fn parse_microraptor(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = FastqReader::with_config(
-        Cursor::new(input),
-        FastqConfig {
-            validate: true,
-            ..FastqConfig::default()
-        },
-    );
+    let mut reader = FastqReader::with_config(Cursor::new(input), microraptor_config(true));
     let mut stats = Stats::new();
     while let Some(batch) = reader.next_batch()? {
         for record in batch.records() {
@@ -365,13 +382,7 @@ fn parse_microraptor_slice_visitor_no_validate(input: &[u8]) -> AppResult<Stats>
 }
 
 fn parse_microraptor_visitor(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = FastqReader::with_config(
-        Cursor::new(input),
-        FastqConfig {
-            validate: true,
-            ..FastqConfig::default()
-        },
-    );
+    let mut reader = FastqReader::with_config(Cursor::new(input), microraptor_config(true));
     let mut stats = Stats::new();
     reader.visit_records(|record| {
         stats.observe(record.seq(), record.qual());
@@ -381,13 +392,7 @@ fn parse_microraptor_visitor(input: &[u8]) -> AppResult<Stats> {
 }
 
 fn parse_microraptor_visitor_no_validate(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = FastqReader::with_config(
-        Cursor::new(input),
-        FastqConfig {
-            validate: false,
-            ..FastqConfig::default()
-        },
-    );
+    let mut reader = FastqReader::with_config(Cursor::new(input), microraptor_config(false));
     let mut stats = Stats::new();
     reader.visit_records(|record| {
         stats.observe(record.seq(), record.qual());
@@ -397,13 +402,7 @@ fn parse_microraptor_visitor_no_validate(input: &[u8]) -> AppResult<Stats> {
 }
 
 fn parse_microraptor_no_validate(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = FastqReader::with_config(
-        Cursor::new(input),
-        FastqConfig {
-            validate: false,
-            ..FastqConfig::default()
-        },
-    );
+    let mut reader = FastqReader::with_config(Cursor::new(input), microraptor_config(false));
     let mut stats = Stats::new();
     while let Some(batch) = reader.next_batch()? {
         for record in batch.records() {
@@ -414,13 +413,7 @@ fn parse_microraptor_no_validate(input: &[u8]) -> AppResult<Stats> {
 }
 
 fn parse_microraptor_record_refs(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = FastqReader::with_config(
-        Cursor::new(input),
-        FastqConfig {
-            validate: false,
-            ..FastqConfig::default()
-        },
-    );
+    let mut reader = FastqReader::with_config(Cursor::new(input), microraptor_config(false));
     let mut stats = Stats::new();
     while let Some(batch) = reader.next_batch()? {
         let bytes = batch.bytes();
@@ -556,6 +549,7 @@ awk -F '\t' '
   printf -- '- iterations: %s\n' "${iters}"
   printf -- '- consumer: %s\n' "${consumer}"
   printf -- '- microraptor_features: %s\n' "${microraptor_features:-default}"
+  printf -- '- microraptor_slab_size: %s\n' "${MICRORAPTOR_RUST_PEER_SLAB_SIZE:-FastqConfig::default}"
   if [[ -n "${input}" ]]; then
     printf -- '- input: %s\n' "$(display_path "${input}")"
   else
