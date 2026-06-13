@@ -148,6 +148,16 @@ The combined BGZF derivative is intentionally built from the real R1 and R2
 FASTQ files to exceed the adaptive BGZF threshold while keeping the source data
 outside git.
 
+The Rust parser-library peer harness reads one in-memory FASTQ byte buffer
+through Microraptor, `seq_io`, `noodles-fastq`, and `bio`. It reports
+`microraptor-stream` for the validated batch reader over a `Read` source and
+`microraptor-slice-visitor` for the validated zero-copy visitor over a resident
+byte slice. Its default consumer mode is `light`, which records record/base
+accounting and a small shape checksum so parser framing is not hidden by hashing
+every base. Set `MICRORAPTOR_RUST_PEER_CONSUMER=full` to hash every sequence
+and quality byte. Set `MICRORAPTOR_RUST_PEER_DIAGNOSTICS=1` to include
+additional visitor, trusted/no-validation, and raw record-ref rows.
+
 Discover the broader local biological corpus with:
 
 ```bash

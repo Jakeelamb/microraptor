@@ -15,9 +15,11 @@
 //! # Choosing an entry point
 //!
 //! Use [`FastqReader`] when you already have an object that implements
-//! [`std::io::Read`]. Use [`open_fastq`] or [`open_fastq_with_config`] when you
-//! want file-path auto-detection for raw FASTQ, ordinary gzip, and BGZF. Use
-//! [`PairedFastqReader`] or [`open_paired_fastq`] for ordered R1/R2 streams.
+//! [`std::io::Read`]. Use [`visit_fastq_bytes`] when a complete FASTQ byte
+//! buffer is already resident in memory. Use [`open_fastq`] or
+//! [`open_fastq_with_config`] when you want file-path auto-detection for raw
+//! FASTQ, ordinary gzip, and BGZF. Use [`PairedFastqReader`] or
+//! [`open_paired_fastq`] for ordered R1/R2 streams.
 //!
 //! # Scope
 //!
@@ -106,9 +108,9 @@ pub use bgzf::{
 };
 pub use error::{FastqError, FastqPosition, Result};
 pub use fastq::{
-    FastqBatch, FastqConfig, FastqPair, FastqReader, FastqRecord, InterleavedPairs, PairValidation,
-    PairedFastqBatch, PairedFastqPairs, PairedFastqReader, PairedRecords, PairingMode, RecordRef,
-    paired_records, strip_pair_suffix,
+    FastqBatch, FastqConfig, FastqPair, FastqReader, FastqRecord, FastqVisitRecord,
+    InterleavedPairs, PairValidation, PairedFastqBatch, PairedFastqPairs, PairedFastqReader,
+    PairedRecords, PairingMode, RecordRef, paired_records, strip_pair_suffix, visit_fastq_bytes,
 };
 pub use source::{
     open_fastq, open_fastq_with_config, open_paired_fastq, open_paired_fastq_with_config,

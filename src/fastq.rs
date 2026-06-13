@@ -144,6 +144,41 @@ impl<'a> FastqRecord<'a> {
     }
 }
 
+/// Borrowed FASTQ record passed to [`FastqReader::visit_records`].
+///
+/// This view is optimized for single-pass consumers that do not need the batch
+/// side table. The slices point directly into the reader slab and are valid
+/// only for the duration of the visitor callback.
+#[derive(Debug, Clone, Copy)]
+pub struct FastqVisitRecord<'a> {
+    name: &'a [u8],
+    seq: &'a [u8],
+    plus: &'a [u8],
+    qual: &'a [u8],
+}
+
+impl<'a> FastqVisitRecord<'a> {
+    /// Return the header line including the leading `@`.
+    pub fn name(self) -> &'a [u8] {
+        self.name
+    }
+
+    /// Return the sequence line.
+    pub fn seq(self) -> &'a [u8] {
+        self.seq
+    }
+
+    /// Return the plus line.
+    pub fn plus(self) -> &'a [u8] {
+        self.plus
+    }
+
+    /// Return the quality line.
+    pub fn qual(self) -> &'a [u8] {
+        self.qual
+    }
+}
+
 /// Borrowed view of an ordered read pair.
 #[derive(Debug, Clone, Copy)]
 pub struct FastqPair<'a> {
@@ -598,7 +633,7 @@ impl<R: Read> FastqReader<R> {
             record_index: 0,
             eof: false,
             newlines: Vec::with_capacity(slab_size / 48),
-            records: Vec::with_capacity(8192),
+            records: Vec::with_capacity((slab_size / 128).max(8192)),
         }
     }
 
@@ -647,6 +682,58 @@ impl<R: Read> FastqReader<R> {
             first_record_index,
             pair_validation: self.config.pair_validation,
         }))
+    }
+
+    /// Visit every record in the stream without building a batch side table.
+    ///
+    /// This is the fastest public parse-only path for single-pass consumers.
+    /// It still honors [`FastqConfig::validate`] for record structure, but it
+    /// yields individual records and does not perform paired-end identifier
+    /// validation. Use [`next_batch`](Self::next_batch),
+    /// [`interleaved_pairs`](FastqBatch::interleaved_pairs), or
+    /// [`PairedFastqReader`] when pair validation is required.
+    pub fn visit_records<F>(&mut self, mut visit: F) -> Result<()>
+    where
+        F: FnMut(FastqVisitRecord<'_>) -> Result<()>,
+    {
+        loop {
+            self.compact_carry();
+            self.fill_slab()?;
+
+            #[cfg(feature = "simd")]
+            let (next_start, records) = {
+                scan_newlines(&self.buf[..self.len], &mut self.newlines);
+                visit_records_in_slab_from_newlines(
+                    &self.buf[..self.len],
+                    &self.newlines,
+                    self.eof,
+                    self.config.validate,
+                    self.base_offset,
+                    self.record_index,
+                    &mut visit,
+                )?
+            };
+            #[cfg(not(feature = "simd"))]
+            let (next_start, records) = visit_records_in_slab(
+                &self.buf[..self.len],
+                self.eof,
+                self.config.validate,
+                self.base_offset,
+                self.record_index,
+                &mut visit,
+            )?;
+            self.next_start = next_start;
+            self.record_index += records;
+
+            if records == 0 {
+                if self.len == 0 && self.eof {
+                    return Ok(());
+                }
+                return Err(FastqError::RecordTooLarge {
+                    slab_size: self.config.slab_size,
+                });
+            }
+        }
     }
 
     fn compact_carry(&mut self) {
@@ -707,6 +794,44 @@ impl<R: Read> FastqReader<R> {
         self.next_start = next_start;
         self.record_index -= record_count as u64;
     }
+}
+
+/// Visit records from an already resident FASTQ byte slice.
+///
+/// This path is intended for memory-mapped files, cached datasets, and other
+/// callers that already own a complete FASTQ byte buffer. It validates the same
+/// record structure as [`FastqReader::visit_records`] when
+/// [`FastqConfig::validate`] is enabled, but it does not copy the input into a
+/// streaming slab and does not perform paired-end identifier validation.
+///
+/// Returns the number of visited records.
+pub fn visit_fastq_bytes<F>(bytes: &[u8], config: FastqConfig, mut visit: F) -> Result<u64>
+where
+    F: FnMut(FastqVisitRecord<'_>) -> Result<()>,
+{
+    #[cfg(feature = "simd")]
+    let records = {
+        let mut newlines = Vec::with_capacity(bytes.len() / 48);
+        scan_newlines(bytes, &mut newlines);
+        let (_, records) = visit_records_in_slab_from_newlines(
+            bytes,
+            &newlines,
+            true,
+            config.validate,
+            0,
+            0,
+            &mut visit,
+        )?;
+        records
+    };
+
+    #[cfg(not(feature = "simd"))]
+    let records = {
+        let (_, records) = visit_records_in_slab(bytes, true, config.validate, 0, 0, &mut visit)?;
+        records
+    };
+
+    Ok(records)
 }
 
 fn validate_even_pair_count(batch: &FastqBatch<'_>) -> Result<()> {
@@ -884,6 +1009,12 @@ fn frame_records(
         ));
     }
     let complete_lines = (line_count / 4) * 4;
+    if bytes.len() > u32::MAX as usize {
+        return Err(FastqError::Format(
+            "FASTQ slab byte offsets exceed u32 range".into(),
+        ));
+    }
+    records.reserve(complete_lines / 4);
 
     for i in (0..complete_lines).step_by(4) {
         let name = line_range(bytes, newline_offsets, i);
@@ -904,10 +1035,10 @@ fn frame_records(
         }
 
         records.push(RecordRef {
-            name: to_u32(name)?,
-            seq: to_u32(seq)?,
-            plus: to_u32(plus)?,
-            qual: to_u32(qual)?,
+            name: to_u32_range(name),
+            seq: to_u32_range(seq),
+            plus: to_u32_range(plus),
+            qual: to_u32_range(qual),
         });
     }
 
@@ -918,14 +1049,213 @@ fn frame_records(
     }
 }
 
-fn line_range(bytes: &[u8], newline_offsets: &[usize], line: usize) -> Range<usize> {
+#[cfg(feature = "simd")]
+fn visit_records_in_slab_from_newlines<F>(
+    bytes: &[u8],
+    newline_offsets: &[usize],
+    eof: bool,
+    validate: bool,
+    base_offset: u64,
+    first_record_index: u64,
+    visit: &mut F,
+) -> Result<(usize, u64)>
+where
+    F: FnMut(FastqVisitRecord<'_>) -> Result<()>,
+{
+    let has_partial_trailing_line = !eof
+        && newline_offsets
+            .last()
+            .map_or(!bytes.is_empty(), |&nl| nl + 1 < bytes.len());
+    let has_final_line = eof
+        && newline_offsets
+            .last()
+            .map_or(!bytes.is_empty(), |&nl| nl + 1 < bytes.len());
+    let line_count = newline_offsets.len() + usize::from(has_final_line);
+    if eof && !line_count.is_multiple_of(4) {
+        let records = (line_count / 4) as u64;
+        return Err(format_at(
+            "truncated FASTQ record",
+            base_offset,
+            line_start(newline_offsets, (line_count / 4) * 4),
+            first_record_index + records,
+            (line_count % 4) as u8,
+        ));
+    }
+    let complete_lines = (line_count / 4) * 4;
+    let mut records = 0_u64;
+
+    for line in (0..complete_lines).step_by(4) {
+        let name = line_bounds(bytes, newline_offsets, line);
+        let seq = line_bounds(bytes, newline_offsets, line + 1);
+        let plus = line_bounds(bytes, newline_offsets, line + 2);
+        let qual = line_bounds(bytes, newline_offsets, line + 3);
+        let record_index = first_record_index + records;
+
+        if validate {
+            validate_record_parts(
+                bytes,
+                name.0,
+                name.1,
+                seq.0,
+                seq.1,
+                plus.0,
+                qual.0,
+                qual.1,
+                base_offset,
+                record_index,
+            )?;
+        }
+
+        visit(FastqVisitRecord {
+            name: &bytes[name.0..name.1],
+            seq: &bytes[seq.0..seq.1],
+            plus: &bytes[plus.0..plus.1],
+            qual: &bytes[qual.0..qual.1],
+        })?;
+        records += 1;
+    }
+
+    let next_start = if complete_lines == line_count && !has_partial_trailing_line {
+        bytes.len()
+    } else {
+        line_start(newline_offsets, complete_lines)
+    };
+    Ok((next_start, records))
+}
+
+#[cfg(not(feature = "simd"))]
+fn visit_records_in_slab<F>(
+    bytes: &[u8],
+    eof: bool,
+    validate: bool,
+    base_offset: u64,
+    first_record_index: u64,
+    visit: &mut F,
+) -> Result<(usize, u64)>
+where
+    F: FnMut(FastqVisitRecord<'_>) -> Result<()>,
+{
+    let mut cursor = 0;
+    let mut records = 0_u64;
+    let mut newlines = memchr::memchr_iter(b'\n', bytes);
+
+    while cursor < bytes.len() {
+        let record_start = cursor;
+        let Some(name) = next_visit_line(bytes, &mut cursor, &mut newlines, eof) else {
+            return Ok((record_start, records));
+        };
+        let Some(seq) = next_visit_line(bytes, &mut cursor, &mut newlines, eof) else {
+            return incomplete_or_truncated_visit(
+                eof,
+                base_offset,
+                record_start,
+                first_record_index + records,
+                records,
+                1,
+            );
+        };
+        let Some(plus) = next_visit_line(bytes, &mut cursor, &mut newlines, eof) else {
+            return incomplete_or_truncated_visit(
+                eof,
+                base_offset,
+                record_start,
+                first_record_index + records,
+                records,
+                2,
+            );
+        };
+        let Some(qual) = next_visit_line(bytes, &mut cursor, &mut newlines, eof) else {
+            return incomplete_or_truncated_visit(
+                eof,
+                base_offset,
+                record_start,
+                first_record_index + records,
+                records,
+                3,
+            );
+        };
+
+        let record_index = first_record_index + records;
+        if validate {
+            validate_record_parts(
+                bytes,
+                name.0,
+                name.1,
+                seq.0,
+                seq.1,
+                plus.0,
+                qual.0,
+                qual.1,
+                base_offset,
+                record_index,
+            )?;
+        }
+
+        visit(FastqVisitRecord {
+            name: &bytes[name.0..name.1],
+            seq: &bytes[seq.0..seq.1],
+            plus: &bytes[plus.0..plus.1],
+            qual: &bytes[qual.0..qual.1],
+        })?;
+        records += 1;
+    }
+
+    Ok((bytes.len(), records))
+}
+
+#[cfg(not(feature = "simd"))]
+fn next_visit_line(
+    bytes: &[u8],
+    cursor: &mut usize,
+    newlines: &mut impl Iterator<Item = usize>,
+    eof: bool,
+) -> Option<(usize, usize)> {
+    let start = *cursor;
+    if let Some(end) = newlines.next() {
+        *cursor = end + 1;
+        return Some((start, trim_cr_end(bytes, start, end)));
+    }
+    if eof && start < bytes.len() {
+        *cursor = bytes.len();
+        return Some((start, trim_cr_end(bytes, start, bytes.len())));
+    }
+    None
+}
+
+#[cfg(not(feature = "simd"))]
+fn incomplete_or_truncated_visit(
+    eof: bool,
+    base_offset: u64,
+    record_start: usize,
+    record_index: u64,
+    records: u64,
+    line_index: u8,
+) -> Result<(usize, u64)> {
+    if eof {
+        return Err(format_at(
+            "truncated FASTQ record",
+            base_offset,
+            record_start,
+            record_index,
+            line_index,
+        ));
+    }
+    Ok((record_start, records))
+}
+
+fn line_bounds(bytes: &[u8], newline_offsets: &[usize], line: usize) -> (usize, usize) {
     let start = line_start(newline_offsets, line);
     let end = if line < newline_offsets.len() {
         newline_offsets[line]
     } else {
         bytes.len()
     };
-    start..trim_cr_end(bytes, start, end)
+    (start, trim_cr_end(bytes, start, end))
+}
+
+fn line_range(bytes: &[u8], newline_offsets: &[usize], line: usize) -> Range<usize> {
+    let (start, end) = line_bounds(bytes, newline_offsets, line);
+    start..end
 }
 
 fn line_start(newline_offsets: &[usize], line: usize) -> usize {
@@ -986,6 +1316,60 @@ fn validate_record(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn validate_record_parts(
+    bytes: &[u8],
+    name_start: usize,
+    name_end: usize,
+    seq_start: usize,
+    seq_end: usize,
+    plus_start: usize,
+    qual_start: usize,
+    qual_end: usize,
+    base_offset: u64,
+    record_index: u64,
+) -> Result<()> {
+    if bytes.get(name_start) != Some(&b'@') {
+        return Err(format_at(
+            "header must start with `@`",
+            base_offset,
+            name_start,
+            record_index,
+            0,
+        ));
+    }
+    if name_end == name_start + 1 {
+        return Err(format_at(
+            "empty FASTQ id",
+            base_offset,
+            name_start,
+            record_index,
+            0,
+        ));
+    }
+    if bytes.get(plus_start) != Some(&b'+') {
+        return Err(format_at(
+            "plus line must start with `+`",
+            base_offset,
+            plus_start,
+            record_index,
+            2,
+        ));
+    }
+    let seq_len = seq_end - seq_start;
+    let qual_len = qual_end - qual_start;
+    if seq_len != qual_len {
+        return Err(format_at(
+            format!("quality length {qual_len} != sequence length {seq_len}"),
+            base_offset,
+            qual_start,
+            record_index,
+            3,
+        ));
+    }
+    Ok(())
+}
+
 fn format_at(
     message: impl Into<String>,
     base_offset: u64,
@@ -1007,12 +1391,9 @@ fn trim_cr_end(bytes: &[u8], start: usize, end: usize) -> usize {
     }
 }
 
-fn to_u32(range: Range<usize>) -> Result<Range<u32>> {
-    let start = u32::try_from(range.start)
-        .map_err(|_| FastqError::Format("record offset exceeds u32 range".into()))?;
-    let end = u32::try_from(range.end)
-        .map_err(|_| FastqError::Format("record offset exceeds u32 range".into()))?;
-    Ok(start..end)
+fn to_u32_range(range: Range<usize>) -> Range<u32> {
+    debug_assert!(u32::try_from(range.end).is_ok());
+    range.start as u32..range.end as u32
 }
 
 fn to_usize(range: Range<u32>) -> Range<usize> {

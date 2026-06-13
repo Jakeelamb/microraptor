@@ -1,9 +1,10 @@
 # Rust Library Peer Benchmark Metadata
 
-- generated_at_utc: 2026-06-12T23:24:25Z
+- generated_at_utc: 2026-06-13T00:01:41Z
 - rustc: rustc 1.92.0 (ded5c06cf 2025-12-08)
 - cargo: cargo 1.92.0 (344c4567c 2025-10-21)
 - iterations: 9
+- consumer: light
 - microraptor_features: default
 - input: ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
 

@@ -17,6 +17,10 @@ The current record model is intentionally narrow:
 - FASTQ records are four physical lines: name, sequence, plus, quality.
 - Records borrow from reusable slabs through `RecordRef` ranges.
 - Batch lifetime is tied to the reader call, so the reader can reuse buffers.
+- Single-pass callers can use visitor APIs to avoid building a batch side
+  table when they only need to consume records once.
+- Already resident FASTQ buffers can use `visit_fastq_bytes` to parse without
+  copying into a streaming slab.
 - Quality and base packing can run as a side channel without forcing owned
   per-record allocation.
 - Paired-end support assumes ordered mates, either in separate R1/R2 files or
@@ -44,9 +48,11 @@ research path.
 
 Stable default newline discovery uses `memchr`; the older scalar byte loop was
 the main reason microraptor trailed Rust parser peers on raw in-memory FASTQ
-rows. Nightly SIMD is still useful: in the local Drosophila R1 peer harness, the
-`simd` feature beat the checked `seq_io` row, while stable default narrowed the
-gap to parser-library peers without requiring nightly.
+rows. The streaming batch path remains the broadest API because it supports
+paired validation and reusable batches. The visitor paths are the parser-only
+performance surfaces: `FastqReader::visit_records` avoids batch side-table
+construction, and `visit_fastq_bytes` avoids the extra copy when the complete
+FASTQ byte buffer is already resident in memory.
 
 ### Compression Backends
 
@@ -97,13 +103,14 @@ Current local Rust-library peer evidence is captured in:
 - `docs/benchmarks/rust-peers-drosophila-r1/summary.md`: Drosophila R1 raw
   FASTQ parser-library comparison.
 
-Those rows currently show stable-default Microraptor close to `seq_io`, ahead of
-`noodles-fastq` and `bio` on the local Drosophila R1 pass, and slightly behind
-`seq_io`/`noodles-fastq` on the synthetic raw FASTQ fixture. The diagnostic peer
-mode showed validation and accessor overhead are not the main difference; the
-loss was dominated by newline discovery. The stronger claim should still be the
-unified raw/gzip/BGZF streaming and packed side-channel framework, not universal
-parser-only dominance over every Rust FASTQ reader.
+Those rows currently separate two Microraptor surfaces. `microraptor-stream`
+is the validated batch reader over a `Read` source. `microraptor-slice-visitor`
+is the validated zero-copy visitor for already resident FASTQ bytes. Under the
+default light parser-consumer mode, the slice visitor is faster than the checked
+`seq_io`, `noodles-fastq`, and `bio` rows on both the synthetic fixture and the
+local Drosophila R1 snapshot. The stream row should not be described as a
+universal parser-speed winner; its value is the broader raw/gzip/BGZF,
+batching, pairing, and packed side-channel framework.
 
 Current local command-line/compression evidence is captured in:
 
@@ -129,6 +136,8 @@ Do claim:
   streaming.
 - It has a single parser path after decompression.
 - It exposes borrowed records and optional packed base/quality side channels.
+- Its resident-slice visitor is the fastest checked Rust parser-library row in
+  the local synthetic and Drosophila R1 peer snapshots.
 - It has benchmark scripts that check checksum parity across parser and trusted
   pack paths.
 - Its benchmark suite includes both command-line workflow comparators and Rust

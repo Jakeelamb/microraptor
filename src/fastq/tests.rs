@@ -50,6 +50,64 @@ fn carries_split_records() {
 }
 
 #[test]
+fn visit_records_matches_batch_records_across_slab_carry() {
+    let input = b"@r1\nACGT\n+\nIIII\n@r2\nTGCA\n+\nJJJJ\n@r3\nNN\n+\n!!";
+    let expected = collect_records(input, 18).unwrap();
+    let mut reader = FastqReader::with_config(
+        &input[..],
+        FastqConfig {
+            slab_size: 18,
+            validate: true,
+            ..FastqConfig::default()
+        },
+    );
+    let mut visited = Vec::new();
+
+    reader
+        .visit_records(|record| {
+            visited.push((record.name().to_vec(), record.seq().to_vec()));
+            Ok(())
+        })
+        .unwrap();
+
+    assert_eq!(visited, expected);
+}
+
+#[test]
+fn visit_records_reports_truncated_eof() {
+    let mut reader = FastqReader::new(&b"@r1\nACGT\n+"[..]);
+    let err = reader.visit_records(|_| Ok(())).unwrap_err();
+
+    assert!(err.to_string().contains("truncated FASTQ record"));
+    assert_eq!(error_position(&err), Some(FastqPosition::new(0, 0, 3)));
+}
+
+#[test]
+fn visit_fastq_bytes_matches_batch_records() {
+    let input = b"@r1\nACGT\n+\nIIII\n@r2\nTGCA\n+\nJJJJ\n@r3\nNN\n+\n!!";
+    let expected = collect_records(input, 18).unwrap();
+    let mut visited = Vec::new();
+
+    let records = visit_fastq_bytes(input, FastqConfig::default(), |record| {
+        visited.push((record.name().to_vec(), record.seq().to_vec()));
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(records, 3);
+    assert_eq!(visited, expected);
+}
+
+#[test]
+fn visit_fastq_bytes_reports_truncated_eof() {
+    let err =
+        visit_fastq_bytes(&b"@r1\nACGT\n+"[..], FastqConfig::default(), |_| Ok(())).unwrap_err();
+
+    assert!(err.to_string().contains("truncated FASTQ record"));
+    assert_eq!(error_position(&err), Some(FastqPosition::new(0, 0, 3)));
+}
+
+#[test]
 fn frame_records_carries_partial_line_after_complete_record() {
     let input = b"@r1\nACGT\n+\nIIII\n@partial";
     let mut newlines = Vec::new();

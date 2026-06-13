@@ -15,6 +15,7 @@ summary="${out_dir}/summary.md"
 metadata="${out_dir}/metadata.md"
 microraptor_features="${MICRORAPTOR_RUST_PEER_MICRORAPTOR_FEATURES:-}"
 cargo_command="${MICRORAPTOR_RUST_PEER_CARGO:-cargo}"
+consumer="${MICRORAPTOR_RUST_PEER_CONSUMER:-light}"
 
 display_path() {
   if [[ -n "${HOME:-}" ]]; then
@@ -61,11 +62,12 @@ use std::fs;
 use std::hint::black_box;
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use bio::io::fastq as bio_fastq;
 use microraptor::benchutil::synthetic_fastq;
-use microraptor::{FastqConfig, FastqReader};
+use microraptor::{visit_fastq_bytes, FastqConfig, FastqReader};
 use noodles_fastq as noodles_fastq;
 use seq_io::fastq::Record as SeqIoRecord;
 
@@ -76,6 +78,12 @@ struct Stats {
     records: u64,
     bases: u64,
     checksum: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Consumer {
+    FullChecksum,
+    LightAccounting,
 }
 
 impl Stats {
@@ -90,9 +98,28 @@ impl Stats {
     fn observe(&mut self, seq: &[u8], qual: &[u8]) {
         self.records += 1;
         self.bases += seq.len() as u64;
-        self.checksum = mix_bytes(self.checksum, seq);
-        self.checksum = mix_bytes(self.checksum, qual);
+        match consumer() {
+            Consumer::FullChecksum => {
+                self.checksum = mix_bytes(self.checksum, seq);
+                self.checksum = mix_bytes(self.checksum, qual);
+            }
+            Consumer::LightAccounting => {
+                self.checksum = mix_record_shape(self.checksum, seq, qual);
+            }
+        }
     }
+}
+
+fn consumer() -> Consumer {
+    static CONSUMER: OnceLock<Consumer> = OnceLock::new();
+    *CONSUMER.get_or_init(|| match env::var("MICRORAPTOR_RUST_PEER_CONSUMER") {
+        Ok(value) if value == "light" => Consumer::LightAccounting,
+        Ok(value) if value == "full" => Consumer::FullChecksum,
+        Ok(value) if !value.is_empty() => {
+            panic!("unsupported MICRORAPTOR_RUST_PEER_CONSUMER={value}; expected full or light")
+        }
+        _ => Consumer::FullChecksum,
+    })
 }
 
 #[derive(Debug)]
@@ -121,13 +148,39 @@ fn main() -> AppResult<()> {
         ),
     };
 
-    let mut rows = vec![measure(
-        "microraptor",
-        &input,
-        config.iters,
-        parse_microraptor,
-    )?];
+    let mut rows = vec![
+        measure(
+            "microraptor-stream",
+            &input,
+            config.iters,
+            parse_microraptor,
+        )?,
+        measure(
+            "microraptor-slice-visitor",
+            &input,
+            config.iters,
+            parse_microraptor_slice_visitor,
+        )?,
+    ];
     if env::var_os("MICRORAPTOR_RUST_PEER_DIAGNOSTICS").is_some() {
+        rows.push(measure(
+            "microraptor-slice-visitor-no-validate",
+            &input,
+            config.iters,
+            parse_microraptor_slice_visitor_no_validate,
+        )?);
+        rows.push(measure(
+            "microraptor-visitor",
+            &input,
+            config.iters,
+            parse_microraptor_visitor,
+        )?);
+        rows.push(measure(
+            "microraptor-visitor-no-validate",
+            &input,
+            config.iters,
+            parse_microraptor_visitor_no_validate,
+        )?);
         rows.push(measure(
             "microraptor-no-validate",
             &input,
@@ -273,6 +326,63 @@ fn parse_microraptor(input: &[u8]) -> AppResult<Stats> {
     Ok(stats)
 }
 
+fn parse_microraptor_slice_visitor(input: &[u8]) -> AppResult<Stats> {
+    let mut stats = Stats::new();
+    visit_fastq_bytes(input, FastqConfig::default(), |record| {
+        stats.observe(record.seq(), record.qual());
+        Ok(())
+    })?;
+    Ok(stats)
+}
+
+fn parse_microraptor_slice_visitor_no_validate(input: &[u8]) -> AppResult<Stats> {
+    let mut stats = Stats::new();
+    visit_fastq_bytes(
+        input,
+        FastqConfig {
+            validate: false,
+            ..FastqConfig::default()
+        },
+        |record| {
+            stats.observe(record.seq(), record.qual());
+            Ok(())
+        },
+    )?;
+    Ok(stats)
+}
+
+fn parse_microraptor_visitor(input: &[u8]) -> AppResult<Stats> {
+    let mut reader = FastqReader::with_config(
+        Cursor::new(input),
+        FastqConfig {
+            validate: true,
+            ..FastqConfig::default()
+        },
+    );
+    let mut stats = Stats::new();
+    reader.visit_records(|record| {
+        stats.observe(record.seq(), record.qual());
+        Ok(())
+    })?;
+    Ok(stats)
+}
+
+fn parse_microraptor_visitor_no_validate(input: &[u8]) -> AppResult<Stats> {
+    let mut reader = FastqReader::with_config(
+        Cursor::new(input),
+        FastqConfig {
+            validate: false,
+            ..FastqConfig::default()
+        },
+    );
+    let mut stats = Stats::new();
+    reader.visit_records(|record| {
+        stats.observe(record.seq(), record.qual());
+        Ok(())
+    })?;
+    Ok(stats)
+}
+
 fn parse_microraptor_no_validate(input: &[u8]) -> AppResult<Stats> {
     let mut reader = FastqReader::with_config(
         Cursor::new(input),
@@ -351,6 +461,18 @@ fn mix_bytes(mut state: u64, bytes: &[u8]) -> u64 {
     }
     state
 }
+
+fn mix_record_shape(mut state: u64, seq: &[u8], qual: &[u8]) -> u64 {
+    state ^= seq.len() as u64;
+    state = state.rotate_left(5).wrapping_mul(0x0000_0100_0000_01b3);
+    state ^= qual.len() as u64;
+    state = state.rotate_left(7).wrapping_mul(0x0000_0100_0000_01b3);
+    state ^= seq.first().copied().unwrap_or_default() as u64;
+    state ^= (seq.last().copied().unwrap_or_default() as u64) << 8;
+    state ^= (qual.first().copied().unwrap_or_default() as u64) << 16;
+    state ^= (qual.last().copied().unwrap_or_default() as u64) << 24;
+    state
+}
 EOF
 
 args=(--iters "${iters}" --out "${raw_tsv}")
@@ -361,7 +483,7 @@ else
 fi
 
 read -r -a cargo_cmd <<< "${cargo_command}"
-"${cargo_cmd[@]}" run --release --manifest-path "${project_dir}/Cargo.toml" -- "${args[@]}"
+MICRORAPTOR_RUST_PEER_CONSUMER="${consumer}" "${cargo_cmd[@]}" run --release --manifest-path "${project_dir}/Cargo.toml" -- "${args[@]}"
 
 if [[ -n "${HOME:-}" ]]; then
   awk -v home="${HOME}" '{ gsub(home, "~"); print }' "${raw_tsv}" > "${tsv}"
@@ -407,7 +529,7 @@ awk -F '\t' '
   else
     printf 'Input: deterministic synthetic FASTQ, `%s` records, read length `%s`.\n\n' "${records}" "${read_len}"
   fi
-  printf 'The benchmark reads one in-memory raw FASTQ byte buffer through each Rust parser. It is parser-library evidence only: it does not compare gzip, BGZF, trimming, filtering, or command-line workflow behavior.\n\n'
+  printf 'The benchmark reads one in-memory raw FASTQ byte buffer through each Rust parser. It is parser-library evidence only: it does not compare gzip, BGZF, trimming, filtering, or command-line workflow behavior. The default consumer records shape/accounting work; set `MICRORAPTOR_RUST_PEER_CONSUMER=full` to hash every sequence and quality byte.\n\n'
   printf '| tool | records | bases | best ms | records/s | bases/s | checksum |\n'
   printf '| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n'
   awk -F '\t' 'NR > 1 {
@@ -423,6 +545,7 @@ awk -F '\t' '
   printf -- '- rustc: %s\n' "$(rustc --version)"
   printf -- '- cargo: %s\n' "$(cargo --version)"
   printf -- '- iterations: %s\n' "${iters}"
+  printf -- '- consumer: %s\n' "${consumer}"
   printf -- '- microraptor_features: %s\n' "${microraptor_features:-default}"
   if [[ -n "${input}" ]]; then
     printf -- '- input: %s\n' "$(display_path "${input}")"

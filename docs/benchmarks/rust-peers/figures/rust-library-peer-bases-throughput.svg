@@ -1,17 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="238" viewBox="0 0 880 238">
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="272" viewBox="0 0 880 272">
 <rect width="100%" height="100%" fill="white"/>
 <text x="24" y="28" font-family="Arial, sans-serif" font-size="18" font-weight="700">Rust FASTQ parser peer throughput</text>
 <text x="24" y="46" font-family="Arial, sans-serif" font-size="12" fill="#555">bases/s over the same in-memory raw FASTQ byte buffer</text>
-<text x="24" y="76" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor</text>
-<rect x="170" y="61" width="500" height="20" fill="#315f8c"/>
-<text x="678" y="76" font-family="Arial, sans-serif" font-size="12" fill="#222">0.21 Gbases/s</text>
-<text x="24" y="110" font-family="Arial, sans-serif" font-size="12" fill="#222">seq_io</text>
+<text x="24" y="76" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-stream</text>
+<rect x="170" y="61" width="321" height="20" fill="#315f8c"/>
+<text x="499" y="76" font-family="Arial, sans-serif" font-size="12" fill="#222">1.95 Gbases/s</text>
+<text x="24" y="110" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-slice-visitor</text>
 <rect x="170" y="95" width="520" height="20" fill="#315f8c"/>
-<text x="698" y="110" font-family="Arial, sans-serif" font-size="12" fill="#222">0.22 Gbases/s</text>
-<text x="24" y="144" font-family="Arial, sans-serif" font-size="12" fill="#222">noodles-fastq</text>
-<rect x="170" y="129" width="475" height="20" fill="#315f8c"/>
-<text x="653" y="144" font-family="Arial, sans-serif" font-size="12" fill="#222">0.20 Gbases/s</text>
-<text x="24" y="178" font-family="Arial, sans-serif" font-size="12" fill="#222">bio</text>
-<rect x="170" y="163" width="332" height="20" fill="#315f8c"/>
-<text x="510" y="178" font-family="Arial, sans-serif" font-size="12" fill="#222">0.14 Gbases/s</text>
+<text x="698" y="110" font-family="Arial, sans-serif" font-size="12" fill="#222">3.16 Gbases/s</text>
+<text x="24" y="144" font-family="Arial, sans-serif" font-size="12" fill="#222">seq_io</text>
+<rect x="170" y="129" width="394" height="20" fill="#315f8c"/>
+<text x="572" y="144" font-family="Arial, sans-serif" font-size="12" fill="#222">2.39 Gbases/s</text>
+<text x="24" y="178" font-family="Arial, sans-serif" font-size="12" fill="#222">noodles-fastq</text>
+<rect x="170" y="163" width="262" height="20" fill="#315f8c"/>
+<text x="440" y="178" font-family="Arial, sans-serif" font-size="12" fill="#222">1.59 Gbases/s</text>
+<text x="24" y="212" font-family="Arial, sans-serif" font-size="12" fill="#222">bio</text>
+<rect x="170" y="197" width="90" height="20" fill="#315f8c"/>
+<text x="268" y="212" font-family="Arial, sans-serif" font-size="12" fill="#222">0.55 Gbases/s</text>
 </svg>

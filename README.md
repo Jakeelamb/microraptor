@@ -140,7 +140,8 @@ Current local benchmark snapshots:
   deterministic synthetic fixture gauntlet.
 - [docs/benchmarks/rust-peers/summary.md](docs/benchmarks/rust-peers/summary.md):
   synthetic raw FASTQ parser-library comparison against `seq_io`,
-  `noodles-fastq`, and `bio`.
+  `noodles-fastq`, and `bio`, including separate Microraptor streaming and
+  resident-slice visitor rows.
 - [docs/benchmarks/rust-peers-drosophila-r1/summary.md](docs/benchmarks/rust-peers-drosophila-r1/summary.md):
   Drosophila R1 raw FASTQ parser-library comparison against the same Rust
   peers.

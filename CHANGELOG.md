@@ -12,6 +12,8 @@ scientific users.
 - Stable default crate surface for raw, gzip, and BGZF FASTQ streaming.
 - Ordered paired-end parsing for separate R1/R2 streams and adjacent
   interleaved records.
+- Single-pass FASTQ visitor APIs: `FastqReader::visit_records` for streaming
+  readers and `visit_fastq_bytes` for complete resident FASTQ byte buffers.
 - Configurable pair validation modes: full normalized ID validation, fast
   `/1`/`/2` validation, and trusted no-validation mode.
 - Trusted four-line FASTQ pack paths for packed two-bit bases, ambiguity masks,
@@ -48,6 +50,8 @@ scientific users.
 - Interleaved paired reads now honor the configured pair-validation mode.
 - Stable default FASTQ newline discovery now uses `memchr`, closing most of the
   parser-only gap to Rust peer libraries while keeping nightly SIMD opt-in.
+- FASTQ streaming batch framing now pre-reserves record side tables and avoids
+  per-record fallible `u32` range conversions after a slab-level bounds check.
 
 ### Benchmark Evidence
 
@@ -64,7 +68,10 @@ scientific users.
   `docs/benchmarks/independent-organisms/summary.md`.
 - Rust parser-library peer snapshots:
   `docs/benchmarks/rust-peers/summary.md` and
-  `docs/benchmarks/rust-peers-drosophila-r1/summary.md`.
+  `docs/benchmarks/rust-peers-drosophila-r1/summary.md`. These snapshots now
+  separate the validated streaming batch row from the validated resident-slice
+  visitor row and use light parser accounting by default; set
+  `MICRORAPTOR_RUST_PEER_CONSUMER=full` to hash every sequence and quality byte.
 
 ### Claim Boundary
 

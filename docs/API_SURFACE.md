@@ -12,6 +12,8 @@ These APIs are the default entry points for downstream scientific tools.
 | API | Role | 0.1.x decision |
 | --- | --- | --- |
 | `FastqReader` | Borrowed batch reader over any `Read` source | Keep public |
+| `FastqReader::visit_records`, `FastqVisitRecord` | Single-pass streaming visitor without batch side-table construction | Keep public |
+| `visit_fastq_bytes` | Zero-copy visitor for complete resident FASTQ byte buffers | Keep public |
 | `FastqBatch`, `FastqRecord`, `RecordRef` | Zero-copy record access within a reusable slab | Keep public |
 | `FastqConfig` | Slab size, validation, and pairing configuration | Keep public |
 | `open_fastq`, `open_fastq_with_config` | File-path opener for raw, gzip, and BGZF inputs | Keep public |

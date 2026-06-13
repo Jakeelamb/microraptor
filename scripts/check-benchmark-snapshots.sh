@@ -72,7 +72,7 @@ render_rust_peer_snapshot() {
         printf 'Input: `%s`\n\n' "${source}"
         ;;
     esac
-    printf 'The benchmark reads one in-memory raw FASTQ byte buffer through each Rust parser. It is parser-library evidence only: it does not compare gzip, BGZF, trimming, filtering, or command-line workflow behavior.\n\n'
+    printf 'The benchmark reads one in-memory raw FASTQ byte buffer through each Rust parser. It is parser-library evidence only: it does not compare gzip, BGZF, trimming, filtering, or command-line workflow behavior. The default consumer records shape/accounting work; set `MICRORAPTOR_RUST_PEER_CONSUMER=full` to hash every sequence and quality byte.\n\n'
     printf '| tool | records | bases | best ms | records/s | bases/s | checksum |\n'
     printf '| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n'
     awk -F '\t' 'NR > 1 {
