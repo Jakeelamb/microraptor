@@ -80,6 +80,7 @@ run test -s docs/RELEASE_AUDIT.md
 
 run bash -n \
   scripts/benchmark-gauntlet.sh \
+  scripts/benchmark-common.sh \
   scripts/render-benchmark-report.sh \
   scripts/check-benchmark-snapshots.sh \
   scripts/benchmark-rust-peers.sh \

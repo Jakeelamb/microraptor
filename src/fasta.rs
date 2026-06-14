@@ -2,6 +2,8 @@ use std::io::{BufRead, BufReader, Read};
 use std::ops::Range;
 
 use crate::error::{FastqError, FastqPosition, Result};
+#[cfg(feature = "bgzf")]
+use crate::{BgzfReader, BgzfVirtualOffset, build_bgzf_index};
 use memchr::memchr;
 
 const DEFAULT_BATCH_RECORDS: usize = 1024;
@@ -148,6 +150,74 @@ pub enum FastaShape {
     /// At least one record is multiline, blank-separated, or otherwise requires
     /// the robust FASTA parser.
     Multiline,
+}
+
+/// One `.fai`-style FASTA index entry.
+///
+/// `offset`, `line_bases`, and `line_width` follow the SAMtools `.fai`
+/// convention over the uncompressed FASTA byte stream. When built from BGZF
+/// input, `virtual_offset` stores the BGZF virtual offset for `offset`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FastaIndexEntry {
+    /// Reference name, using the first whitespace-delimited token after `>`.
+    pub name: Vec<u8>,
+    /// Number of bases in the reference sequence.
+    pub len: u64,
+    /// Uncompressed byte offset of the first sequence byte.
+    pub offset: u64,
+    /// Number of bases per full sequence line.
+    pub line_bases: u64,
+    /// Number of bytes per full sequence line, including line ending bytes.
+    pub line_width: u64,
+    /// BGZF virtual offset for `offset`, when the index was built from BGZF.
+    #[cfg(feature = "bgzf")]
+    pub virtual_offset: Option<BgzfVirtualOffset>,
+}
+
+/// A `.fai`-style FASTA index.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FastaIndex {
+    entries: Vec<FastaIndexEntry>,
+}
+
+impl FastaIndex {
+    /// Return all index entries in FASTA order.
+    pub fn entries(&self) -> &[FastaIndexEntry] {
+        &self.entries
+    }
+
+    /// Return whether the index contains no references.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Return the number of references in the index.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Find an entry by reference name bytes.
+    pub fn get(&self, name: &[u8]) -> Option<&FastaIndexEntry> {
+        self.entries.iter().find(|entry| entry.name == name)
+    }
+
+    /// Render the standard five-column `.fai` representation.
+    pub fn to_fai_string(&self) -> String {
+        let mut out = String::new();
+        for entry in &self.entries {
+            out.push_str(&String::from_utf8_lossy(&entry.name));
+            out.push('\t');
+            out.push_str(&entry.len.to_string());
+            out.push('\t');
+            out.push_str(&entry.offset.to_string());
+            out.push('\t');
+            out.push_str(&entry.line_bases.to_string());
+            out.push('\t');
+            out.push_str(&entry.line_width.to_string());
+            out.push('\n');
+        }
+        out
+    }
 }
 
 impl Default for FastaStats {
@@ -347,6 +417,20 @@ impl<R: Read> FastaReader<R> {
         Ok(())
     }
 
+    /// Count all records and bases in an ordinary FASTA stream.
+    ///
+    /// This uses the robust multiline FASTA parser, so it accepts wrapped
+    /// sequence records and blank lines in the same way as
+    /// [`next_batch`](Self::next_batch).
+    pub fn stats(&mut self) -> Result<FastaStats> {
+        let mut stats = FastaStats::default();
+        self.visit_records(|record| {
+            stats.observe_sequence(record.seq());
+            Ok(())
+        })?;
+        Ok(stats)
+    }
+
     fn next_header(&mut self) -> Result<Option<PendingHeader>> {
         if let Some(header) = self.pending_header.take() {
             return Ok(Some(header));
@@ -427,6 +511,222 @@ impl<R: Read> FastaReader<R> {
     }
 }
 
+/// Count records and bases from an ordinary FASTA stream.
+///
+/// Unlike [`count_two_line_fasta_read`], this accepts wrapped/multiline FASTA
+/// using the robust [`FastaReader`] parser.
+pub fn count_fasta_read<R: Read>(reader: R) -> Result<FastaStats> {
+    let mut reader = FastaReader::new(reader);
+    reader.stats()
+}
+
+/// Count records and bases from resident FASTA bytes.
+///
+/// This accepts ordinary wrapped/multiline FASTA and shares validation behavior
+/// with [`visit_fasta_bytes`].
+pub fn count_fasta_bytes(bytes: &[u8]) -> Result<FastaStats> {
+    let mut stats = FastaStats::default();
+    visit_fasta_bytes(bytes, |record| {
+        stats.observe_sequence(record.seq());
+        Ok(())
+    })?;
+    Ok(stats)
+}
+
+/// Build a `.fai`-style index over an ordinary FASTA stream.
+///
+/// The resulting offsets are byte offsets in the uncompressed FASTA stream.
+/// Sequence records must use consistent wrapping: every non-final sequence line
+/// for a record must have the same base count and byte width.
+pub fn build_fasta_index<R: Read>(reader: R) -> Result<FastaIndex> {
+    let mut builder = FastaIndexBuilder::default();
+    let mut reader = BufReader::new(reader);
+    build_fasta_index_bufread(&mut reader, &mut builder)?;
+    Ok(builder.finish())
+}
+
+/// Build a `.fai`-style index over a complete BGZF-compressed FASTA stream.
+///
+/// The standard `.fai` offsets remain uncompressed byte offsets. Each entry also
+/// carries a BGZF virtual offset for the first sequence byte, allowing callers
+/// to pair the index with [`crate::BgzfSeekReader`].
+#[cfg(feature = "bgzf")]
+pub fn build_fasta_index_bgzf<R: Read>(mut reader: R) -> Result<FastaIndex> {
+    let mut compressed = Vec::new();
+    reader.read_to_end(&mut compressed)?;
+    let bgzf_index = build_bgzf_index(&compressed[..])?;
+
+    let mut decoded_reader = BufReader::new(BgzfReader::new(&compressed[..]));
+    let mut builder = FastaIndexBuilder::default();
+    build_fasta_index_bufread(&mut decoded_reader, &mut builder)?;
+    let mut index = builder.finish();
+    for entry in &mut index.entries {
+        entry.virtual_offset = bgzf_index.virtual_offset_for_uncompressed_offset(entry.offset)?;
+    }
+    Ok(index)
+}
+
+#[derive(Debug, Default)]
+struct FastaIndexBuilder {
+    entries: Vec<FastaIndexEntry>,
+    current: Option<FastaIndexRecord>,
+    byte_offset: u64,
+}
+
+#[derive(Debug)]
+struct FastaIndexRecord {
+    name: Vec<u8>,
+    len: u64,
+    offset: Option<u64>,
+    line_bases: Option<u64>,
+    line_width: Option<u64>,
+    last_line_bases: Option<u64>,
+    last_line_width: Option<u64>,
+    record_index: u64,
+}
+
+fn build_fasta_index_bufread<R: BufRead>(
+    reader: &mut R,
+    builder: &mut FastaIndexBuilder,
+) -> Result<()> {
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let line_start = builder.byte_offset;
+        let n = reader.read_until(b'\n', &mut line)?;
+        if n == 0 {
+            break;
+        }
+        builder.byte_offset += n as u64;
+        let trimmed = trim_line(&line);
+        if trimmed.is_empty() {
+            builder.observe_blank(line_start)?;
+        } else if trimmed.starts_with(b">") {
+            builder.start_record(trimmed, line_start)?;
+        } else {
+            builder.observe_sequence_line(trimmed.len() as u64, line.len() as u64, line_start)?;
+        }
+    }
+    builder.finish_current()?;
+    Ok(())
+}
+
+impl FastaIndexBuilder {
+    fn start_record(&mut self, header: &[u8], byte_offset: u64) -> Result<()> {
+        self.finish_current()?;
+        validate_header(header, byte_offset, self.entries.len() as u64)?;
+        let name = fasta_index_name(header);
+        if self.entries.iter().any(|entry| entry.name == name) {
+            return Err(format_at(
+                "duplicate FASTA index reference name",
+                byte_offset,
+                self.entries.len() as u64,
+            ));
+        }
+        self.current = Some(FastaIndexRecord {
+            name: name.to_vec(),
+            len: 0,
+            offset: None,
+            line_bases: None,
+            line_width: None,
+            last_line_bases: None,
+            last_line_width: None,
+            record_index: self.entries.len() as u64,
+        });
+        Ok(())
+    }
+
+    fn observe_blank(&mut self, byte_offset: u64) -> Result<()> {
+        if self
+            .current
+            .as_ref()
+            .and_then(|record| record.offset)
+            .is_some()
+        {
+            return Err(format_at(
+                "FASTA index does not support blank sequence lines",
+                byte_offset,
+                self.current
+                    .as_ref()
+                    .map_or(0, |record| record.record_index),
+            ));
+        }
+        Ok(())
+    }
+
+    fn observe_sequence_line(&mut self, bases: u64, width: u64, byte_offset: u64) -> Result<()> {
+        let Some(record) = self.current.as_mut() else {
+            return Err(format_at(
+                "FASTA record header must start with `>`",
+                byte_offset,
+                self.entries.len() as u64,
+            ));
+        };
+        if record.offset.is_none() {
+            record.offset = Some(byte_offset);
+            record.line_bases = Some(bases);
+            record.line_width = Some(width);
+        } else if let (Some(last_bases), Some(last_width)) =
+            (record.last_line_bases, record.last_line_width)
+        {
+            let expected_bases = record.line_bases.unwrap_or(last_bases);
+            let expected_width = record.line_width.unwrap_or(last_width);
+            if bases > expected_bases {
+                return Err(format_at(
+                    "FASTA final sequence line is longer than the first sequence line",
+                    byte_offset,
+                    record.record_index,
+                ));
+            }
+            if last_bases != expected_bases || last_width != expected_width {
+                return Err(format_at(
+                    "non-final FASTA sequence line has inconsistent wrapping",
+                    byte_offset,
+                    record.record_index,
+                ));
+            }
+        }
+        record.len += bases;
+        record.last_line_bases = Some(bases);
+        record.last_line_width = Some(width);
+        Ok(())
+    }
+
+    fn finish_current(&mut self) -> Result<()> {
+        let Some(record) = self.current.take() else {
+            return Ok(());
+        };
+        let offset = record.offset.unwrap_or(self.byte_offset);
+        let line_bases = record.line_bases.unwrap_or(0);
+        let line_width = record.line_width.unwrap_or(0);
+        self.entries.push(FastaIndexEntry {
+            name: record.name,
+            len: record.len,
+            offset,
+            line_bases,
+            line_width,
+            #[cfg(feature = "bgzf")]
+            virtual_offset: None,
+        });
+        Ok(())
+    }
+
+    fn finish(mut self) -> FastaIndex {
+        FastaIndex {
+            entries: std::mem::take(&mut self.entries),
+        }
+    }
+}
+
+fn fasta_index_name(header: &[u8]) -> &[u8] {
+    let name = header.strip_prefix(b">").unwrap_or(header);
+    let end = name
+        .iter()
+        .position(u8::is_ascii_whitespace)
+        .unwrap_or(name.len());
+    &name[..end]
+}
+
 /// Visit records from an already resident FASTA byte slice.
 ///
 /// This path is intended for memory-mapped files, cached datasets, and other
@@ -444,12 +744,9 @@ where
     let mut record_index = 0;
     let mut folded = Vec::new();
 
-    loop {
-        let Some((header_offset, header)) =
-            take_next_header(bytes, &mut cursor, &mut pending_header, record_index)?
-        else {
-            break;
-        };
+    while let Some((header_offset, header)) =
+        take_next_header(bytes, &mut cursor, &mut pending_header, record_index)?
+    {
         validate_header(header, header_offset, record_index)?;
 
         folded.clear();
@@ -794,106 +1091,12 @@ where
 }
 
 fn count_two_line_fasta_bufread<R: BufRead>(reader: &mut R) -> Result<FastaStats> {
-    let mut expect_header = true;
-    let mut record_index = 0;
     let mut stats = FastaStats::default();
-    let mut carry = Vec::new();
-
-    loop {
-        let available = reader.fill_buf()?;
-        if available.is_empty() {
-            break;
-        }
-
-        let mut consumed = 0;
-        while consumed < available.len() {
-            let Some(relative_newline) = memchr(b'\n', &available[consumed..]) else {
-                carry.extend_from_slice(&available[consumed..]);
-                consumed = available.len();
-                break;
-            };
-            let line_end = consumed + relative_newline;
-            process_two_line_count_line(
-                &available[consumed..line_end],
-                &mut carry,
-                &mut expect_header,
-                &mut record_index,
-                &mut stats,
-            )?;
-            consumed = line_end + 1;
-        }
-        reader.consume(consumed);
-    }
-
-    if !carry.is_empty() {
-        process_two_line_count_line(
-            b"",
-            &mut carry,
-            &mut expect_header,
-            &mut record_index,
-            &mut stats,
-        )?;
-    }
-    if !expect_header {
-        return Err(format_at(
-            "two-line FASTA record is missing a sequence line",
-            0,
-            record_index,
-        ));
-    }
-
-    Ok(stats)
-}
-
-fn process_two_line_count_line(
-    line: &[u8],
-    carry: &mut Vec<u8>,
-    expect_header: &mut bool,
-    record_index: &mut u64,
-    stats: &mut FastaStats,
-) -> Result<()> {
-    if carry.is_empty() {
-        process_complete_two_line_count_line(line, expect_header, record_index, stats)
-    } else {
-        carry.extend_from_slice(line);
-        let owned_line = trim_line(carry);
-        process_complete_two_line_count_line(owned_line, expect_header, record_index, stats)?;
-        carry.clear();
+    visit_two_line_fasta_bufread(reader, |record| {
+        stats.observe_sequence(record.seq());
         Ok(())
-    }
-}
-
-fn process_complete_two_line_count_line(
-    line: &[u8],
-    expect_header: &mut bool,
-    record_index: &mut u64,
-    stats: &mut FastaStats,
-) -> Result<()> {
-    let line = trim_line(line);
-    if *expect_header {
-        if !line.starts_with(b">") {
-            return Err(format_at(
-                "two-line FASTA record header must start with `>`",
-                0,
-                *record_index,
-            ));
-        }
-        validate_header(line, 0, *record_index)?;
-        *expect_header = false;
-        return Ok(());
-    }
-
-    if line.is_empty() || line.starts_with(b">") {
-        return Err(format_at(
-            "two-line FASTA record is missing a sequence line",
-            0,
-            *record_index,
-        ));
-    }
-    stats.observe_sequence(line);
-    *record_index += 1;
-    *expect_header = true;
-    Ok(())
+    })?;
+    Ok(stats)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1198,6 +1401,74 @@ mod tests {
         .unwrap();
 
         assert_eq!(auto, robust);
+    }
+
+    #[test]
+    fn counts_wrapped_fasta_read_and_bytes() {
+        let input = b">seq1\nAC\nGT\n>seq2\nTTA\nA\n";
+        let from_read = count_fasta_read(&input[..]).unwrap();
+        let from_bytes = count_fasta_bytes(input).unwrap();
+        let mut reader = FastaReader::new(&input[..]);
+        let from_reader = reader.stats().unwrap();
+
+        assert_eq!(from_read, from_bytes);
+        assert_eq!(from_reader, from_read);
+        assert_eq!(from_read.records, 2);
+        assert_eq!(from_read.bases, 8);
+    }
+
+    #[test]
+    fn builds_fasta_index_for_wrapped_reference() {
+        let input = b">chr1 description\nACGT\nAC\n>chr2\nTTTT\n";
+        let index = build_fasta_index(&input[..]).unwrap();
+        assert_eq!(index.len(), 2);
+
+        let chr1 = index.get(b"chr1").unwrap();
+        assert_eq!(chr1.len, 6);
+        assert_eq!(chr1.offset, 18);
+        assert_eq!(chr1.line_bases, 4);
+        assert_eq!(chr1.line_width, 5);
+
+        let chr2 = index.get(b"chr2").unwrap();
+        assert_eq!(chr2.len, 4);
+        assert_eq!(chr2.line_bases, 4);
+        assert_eq!(chr2.line_width, 5);
+
+        assert_eq!(
+            index.to_fai_string(),
+            "chr1\t6\t18\t4\t5\nchr2\t4\t32\t4\t5\n"
+        );
+    }
+
+    #[test]
+    fn fasta_index_rejects_inconsistent_non_final_wrapping() {
+        let err = build_fasta_index(&b">chr1\nAC\nACGT\nA\n"[..]).unwrap_err();
+        assert!(err.to_string().contains("longer than the first"));
+    }
+
+    #[test]
+    fn fasta_index_rejects_short_internal_wrapping() {
+        let err = build_fasta_index(&b">chr1\nACGT\nAC\nA\n"[..]).unwrap_err();
+        assert!(err.to_string().contains("inconsistent wrapping"));
+    }
+
+    #[test]
+    fn fasta_index_rejects_duplicate_names() {
+        let err = build_fasta_index(&b">chr1\nAC\n>chr1 desc\nGT\n"[..]).unwrap_err();
+        assert!(err.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    #[cfg(feature = "bgzf")]
+    fn builds_bgzf_aware_fasta_index() {
+        let input = b">chr1\nACGT\nAC\n>chr2\nTTTT\n";
+        let encoded = crate::compress_bgzf_parallel(input, 2).unwrap();
+        let index = build_fasta_index_bgzf(&encoded[..]).unwrap();
+        let chr1 = index.get(b"chr1").unwrap();
+        assert_eq!(chr1.len, 6);
+        let vo = chr1.virtual_offset.unwrap();
+        assert_eq!(vo.compressed_offset(), 0);
+        assert_eq!(vo.in_block_offset(), 6);
     }
 
     #[test]

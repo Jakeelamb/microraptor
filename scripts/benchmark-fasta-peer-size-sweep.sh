@@ -16,11 +16,9 @@ svg="${fig_dir}/fasta-peer-size-sweep-time.svg"
 bench_threads="${MICRORAPTOR_BENCH_THREADS:-8}"
 require_microraptor_wins="${MICRORAPTOR_FASTA_SIZE_SWEEP_REQUIRE_MICRORAPTOR_WINS:-1}"
 
-export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-${bench_threads}}"
-export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-${bench_threads}}"
-export OMP_NUM_THREADS="${OMP_NUM_THREADS:-${bench_threads}}"
-export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-${bench_threads}}"
-export MKL_NUM_THREADS="${MKL_NUM_THREADS:-${bench_threads}}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${script_dir}/benchmark-common.sh"
+microraptor_set_thread_cap "${bench_threads}"
 
 mkdir -p "${out_dir}" "${fig_dir}"
 

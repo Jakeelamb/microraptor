@@ -113,9 +113,12 @@ pub use bgzf::{
     decompress_bgzf_parallel, decompress_bgzf_parallel_with_inflate_backend,
 };
 pub use error::{FastqError, FastqPosition, Result};
+#[cfg(feature = "bgzf")]
+pub use fasta::build_fasta_index_bgzf;
 pub use fasta::{
-    FastaBatch, FastaConfig, FastaReader, FastaRecord, FastaRecordRef, FastaRecordSink, FastaShape,
-    FastaStats, FastaVisitRecord, count_two_line_fasta_bytes, count_two_line_fasta_read,
+    FastaBatch, FastaConfig, FastaIndex, FastaIndexEntry, FastaReader, FastaRecord, FastaRecordRef,
+    FastaRecordSink, FastaShape, FastaStats, FastaVisitRecord, build_fasta_index,
+    count_fasta_bytes, count_fasta_read, count_two_line_fasta_bytes, count_two_line_fasta_read,
     detect_fasta_shape, visit_fasta_bytes, visit_fasta_bytes_auto, visit_two_line_fasta_bytes,
     visit_two_line_fasta_read,
 };
@@ -128,12 +131,15 @@ pub use source::{
     open_fasta, open_fasta_with_config, open_fastq, open_fastq_with_config, open_paired_fastq,
     open_paired_fastq_with_config, open_paired_fastq_with_configs,
 };
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+pub use source::{
+    open_fasta_gzip_libdeflate, open_fasta_gzip_libdeflate_with_config, open_fastq_gzip_libdeflate,
+    open_fastq_gzip_libdeflate_with_config,
+};
 #[cfg(feature = "bgzf")]
 pub use source::{
     open_fastq_bgzf_adaptive, open_fastq_bgzf_flate2, open_fastq_bgzf_parallel,
     open_fastq_bgzf_parallel_with_backend, open_fastq_bgzf_parallel_with_config,
     open_fastq_bgzf_parallel_with_options, open_fastq_bgzf_with_backend,
 };
-#[cfg(all(feature = "gzip", feature = "libdeflate"))]
-pub use source::{open_fastq_gzip_libdeflate, open_fastq_gzip_libdeflate_with_config};
 pub use stream::{FastqBatchSource, FastqPairBatchSource};

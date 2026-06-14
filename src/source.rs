@@ -171,6 +171,28 @@ pub fn open_fastq_gzip_libdeflate_with_config(
 }
 
 #[cfg(all(feature = "gzip", feature = "libdeflate"))]
+/// Open an ordinary gzip FASTA file through a buffered libdeflate path.
+///
+/// Unlike [`open_fasta`], this buffers the fully decompressed input before
+/// parsing. Use it only for bounded inputs and explicit backend comparisons.
+pub fn open_fasta_gzip_libdeflate(path: impl AsRef<Path>) -> Result<FastaReader<Cursor<Vec<u8>>>> {
+    open_fasta_gzip_libdeflate_with_config(path, FastaConfig::default())
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+/// Open an ordinary gzip FASTA file through buffered libdeflate with parser
+/// configuration.
+pub fn open_fasta_gzip_libdeflate_with_config(
+    path: impl AsRef<Path>,
+    config: FastaConfig,
+) -> Result<FastaReader<Cursor<Vec<u8>>>> {
+    let mut compressed = Vec::new();
+    File::open(path)?.read_to_end(&mut compressed)?;
+    let decoded = decompress_gzip_libdeflate_buffered(&compressed)?;
+    Ok(FastaReader::with_config(Cursor::new(decoded), config))
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
 fn decompress_gzip_libdeflate_buffered(compressed: &[u8]) -> Result<Vec<u8>> {
     let mut out = vec![0_u8; initial_gzip_output_capacity(compressed)];
     let mut decompressor = libdeflater::Decompressor::new();
@@ -466,6 +488,29 @@ mod tests {
 
         let flate2_stats = crate::benchutil::consume_fastq(&mut flate2).unwrap();
         let libdeflate_stats = crate::benchutil::consume_fastq(&mut libdeflate).unwrap();
+        assert_eq!(flate2_stats, libdeflate_stats);
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "libdeflate")]
+    fn explicit_libdeflate_gzip_fasta_opener_parses_same_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "microraptor-libdeflate-gzip-fasta-{}.fa.gz",
+            std::process::id()
+        ));
+        let file = File::create(&path).unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+        encoder.write_all(b">seq1\nAC\nGT\n").unwrap();
+        encoder.finish().unwrap();
+
+        let mut flate2 = open_fasta(&path).unwrap();
+        let mut libdeflate = open_fasta_gzip_libdeflate(&path).unwrap();
+
+        let flate2_stats = crate::benchutil::consume_fasta(&mut flate2).unwrap();
+        let libdeflate_stats = crate::benchutil::consume_fasta(&mut libdeflate).unwrap();
         assert_eq!(flate2_stats, libdeflate_stats);
 
         std::fs::remove_file(path).unwrap();

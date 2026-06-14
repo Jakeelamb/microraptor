@@ -13,6 +13,11 @@ tsv="${out_dir}/rust-peer-size-sweep.tsv"
 metadata="${out_dir}/metadata.md"
 fig_dir="${out_dir}/figures"
 svg="${fig_dir}/rust-peer-size-sweep-time.svg"
+bench_threads="${MICRORAPTOR_BENCH_THREADS:-8}"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${script_dir}/benchmark-common.sh"
+microraptor_set_thread_cap "${bench_threads}"
 
 mkdir -p "${out_dir}" "${fig_dir}"
 
@@ -26,8 +31,8 @@ for compression in ${compressions}; do
     run_dir="${out_dir}/runs/${compression}-${records}"
     project_dir="${base_project_dir}"
     mkdir -p "${run_dir}"
-    printf 'running Rust peer size sweep: compression=%s records=%s read_len=%s iters=%s\n' \
-      "${compression}" "${records}" "${read_len}" "${iters}"
+    printf 'running Rust peer size sweep: compression=%s records=%s read_len=%s iters=%s threads=%s\n' \
+      "${compression}" "${records}" "${read_len}" "${iters}" "${bench_threads}"
     MICRORAPTOR_RUST_PEER_OUT_DIR="${run_dir}" \
     MICRORAPTOR_RUST_PEER_PROJECT_DIR="${project_dir}" \
     MICRORAPTOR_RUST_PEER_RECORDS="${records}" \
@@ -35,6 +40,7 @@ for compression in ${compressions}; do
     MICRORAPTOR_RUST_PEER_ITERS="${iters}" \
     MICRORAPTOR_RUST_PEER_CONSUMER="${consumer}" \
     MICRORAPTOR_RUST_PEER_COMPRESSION="${compression}" \
+    MICRORAPTOR_BENCH_THREADS="${bench_threads}" \
       scripts/benchmark-rust-peers.sh >/dev/null
 
     awk -F '\t' -v compression="${compression}" -v records="${records}" -v read_len="${read_len}" '
@@ -130,6 +136,7 @@ awk -F '\t' '
   printf -- '- iters: `%s`\n' "${iters}"
   printf -- '- consumer: `%s`\n\n' "${consumer}"
   printf -- '- compressions: `%s`\n\n' "${compressions}"
+  printf -- '- thread_cap: `%s`\n\n' "${bench_threads}"
   printf 'Figure: [`figures/rust-peer-size-sweep-time.svg`](figures/rust-peer-size-sweep-time.svg)\n\n'
   printf '| compression | records | input MB | tool | best ms | records/s | bases/s |\n'
   printf '| --- | ---: | ---: | --- | ---: | ---: | ---: |\n'
@@ -156,6 +163,7 @@ awk -F '\t' '
   printf -- '- iters: %s\n' "${iters}"
   printf -- '- consumer: %s\n' "${consumer}"
   printf -- '- compressions: %s\n' "${compressions}"
+  printf -- '- thread_cap: %s\n' "${bench_threads}"
 } > "${metadata}"
 
 printf 'wrote %s\n' "${tsv}"

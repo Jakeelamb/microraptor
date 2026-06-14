@@ -57,12 +57,19 @@ FASTQ byte buffer is already resident in memory.
 ### Compression Backends
 
 Ordinary gzip auto-open uses a streaming `flate2::read::MultiGzDecoder`.
-`open_fastq_gzip_libdeflate` is explicit because it buffers the decompressed
-input and is only appropriate for bounded inputs.
+`open_fastq_gzip_libdeflate` and `open_fasta_gzip_libdeflate` are explicit
+because they buffer the decompressed input through the third-party
+`libdeflater` wrapper and are only appropriate for bounded inputs.
 
 BGZF is block-aware. The default BGZF auto reader uses serial reading for small
 compressed inputs and bounded parallel reading above the adaptive threshold. With
 `libdeflate`, BGZF inflate/deflate can use libdeflate-backed paths.
+
+FASTA reference indexing is intentionally a transport/index layer. Plain
+`build_fasta_index` emits `.fai`-style uncompressed offsets and validates
+FAI-compatible wrapping. `build_fasta_index_bgzf` adds sequence-start BGZF
+virtual offsets so later random-access reference APIs can be built without
+changing the parser contract.
 
 ### Pairing Model
 

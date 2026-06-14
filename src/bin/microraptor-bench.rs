@@ -1,4 +1,3 @@
-use std::fmt::Write as _;
 use std::io::Read;
 #[cfg(feature = "gzip")]
 use std::io::Write;
@@ -14,6 +13,9 @@ use microraptor::benchutil::{
 };
 use microraptor::pack::{TrustedPackedRecord, pack_bases_and_summarize_qualities_into};
 use microraptor::{FastaReader, FastqConfig, FastqReader, PairValidation, Result};
+
+#[path = "microraptor_bench/report.rs"]
+mod report;
 
 enum BenchRead {
     Raw(std::fs::File),
@@ -233,22 +235,14 @@ fn run() -> Result<()> {
         }
     }
 
-    if config.json {
-        println!(
-            "{}",
-            render_json(&config, "synthetic", raw.len(), &measurements)
-        );
-    } else {
-        print_table("synthetic", raw.len(), &measurements);
-    }
+    emit_report(&config, "synthetic", raw.len(), &measurements);
     Ok(())
 }
 
 fn run_synthetic_fasta(config: &Config) -> Result<()> {
     let raw = synthetic_fasta(config.records, config.read_len);
     #[cfg_attr(not(any(feature = "gzip", feature = "bgzf")), allow(unused_mut))]
-    let mut measurements = Vec::new();
-    measurements.push(measure_fasta("fasta-raw", &raw, config)?);
+    let mut measurements = vec![measure_fasta("fasta-raw", &raw, config)?];
 
     #[cfg(feature = "gzip")]
     {
@@ -271,14 +265,7 @@ fn run_synthetic_fasta(config: &Config) -> Result<()> {
         )?);
     }
 
-    if config.json {
-        println!(
-            "{}",
-            render_json(config, "synthetic-fasta", raw.len(), &measurements)
-        );
-    } else {
-        print_table("synthetic-fasta", raw.len(), &measurements);
-    }
+    emit_report(config, "synthetic-fasta", raw.len(), &measurements);
     Ok(())
 }
 
@@ -314,14 +301,7 @@ fn run_paired_input(first: &Path, second: &Path, config: &Config) -> Result<()> 
     }
 
     let source = format!("{}+{}", first.display(), second.display());
-    if config.json {
-        println!(
-            "{}",
-            render_json(config, &source, input_bytes, &measurements)
-        );
-    } else {
-        print_table(&source, input_bytes, &measurements);
-    }
+    emit_report(config, &source, input_bytes, &measurements);
     Ok(())
 }
 
@@ -336,14 +316,7 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
             config,
         )?);
         let source = path.to_string_lossy();
-        if config.json {
-            println!(
-                "{}",
-                render_json(config, &source, input_bytes, &measurements)
-            );
-        } else {
-            print_table(&source, input_bytes, &measurements);
-        }
+        emit_report(config, &source, input_bytes, &measurements);
         return Ok(());
     }
 
@@ -424,14 +397,7 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
 
     let source = path.to_string_lossy();
 
-    if config.json {
-        println!(
-            "{}",
-            render_json(config, &source, input_bytes, &measurements)
-        );
-    } else {
-        print_table(&source, input_bytes, &measurements);
-    }
+    emit_report(config, &source, input_bytes, &measurements);
     Ok(())
 }
 
@@ -1241,85 +1207,42 @@ fn gzip_bytes(raw: &[u8]) -> Result<Vec<u8>> {
     Ok(encoder.finish()?)
 }
 
-fn print_table(source: &str, input_bytes: usize, rows: &[Measurement]) {
-    println!("source\t{source}");
-    println!("input_bytes\t{input_bytes}");
-    println!("name\tinput_mb\tbest_ms\tinput_mib_s\trecords_s\tbases_s\tchecksum");
-    for row in rows {
-        let secs = row.best.as_secs_f64();
-        let mib_s = (row.bytes as f64 / 1_048_576.0) / secs;
-        let records_s = row.records as f64 / secs;
-        let bases_s = row.bases as f64 / secs;
+fn emit_report(config: &Config, source: &str, input_bytes: usize, rows: &[Measurement]) {
+    let report_rows = report_rows(rows);
+    if config.json {
         println!(
-            "{}\t{:.3}\t{:.3}\t{:.3}\t{:.0}\t{:.0}\t{}",
-            row.name,
-            row.bytes as f64 / 1_048_576.0,
-            row.best.as_secs_f64() * 1000.0,
-            mib_s,
-            records_s,
-            bases_s,
-            row.checksum
+            "{}",
+            report::render_json(&report_config(config), source, input_bytes, &report_rows)
         );
+    } else {
+        report::print_table(source, input_bytes, &report_rows);
     }
 }
 
-fn render_json(config: &Config, source: &str, input_bytes: usize, rows: &[Measurement]) -> String {
-    let mut out = String::new();
-    let _ = write!(
-        out,
-        "{{\"source\":{},\"mode\":{},\"format\":{},\"records\":{},\"read_len\":{},\"iters\":{},\"slab_size\":{},\"workers\":{},\"input_bytes\":{},\"measurements\":[",
-        JsonStr(source),
-        JsonStr(config.mode.as_str()),
-        JsonStr(config.format.as_str()),
-        config.records,
-        config.read_len,
-        config.iters,
-        config.slab_size,
-        config.workers,
-        input_bytes
-    );
-    for (i, row) in rows.iter().enumerate() {
-        if i != 0 {
-            out.push(',');
-        }
-        let nanos = row.best.as_nanos();
-        let _ = write!(
-            out,
-            "{{\"name\":{},\"input_bytes\":{},\"records\":{},\"bases\":{},\"best_ns\":{},\"checksum\":{}",
-            JsonStr(&row.name),
-            row.bytes,
-            row.records,
-            row.bases,
-            nanos,
-            row.checksum
-        );
-        for (key, value) in &row.extras {
-            let _ = write!(out, ",{}:{}", JsonStr(key), value);
-        }
-        out.push('}');
+fn report_config(config: &Config) -> report::ReportConfig<'_> {
+    report::ReportConfig {
+        mode: config.mode.as_str(),
+        format: config.format.as_str(),
+        records: config.records,
+        read_len: config.read_len,
+        iters: config.iters,
+        slab_size: config.slab_size,
+        workers: config.workers,
     }
-    out.push_str("]}");
-    out
 }
 
-struct JsonStr<'a>(&'a str);
-
-impl std::fmt::Display for JsonStr<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_char('"')?;
-        for ch in self.0.chars() {
-            match ch {
-                '"' => f.write_str("\\\"")?,
-                '\\' => f.write_str("\\\\")?,
-                '\n' => f.write_str("\\n")?,
-                '\r' => f.write_str("\\r")?,
-                '\t' => f.write_str("\\t")?,
-                ch if ch.is_control() => write!(f, "\\u{:04x}", ch as u32)?,
-                ch => f.write_char(ch)?,
-            }
-        }
-        f.write_char('"')
-    }
+fn report_rows(rows: &[Measurement]) -> Vec<report::ReportRow<'_>> {
+    rows.iter()
+        .map(|row| report::ReportRow {
+            name: &row.name,
+            bytes: row.bytes,
+            records: row.records,
+            bases: row.bases,
+            best: row.best,
+            checksum: row.checksum,
+            extras: &row.extras,
+        })
+        .collect()
 }
 
 fn parse_args() -> Config {
@@ -1519,37 +1442,5 @@ mod tests {
         std::fs::remove_file(r1_path).unwrap();
         std::fs::remove_file(r2_path).unwrap();
         result.unwrap();
-    }
-
-    #[test]
-    fn json_string_escapes_control_characters() {
-        assert_eq!(JsonStr("a\"b\\c\n").to_string(), "\"a\\\"b\\\\c\\n\"");
-    }
-
-    #[test]
-    fn render_json_includes_mode() {
-        let config = Config {
-            mode: Mode::Pack,
-            ..Config::default()
-        };
-        let json = render_json(&config, "synthetic", 0, &[]);
-        assert!(json.contains("\"mode\":\"pack\""));
-    }
-
-    #[test]
-    fn render_json_includes_measurement_extras() {
-        let row = Measurement {
-            name: "bgzf".into(),
-            bytes: 1,
-            records: 2,
-            bases: 3,
-            best: Duration::from_nanos(4),
-            checksum: 5,
-            extras: vec![("bgzf_job_queue_full", 6)],
-        };
-
-        let json = render_json(&Config::default(), "synthetic", 1, &[row]);
-
-        assert!(json.contains("\"bgzf_job_queue_full\":6"));
     }
 }

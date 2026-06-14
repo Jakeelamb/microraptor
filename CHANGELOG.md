@@ -22,6 +22,11 @@ scientific users.
 - FASTA shape detection, automatic resident fast-path dispatch, and strict
   two-line count/stat APIs via `detect_fasta_shape`, `visit_fasta_bytes_auto`,
   `count_two_line_fasta_bytes`, `count_two_line_fasta_read`, and `FastaStats`.
+- Robust multiline FASTA stats APIs via `FastaReader::stats`,
+  `count_fasta_read`, and `count_fasta_bytes`.
+- `.fai`-style FASTA reference indexing via `FastaIndex`, `FastaIndexEntry`,
+  `build_fasta_index`, and BGZF sequence-start virtual-offset annotation via
+  `build_fasta_index_bgzf`.
 - FASTA fixture generation for two-line/wrapped layouts and DNA/protein
   alphabets in `microraptor-fixture`.
 - Configurable pair validation modes: full normalized ID validation, fast
@@ -31,13 +36,16 @@ scientific users.
 - BGZF reader, writer, adaptive serial/parallel reader, parallel whole-buffer
   helpers, virtual-offset index construction, and seek reader.
 - Optional `libdeflate` BGZF inflate/deflate backends and explicit buffered
-  gzip opener.
+  FASTQ/FASTA gzip openers.
+- FASTA fuzz target covering streaming reader, resident visitors, robust stats,
+  shape detection, and index construction.
 - Benchmark gauntlet with synthetic raw/gzip/BGZF fixtures, optional local
   corpus rows, external command-line comparator rows, and rendered Markdown/SVG
   reports.
 - Checked benchmark snapshot verifier that re-renders stored gauntlet JSONL and
-  Rust peer TSV snapshots, then diffs generated summaries/figures against
-  checked artifacts.
+  Rust/FASTA peer TSV snapshots, then diffs generated summaries/figures against
+  checked artifacts; FASTA gauntlet and FASTA size-sweep artifacts are now part
+  of the verifier.
 - Local release-gate script for clean-tree package/readiness checks, with
   optional nightly and benchmark regeneration surfaces.
 - Replication protocol and replication-kit exporter for independent-machine
@@ -50,6 +58,9 @@ scientific users.
   under `docs/benchmarks/fasta-peer-size-sweep/`.
 - FASTA shape/transport gauntlet under `scripts/benchmark-fasta-gauntlet.sh`
   with checked artifacts under `docs/benchmarks/fasta-gauntlet/`.
+- Shared benchmark harness helpers in `scripts/benchmark-common.sh`, shared
+  fixture generation in `benchutil`, and a split `microraptor-bench` report
+  module.
 - Local biological corpus discovery for `~/Projects/Benchmarks`, including
   Drosophila Illumina PE, PacBio CLR, and ONT read-type rows.
 - GitHub issue and pull request templates for parser bugs, benchmark claims,
@@ -68,6 +79,8 @@ scientific users.
   parser-only gap to Rust peer libraries while keeping nightly SIMD opt-in.
 - FASTQ streaming batch framing now pre-reserves record side tables and avoids
   per-record fallible `u32` range conversions after a slab-level bounds check.
+- Strict two-line FASTA stream visitor and stream counter now share one scanner
+  implementation.
 
 ### Benchmark Evidence
 

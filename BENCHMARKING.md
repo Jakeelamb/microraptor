@@ -1,6 +1,6 @@
 # Benchmarking
 
-Microraptor has fourteen benchmark surfaces:
+Microraptor has fifteen benchmark surfaces:
 
 - `cargo +nightly bench --all-features`: nightly microbenchmarks using Rust's built-in
   benchmark harness.
@@ -12,8 +12,11 @@ Microraptor has fourteen benchmark surfaces:
 - `scripts/render-benchmark-report.sh`: JSONL-to-Markdown/SVG renderer for
   publishable benchmark snapshots.
 - `scripts/check-benchmark-snapshots.sh`: checked-artifact verifier that
-  re-renders stored gauntlet JSONL and Rust peer TSV snapshots, then diffs
-  summaries/figures.
+  re-renders stored gauntlet JSONL and Rust/FASTA peer TSV snapshots, validates
+  FASTA gauntlet artifacts, and diffs summaries/figures.
+- `scripts/benchmark-common.sh`: shared helper surface for generated benchmark
+  harnesses, including thread caps, sanitized artifact copies, display paths,
+  and feature dependency rendering.
 - `scripts/benchmark-rust-peers.sh`: script-generated Rust parser-library peer
   comparison against `seq_io`, `noodles-fastq`, and `bio`.
 - `scripts/benchmark-fasta-peers.sh`: script-generated FASTA parser-library
@@ -71,6 +74,7 @@ scripts/prepare-real-benchmark-inputs.sh
 scripts/benchmark-gauntlet.sh
 scripts/render-benchmark-report.sh
 scripts/check-benchmark-snapshots.sh
+scripts/benchmark-common.sh
 scripts/benchmark-rust-peers.sh
 scripts/benchmark-fasta-peers.sh
 scripts/benchmark-fasta-peer-size-sweep.sh
@@ -417,6 +421,11 @@ gzip, or third-party libdeflate gzip via `libdeflater`. Treat strict `two-line`
 rows as evidence for canonical `>header`/`sequence` FASTA, not arbitrary
 multiline FASTA.
 
+The FASTQ and FASTA peer harnesses share `scripts/benchmark-common.sh` for the
+8-thread benchmark cap, sanitized checked artifacts, display paths, and generated
+Cargo dependency specifications. Keep new benchmark families on that helper
+instead of adding bespoke shell glue.
+
 For a FASTA publication-style parser-framework scaling plot:
 
 ```bash
@@ -450,6 +459,11 @@ The checked local artifact lives at
 It covers synthetic two-line DNA, wrapped DNA, many tiny records, long wrapped
 contigs, protein FASTA, raw/gzip/BGZF transport, RSS smoke rows, optional local
 corpus FASTA files, and installed command-line comparator timings.
+
+`scripts/check-benchmark-snapshots.sh` verifies the checked FASTA size-sweep
+summary/figure from the TSV and metadata, verifies the FASTA gauntlet summary
+and required sidecar TSV files, and rejects legacy shell-wrapped external
+commands across all checked `external-tools.tsv` artifacts.
 
 Use the opt-in diagnostic mode to investigate microraptor internals without
 changing the normal published peer table:

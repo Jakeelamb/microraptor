@@ -26,9 +26,15 @@ doc = false
 bench = false
 
 [[bin]]
+name = "fasta_reader"
+path = "fuzz_targets/fasta_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "bgzf_roundtrip"
 path = "fuzz_targets/bgzf_roundtrip.rs"
 test = false
 doc = false
 bench = false
-

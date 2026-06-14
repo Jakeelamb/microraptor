@@ -104,36 +104,198 @@ impl TrustedPackSink for &mut StreamStatsSink {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntheticPattern {
+    Cyclic,
+    Entropy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntheticFastaLayout {
+    TwoLine,
+    Wrapped { width: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntheticAlphabet {
+    Dna,
+    Protein,
+}
+
 pub fn synthetic_fastq(records: usize, read_len: usize) -> Vec<u8> {
-    let bases = b"ACGT";
+    synthetic_fastq_with_pattern(records, read_len, SyntheticPattern::Cyclic)
+}
+
+pub fn synthetic_fastq_with_pattern(
+    records: usize,
+    read_len: usize,
+    pattern: SyntheticPattern,
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(records.saturating_mul(read_len + 32));
     for i in 0..records {
-        out.extend_from_slice(b"@r");
-        push_usize_decimal(i, &mut out);
-        out.push(b'\n');
-        for j in 0..read_len {
-            out.push(bases[(i + j) & 3]);
-        }
-        out.extend_from_slice(b"\n+\n");
-        out.extend(std::iter::repeat_n(b'I', read_len));
-        out.push(b'\n');
+        push_fastq_record(&mut out, b"r", i, None, read_len, 0, pattern);
     }
     out
 }
 
+pub fn synthetic_interleaved_fastq_with_pattern(
+    pairs: usize,
+    read_len: usize,
+    pattern: SyntheticPattern,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(pairs.saturating_mul((read_len + 36) * 2));
+    for i in 0..pairs {
+        push_fastq_record(&mut out, b"frag", i, Some(1), read_len, 0, pattern);
+        push_fastq_record(&mut out, b"frag", i, Some(2), read_len, 1, pattern);
+    }
+    out
+}
+
+pub fn synthetic_paired_fastq_with_pattern(
+    pairs: usize,
+    read_len: usize,
+    pattern: SyntheticPattern,
+) -> (Vec<u8>, Vec<u8>) {
+    let mut r1 = Vec::with_capacity(pairs.saturating_mul(read_len + 36));
+    let mut r2 = Vec::with_capacity(pairs.saturating_mul(read_len + 36));
+    for i in 0..pairs {
+        push_fastq_record(&mut r1, b"frag", i, Some(1), read_len, 0, pattern);
+        push_fastq_record(&mut r2, b"frag", i, Some(2), read_len, 1, pattern);
+    }
+    (r1, r2)
+}
+
 pub fn synthetic_fasta(records: usize, read_len: usize) -> Vec<u8> {
-    let bases = b"ACGT";
+    synthetic_fasta_with_options(
+        records,
+        read_len,
+        SyntheticPattern::Cyclic,
+        SyntheticFastaLayout::TwoLine,
+        SyntheticAlphabet::Dna,
+    )
+}
+
+pub fn synthetic_fasta_with_options(
+    records: usize,
+    read_len: usize,
+    pattern: SyntheticPattern,
+    layout: SyntheticFastaLayout,
+    alphabet: SyntheticAlphabet,
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(records.saturating_mul(read_len + 16));
     for i in 0..records {
         out.extend_from_slice(b">r");
         push_usize_decimal(i, &mut out);
         out.push(b'\n');
-        for j in 0..read_len {
-            out.push(bases[(i + j) & 3]);
+        match layout {
+            SyntheticFastaLayout::TwoLine => {
+                push_symbols(&mut out, i, 0, read_len, pattern, alphabet);
+                out.push(b'\n');
+            }
+            SyntheticFastaLayout::Wrapped { width } => {
+                push_wrapped_symbols(&mut out, i, 0, read_len, pattern, alphabet, width.max(1));
+            }
         }
-        out.push(b'\n');
     }
     out
+}
+
+fn push_fastq_record(
+    out: &mut Vec<u8>,
+    prefix: &[u8],
+    index: usize,
+    mate: Option<u8>,
+    read_len: usize,
+    phase: usize,
+    pattern: SyntheticPattern,
+) {
+    out.push(b'@');
+    out.extend_from_slice(prefix);
+    push_usize_decimal(index, out);
+    if let Some(mate) = mate {
+        out.push(b'/');
+        out.push(b'0' + mate);
+    }
+    out.push(b'\n');
+
+    push_symbols(out, index, phase, read_len, pattern, SyntheticAlphabet::Dna);
+    out.extend_from_slice(b"\n+\n");
+    push_qualities(out, index, phase, read_len, pattern);
+    out.push(b'\n');
+}
+
+fn push_wrapped_symbols(
+    out: &mut Vec<u8>,
+    index: usize,
+    phase: usize,
+    read_len: usize,
+    pattern: SyntheticPattern,
+    alphabet: SyntheticAlphabet,
+    width: usize,
+) {
+    let mut written = 0;
+    while written < read_len {
+        let chunk = (read_len - written).min(width);
+        push_symbols(out, index + written, phase, chunk, pattern, alphabet);
+        out.push(b'\n');
+        written += chunk;
+    }
+}
+
+fn push_symbols(
+    out: &mut Vec<u8>,
+    index: usize,
+    phase: usize,
+    read_len: usize,
+    pattern: SyntheticPattern,
+    alphabet: SyntheticAlphabet,
+) {
+    let symbols = match alphabet {
+        SyntheticAlphabet::Dna => &b"ACGT"[..],
+        SyntheticAlphabet::Protein => &b"ACDEFGHIKLMNPQRSTVWY"[..],
+    };
+    match pattern {
+        SyntheticPattern::Cyclic => {
+            for j in 0..read_len {
+                out.push(symbols[(index + j + phase) % symbols.len()]);
+            }
+        }
+        SyntheticPattern::Entropy => {
+            let mut state = rng_seed(index, phase, 0xa076_1d64_78bd_642f);
+            for _ in 0..read_len {
+                out.push(symbols[(next_u64(&mut state) as usize) % symbols.len()]);
+            }
+        }
+    }
+}
+
+fn push_qualities(
+    out: &mut Vec<u8>,
+    index: usize,
+    phase: usize,
+    read_len: usize,
+    pattern: SyntheticPattern,
+) {
+    match pattern {
+        SyntheticPattern::Cyclic => out.extend(std::iter::repeat_n(b'I', read_len)),
+        SyntheticPattern::Entropy => {
+            let mut state = rng_seed(index, phase, 0xe703_7ed1_a0b4_28db);
+            for _ in 0..read_len {
+                out.push(33 + (next_u64(&mut state) % 41) as u8);
+            }
+        }
+    }
+}
+
+fn rng_seed(index: usize, phase: usize, salt: u64) -> u64 {
+    salt ^ ((index as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)) ^ ((phase as u64) << 32)
+}
+
+fn next_u64(state: &mut u64) -> u64 {
+    *state ^= *state >> 12;
+    *state ^= *state << 25;
+    *state ^= *state >> 27;
+    state.wrapping_mul(0x2545_f491_4f6c_dd1d)
 }
 
 fn push_usize_decimal(mut n: usize, out: &mut Vec<u8>) {

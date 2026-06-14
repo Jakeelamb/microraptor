@@ -49,13 +49,17 @@ Current slice:
   `open_fasta_with_config`
 - resident FASTA visitors, including strict two-line FASTA fast paths for
   canonical `>header`/`sequence` inputs
-- light-accounting FASTA stats and strict resident/streaming two-line counters
-  for count/total-bases/checksum workloads
+- robust multiline FASTA stats via `FastaReader::stats`, `count_fasta_read`,
+  and `count_fasta_bytes`, plus strict resident/streaming two-line counters for
+  canonical count/total-bases/checksum workloads
+- `.fai`-style FASTA reference index construction via `build_fasta_index` and
+  BGZF virtual-offset annotation via `build_fasta_index_bgzf`
 - serial BGZF streaming reader and writer
 - parallel BGZF decompression/compression entry points for independent blocks
 - BGZF block index construction and `BgzfSeekReader` virtual-offset reads
 - optional libdeflate BGZF inflate and deflate backends
-- explicit buffered libdeflate gzip opener for bounded single gzip inputs
+- explicit buffered libdeflate gzip openers for bounded single gzip FASTQ and
+  FASTA inputs
 - reusable slab buffer with carry handling for records crossing slab boundaries
 - stable default `memchr` newline scanner, with nightly `std::simd`
   acceleration behind the explicit `simd` feature
@@ -84,12 +88,16 @@ Current slice:
 Backend boundary:
 
 - ordinary gzip auto-open uses streaming `flate2`, a third-party Rust
-  compression crate; `open_fastq_gzip_libdeflate` is explicit because it buffers
-  the decompressed input through the third-party `libdeflate` engine via the
+  compression crate; `open_fastq_gzip_libdeflate` and
+  `open_fasta_gzip_libdeflate` are explicit because they buffer the
+  decompressed input through the third-party `libdeflate` engine via the
   `libdeflater` Rust wrapper
 - BGZF is already block-aware and has parallel whole-input compression and
   decompression helpers, a bounded streaming parallel reader, an adaptive
   serial/parallel reader, and virtual-offset indexing/seek reads
+- FASTA `.fai` index construction reports uncompressed sequence offsets and,
+  with `bgzf`, sequence-start virtual offsets for callers that need future
+  random-access reference workflows
 - output compression supports third-party `flate2` by default and third-party
   `libdeflate` when requested
 
@@ -113,8 +121,8 @@ Features:
 - `gzip`: ordinary gzip input by gzip magic
 - `bgzf`: BGZF reader, writer, detection, and parallel block helpers
 - `libdeflate`: optional libdeflate BGZF inflate/deflate backends and explicit
-  buffered gzip opener through the `libdeflater` wrapper; makes BGZF auto-open
-  use the fastest available configured inflate backend
+  buffered FASTQ/FASTA gzip openers through the `libdeflater` wrapper; makes
+  BGZF auto-open use the fastest available configured inflate backend
 
 Current limitations:
 
@@ -126,9 +134,13 @@ Current limitations:
 - `visit_two_line_fasta_bytes` and `visit_two_line_fasta_read` are strict fast
   paths for canonical two-line FASTA. Use `FastaReader` or `visit_fasta_bytes`
   when records may contain multiline sequences or blank lines.
-- `count_two_line_fasta_bytes` and `count_two_line_fasta_read` are stricter
-  count/stat paths for canonical two-line FASTA only. They do not replace the
-  robust multiline parser.
+- `count_fasta_read`, `count_fasta_bytes`, and `FastaReader::stats` support
+  ordinary multiline FASTA. `count_two_line_fasta_bytes` and
+  `count_two_line_fasta_read` are stricter count/stat paths for canonical
+  two-line FASTA only.
+- `build_fasta_index` validates `.fai`-compatible wrapping: non-final sequence
+  lines must keep a consistent base count and byte width, and only the final
+  sequence line may be shorter.
 - Paired R1/R2 support validates ordered mates; it does not synchronize files
   with reordered records.
 
@@ -138,6 +150,7 @@ Benchmarking:
 - `cargo run --release --bin microraptor-bench -- --records 500000 --iters 7`
 - `scripts/bench.sh`
 - `scripts/benchmark-gauntlet.sh`
+- `scripts/benchmark-common.sh`
 - `scripts/render-benchmark-report.sh`
 - `scripts/check-benchmark-snapshots.sh`
 - `scripts/benchmark-rust-peers.sh`
@@ -193,6 +206,7 @@ evidence, not publication evidence.
 Robustness:
 
 - `cargo fuzz run fastq_reader`
+- `cargo fuzz run fasta_reader`
 - `cargo fuzz run pack`
 - `cargo fuzz run bgzf_roundtrip`
 
@@ -253,10 +267,11 @@ for pair in batch.interleaved_pairs()? {
 # Ok::<(), microraptor::FastqError>(())
 ```
 
-FASTA streams use a separate reader:
+FASTA streams use a separate reader. Robust stats and `.fai`-style indexing use
+the same ordinary multiline FASTA semantics:
 
 ```rust
-use microraptor::FastaReader;
+use microraptor::{build_fasta_index, count_fasta_bytes, FastaReader};
 
 let data = b">seq1 description\nACG\nTN\n";
 let mut reader = FastaReader::new(&data[..]);
@@ -265,6 +280,8 @@ for record in batch.records() {
     assert_eq!(record.id_token(), b"seq1");
     assert_eq!(record.seq(), b"ACGTN");
 }
+assert_eq!(count_fasta_bytes(data)?.bases, 5);
+assert_eq!(build_fasta_index(&data[..])?.get(b"seq1").unwrap().len, 5);
 # Ok::<(), microraptor::FastqError>(())
 ```
 

@@ -22,9 +22,11 @@ These APIs are the default entry points for downstream scientific tools.
 | `visit_fasta_bytes` | Zero-copy resident FASTA visitor with multiline folding fallback | Keep public |
 | `visit_fasta_bytes_auto`, `detect_fasta_shape`, `FastaShape` | Resident FASTA shape detection and automatic strict two-line dispatch | Keep public |
 | `visit_two_line_fasta_bytes`, `visit_two_line_fasta_read` | Strict `>header`/`sequence` fast paths for canonical two-line FASTA | Keep public |
-| `count_two_line_fasta_bytes`, `count_two_line_fasta_read`, `FastaStats` | Strict two-line FASTA count/total-bases/light-checksum paths | Keep public |
+| `FastaReader::stats`, `count_fasta_read`, `count_fasta_bytes`, `FastaStats` | Robust multiline FASTA count/total-bases/light-checksum paths | Keep public |
+| `count_two_line_fasta_bytes`, `count_two_line_fasta_read` | Strict two-line FASTA count/total-bases/light-checksum fast paths | Keep public |
 | `FastaRecordSink`, `FastaVisitRecord` | Borrowed FASTA visitor sink and record view | Keep public |
 | `open_fasta`, `open_fasta_with_config` | File-path opener for raw, gzip, and BGZF FASTA inputs | Keep public |
+| `open_fastq_gzip_libdeflate`, `open_fasta_gzip_libdeflate` | Explicit buffered single gzip openers through the third-party `libdeflater` wrapper | Keep public behind `gzip` + `libdeflate` |
 | `PairedFastqReader`, `PairedFastqBatch`, `FastqPair` | Ordered paired-end streaming | Keep public |
 | `open_paired_fastq*` | Paired file opener variants | Keep public |
 | `PairingMode`, `PairValidation`, `strip_pair_suffix` | Explicit ordered-pair validation semantics | Keep public |
@@ -75,6 +77,7 @@ auto-detection.
 | `BgzfInflateBackend`, `BgzfDeflateBackend` | Backend selection when `libdeflate` is enabled | Keep public |
 | `BgzfParallelConfig`, `BgzfPipelineMetrics*` | Parallel threshold, queue, backend, and backpressure tuning | Keep public |
 | `BgzfVirtualOffset`, `BgzfIndex`, `BgzfIndexEntry`, `build_bgzf_index` | Seek/index support | Keep public |
+| `FastaIndex`, `FastaIndexEntry`, `build_fasta_index`, `build_fasta_index_bgzf` | `.fai`-style FASTA reference indexing, with BGZF sequence-start virtual offsets when `bgzf` is enabled | Keep public |
 | `open_fastq_bgzf_*` | Explicit BGZF openers for benchmarking and tuning | Keep public |
 | `compress_bgzf_parallel*`, `decompress_bgzf_parallel*` | Whole-buffer helpers for fixtures and controlled conversions | Keep public, but not the main streaming path |
 
@@ -104,7 +107,12 @@ transport tiers.
   paired validation, or trusted FASTQ pack APIs apply to FASTA records.
 - The `visit_two_line_fasta_*` and `count_two_line_fasta_*` functions are
   deliberately strict fast paths for canonical two-line FASTA. Use
-  `FastaReader` or `visit_fasta_bytes` for ordinary multiline FASTA.
+  `FastaReader`, `FastaReader::stats`, `count_fasta_read`,
+  `count_fasta_bytes`, or `visit_fasta_bytes` for ordinary multiline FASTA.
+- `build_fasta_index` follows `.fai` wrapping constraints and reports
+  uncompressed offsets. `build_fasta_index_bgzf` annotates entries with BGZF
+  virtual offsets for the first sequence byte; random-access reference slicing
+  should be built as a separate transport/index layer on top of this.
 - Whole-buffer BGZF helpers are convenient for fixtures and conversions, but
   large production workflows should prefer streaming readers/writers.
 - `PairValidation::FastSlash` is intentionally fast and narrow. Broader naming

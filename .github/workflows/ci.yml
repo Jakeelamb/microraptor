@@ -46,8 +46,13 @@ jobs:
       - name: Check benchmark script syntax
         run: |
           bash -n scripts/benchmark-gauntlet.sh
+          bash -n scripts/benchmark-common.sh
           bash -n scripts/render-benchmark-report.sh
           bash -n scripts/benchmark-rust-peers.sh
+          bash -n scripts/benchmark-rust-peer-size-sweep.sh
+          bash -n scripts/benchmark-fasta-peers.sh
+          bash -n scripts/benchmark-fasta-peer-size-sweep.sh
+          bash -n scripts/benchmark-fasta-gauntlet.sh
           bash -n scripts/check-replication-host.sh
           bash -n scripts/check-benchmark-snapshots.sh
           bash -n scripts/discover-local-benchmark-corpus.sh
