@@ -83,6 +83,7 @@ run bash -n \
   scripts/render-benchmark-report.sh \
   scripts/check-benchmark-snapshots.sh \
   scripts/benchmark-rust-peers.sh \
+  scripts/benchmark-rust-peer-size-sweep.sh \
   scripts/check-replication-host.sh \
   scripts/discover-local-benchmark-corpus.sh \
   scripts/export-replication-kit.sh \

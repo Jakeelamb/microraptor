@@ -21,6 +21,8 @@ Microraptor has ten benchmark surfaces:
 - `scripts/discover-local-benchmark-corpus.sh`: local biological FASTQ corpus
   discovery for the `~/Projects/Benchmarks` workspace.
 - `scripts/profile-hotpath.sh`: isolated parse-vs-pack profiling output.
+- `scripts/benchmark-rust-peer-size-sweep.sh`: increasing-input-size Rust parser
+  framework sweep for publication-style time-vs-size figures.
 
 The benchmark binary generates deterministic synthetic FASTQ in memory, then
 measures the same parser and side-channel APIs used by downstream crates. It
@@ -351,6 +353,30 @@ SVG throughput figure. It generates a temporary Cargo project under
 The comparison is raw FASTQ parser-library evidence only; do not use it to make
 claims about gzip, BGZF, command-line preprocessing, trimming, or filtering
 behavior.
+
+For a publication-style parser-framework scaling plot with time on the Y axis
+and input size on the X axis:
+
+```bash
+MICRORAPTOR_SIZE_SWEEP_RECORDS="10000 50000 100000 500000 1000000 5000000" \
+MICRORAPTOR_SIZE_SWEEP_COMPRESSIONS="raw gzip" \
+MICRORAPTOR_SIZE_SWEEP_ITERS=5 \
+scripts/benchmark-rust-peer-size-sweep.sh
+```
+
+This writes:
+
+- `target/bench-results/rust-peer-size-sweep/rust-peer-size-sweep.tsv`
+- `target/bench-results/rust-peer-size-sweep/summary.md`
+- `target/bench-results/rust-peer-size-sweep/metadata.md`
+- `target/bench-results/rust-peer-size-sweep/figures/rust-peer-size-sweep-time.svg`
+
+The sweep reuses `scripts/benchmark-rust-peers.sh` for each input size and
+compression mode, so every row still checks count/checksum parity across
+`microraptor`, `seq_io`, `noodles-fastq`, and `bio`. Raw rows include the
+resident `microraptor-slice-visitor`; gzip rows exclude it because that API is
+intentionally raw resident-byte only. Treat the sweep as parser-framework
+evidence; run the gauntlet separately for command-line workflow comparisons.
 
 Use the opt-in diagnostic mode to investigate microraptor internals without
 changing the normal published peer table:

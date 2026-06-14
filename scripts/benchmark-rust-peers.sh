@@ -16,6 +16,7 @@ metadata="${out_dir}/metadata.md"
 microraptor_features="${MICRORAPTOR_RUST_PEER_MICRORAPTOR_FEATURES:-}"
 cargo_command="${MICRORAPTOR_RUST_PEER_CARGO:-cargo}"
 consumer="${MICRORAPTOR_RUST_PEER_CONSUMER:-light}"
+compression="${MICRORAPTOR_RUST_PEER_COMPRESSION:-raw}"
 
 display_path() {
   if [[ -n "${HOME:-}" ]]; then
@@ -64,6 +65,7 @@ publish = false
 
 [dependencies]
 bio = "=4.0.0"
+flate2 = "=1.1.9"
 ${microraptor_dependency}
 noodles-fastq = "=0.23.0"
 seq_io = "=0.3.4"
@@ -73,12 +75,15 @@ cat > "${project_dir}/src/main.rs" <<'EOF'
 use std::env;
 use std::fs;
 use std::hint::black_box;
-use std::io::Cursor;
+use std::io::{BufRead, BufReader, Cursor, Write};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use bio::io::fastq as bio_fastq;
+use flate2::read::MultiGzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression as GzipCompression;
 use microraptor::benchutil::synthetic_fastq;
 use microraptor::{visit_fastq_bytes, FastqConfig, FastqReader};
 use noodles_fastq as noodles_fastq;
@@ -97,6 +102,21 @@ struct Stats {
 enum Consumer {
     FullChecksum,
     LightAccounting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputCompression {
+    Raw,
+    Gzip,
+}
+
+impl InputCompression {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Gzip => "gzip",
+        }
+    }
 }
 
 impl Stats {
@@ -172,16 +192,29 @@ struct Config {
     read_len: usize,
     iters: usize,
     out: PathBuf,
+    compression: InputCompression,
 }
 
 fn main() -> AppResult<()> {
     let config = parse_args()?;
     let (source, input) = match config.input.as_ref() {
         Some(path) => (path.display().to_string(), fs::read(path)?),
-        None => (
-            format!("synthetic:{}x{}", config.records, config.read_len),
-            synthetic_fastq(config.records, config.read_len),
-        ),
+        None => {
+            let raw = synthetic_fastq(config.records, config.read_len);
+            let input = match config.compression {
+                InputCompression::Raw => raw,
+                InputCompression::Gzip => gzip_bytes(&raw)?,
+            };
+            (
+                format!(
+                    "synthetic-{}:{}x{}",
+                    config.compression.as_str(),
+                    config.records,
+                    config.read_len
+                ),
+                input,
+            )
+        }
     };
 
     let mut rows = vec![
@@ -189,51 +222,71 @@ fn main() -> AppResult<()> {
             "microraptor-stream",
             &input,
             config.iters,
+            config.compression,
             parse_microraptor,
-        )?,
-        measure(
-            "microraptor-slice-visitor",
-            &input,
-            config.iters,
-            parse_microraptor_slice_visitor,
         )?,
         measure(
             "microraptor-stream-visitor",
             &input,
             config.iters,
+            config.compression,
             parse_microraptor_visitor,
         )?,
     ];
+    if config.compression == InputCompression::Raw {
+        rows.insert(
+            1,
+            measure(
+                "microraptor-slice-visitor",
+                &input,
+                config.iters,
+                config.compression,
+                parse_microraptor_slice_visitor,
+            )?,
+        );
+    }
     if env::var_os("MICRORAPTOR_RUST_PEER_DIAGNOSTICS").is_some() {
-        rows.push(measure(
-            "microraptor-slice-visitor-no-validate",
-            &input,
-            config.iters,
-            parse_microraptor_slice_visitor_no_validate,
-        )?);
+        if config.compression == InputCompression::Raw {
+            rows.push(measure(
+                "microraptor-slice-visitor-no-validate",
+                &input,
+                config.iters,
+                config.compression,
+                parse_microraptor_slice_visitor_no_validate,
+            )?);
+        }
         rows.push(measure(
             "microraptor-visitor-no-validate",
             &input,
             config.iters,
+            config.compression,
             parse_microraptor_visitor_no_validate,
         )?);
         rows.push(measure(
             "microraptor-no-validate",
             &input,
             config.iters,
+            config.compression,
             parse_microraptor_no_validate,
         )?);
         rows.push(measure(
             "microraptor-record-refs",
             &input,
             config.iters,
+            config.compression,
             parse_microraptor_record_refs,
         )?);
     }
     rows.extend([
-        measure("seq_io", &input, config.iters, parse_seq_io)?,
-        measure("noodles-fastq", &input, config.iters, parse_noodles_fastq)?,
-        measure("bio", &input, config.iters, parse_bio)?,
+        measure("seq_io", &input, config.iters, config.compression, parse_seq_io)?,
+        measure(
+            "noodles-fastq",
+            &input,
+            config.iters,
+            config.compression,
+            parse_noodles_fastq,
+        )?,
+        measure("bio", &input, config.iters, config.compression, parse_bio)?,
     ]);
 
     let reference = rows[0].stats;
@@ -248,14 +301,14 @@ fn main() -> AppResult<()> {
     }
 
     let mut out = String::from(
-        "tool\trecords\tbases\tbest_ms\trecords_s\tbases_s\tchecksum\tinput_bytes\titers\tsource\n",
+        "tool\trecords\tbases\tbest_ms\trecords_s\tbases_s\tchecksum\tinput_bytes\titers\tsource\tcompression\n",
     );
     for row in rows {
         let ns = row.best.as_nanos().max(1);
         let records_s = row.stats.records as u128 * 1_000_000_000 / ns;
         let bases_s = row.stats.bases as u128 * 1_000_000_000 / ns;
         out.push_str(&format!(
-            "{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             row.tool,
             row.stats.records,
             row.stats.bases,
@@ -265,7 +318,8 @@ fn main() -> AppResult<()> {
             row.stats.checksum,
             input.len(),
             config.iters,
-            source
+            source,
+            config.compression.as_str()
         ));
     }
     fs::write(config.out, out)?;
@@ -278,6 +332,7 @@ fn parse_args() -> AppResult<Config> {
     let mut read_len = 150;
     let mut iters = 5;
     let mut out = PathBuf::from("rust-library-peers.tsv");
+    let mut compression = InputCompression::Raw;
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -287,6 +342,13 @@ fn parse_args() -> AppResult<Config> {
             "--read-len" => read_len = required_value(&mut args, "--read-len")?.parse()?,
             "--iters" => iters = required_value(&mut args, "--iters")?.parse()?,
             "--out" => out = PathBuf::from(required_value(&mut args, "--out")?),
+            "--compression" => {
+                compression = match required_value(&mut args, "--compression")?.as_str() {
+                    "raw" => InputCompression::Raw,
+                    "gzip" => InputCompression::Gzip,
+                    value => return Err(format!("unsupported --compression {value}").into()),
+                }
+            }
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -301,6 +363,7 @@ fn parse_args() -> AppResult<Config> {
         read_len,
         iters,
         out,
+        compression,
     })
 }
 
@@ -311,7 +374,7 @@ fn required_value(args: &mut impl Iterator<Item = String>, flag: &str) -> AppRes
 
 fn print_help() {
     println!(
-        "microraptor-rust-peer-bench [--input PATH] [--records N] [--read-len N] [--iters N] [--out PATH]"
+        "microraptor-rust-peer-bench [--input PATH] [--records N] [--read-len N] [--iters N] [--out PATH] [--compression raw|gzip]"
     );
 }
 
@@ -319,13 +382,14 @@ fn measure(
     tool: &'static str,
     input: &[u8],
     iters: usize,
-    f: fn(&[u8]) -> AppResult<Stats>,
+    compression: InputCompression,
+    f: fn(&[u8], InputCompression) -> AppResult<Stats>,
 ) -> AppResult<Row> {
     let mut best = Duration::MAX;
     let mut stats = None;
     for _ in 0..iters {
         let start = Instant::now();
-        let run_stats = f(input)?;
+        let run_stats = f(input, compression)?;
         let elapsed = start.elapsed();
         black_box(run_stats.checksum);
         if let Some(previous) = stats {
@@ -345,8 +409,21 @@ fn measure(
     })
 }
 
-fn parse_microraptor(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = FastqReader::with_config(Cursor::new(input), microraptor_config(true));
+fn input_reader(input: &[u8], compression: InputCompression) -> Box<dyn BufRead + '_> {
+    match compression {
+        InputCompression::Raw => Box::new(BufReader::new(Cursor::new(input))),
+        InputCompression::Gzip => Box::new(BufReader::new(MultiGzDecoder::new(Cursor::new(input)))),
+    }
+}
+
+fn gzip_bytes(input: &[u8]) -> AppResult<Vec<u8>> {
+    let mut encoder = GzEncoder::new(Vec::new(), GzipCompression::default());
+    encoder.write_all(input)?;
+    Ok(encoder.finish()?)
+}
+
+fn parse_microraptor(input: &[u8], compression: InputCompression) -> AppResult<Stats> {
+    let mut reader = FastqReader::with_config(input_reader(input, compression), microraptor_config(true));
     let mut stats = Stats::new();
     while let Some(batch) = reader.next_batch()? {
         for record in batch.records() {
@@ -356,7 +433,10 @@ fn parse_microraptor(input: &[u8]) -> AppResult<Stats> {
     Ok(stats)
 }
 
-fn parse_microraptor_slice_visitor(input: &[u8]) -> AppResult<Stats> {
+fn parse_microraptor_slice_visitor(input: &[u8], compression: InputCompression) -> AppResult<Stats> {
+    if compression != InputCompression::Raw {
+        return Err("slice visitor only supports raw resident FASTQ bytes".into());
+    }
     let mut stats = Stats::new();
     visit_fastq_bytes(input, FastqConfig::default(), |record| {
         stats.observe(record.seq(), record.qual());
@@ -365,7 +445,10 @@ fn parse_microraptor_slice_visitor(input: &[u8]) -> AppResult<Stats> {
     Ok(stats)
 }
 
-fn parse_microraptor_slice_visitor_no_validate(input: &[u8]) -> AppResult<Stats> {
+fn parse_microraptor_slice_visitor_no_validate(input: &[u8], compression: InputCompression) -> AppResult<Stats> {
+    if compression != InputCompression::Raw {
+        return Err("slice visitor only supports raw resident FASTQ bytes".into());
+    }
     let mut stats = Stats::new();
     visit_fastq_bytes(
         input,
@@ -381,8 +464,8 @@ fn parse_microraptor_slice_visitor_no_validate(input: &[u8]) -> AppResult<Stats>
     Ok(stats)
 }
 
-fn parse_microraptor_visitor(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = FastqReader::with_config(Cursor::new(input), microraptor_config(true));
+fn parse_microraptor_visitor(input: &[u8], compression: InputCompression) -> AppResult<Stats> {
+    let mut reader = FastqReader::with_config(input_reader(input, compression), microraptor_config(true));
     let mut stats = Stats::new();
     reader.visit_records(|record| {
         stats.observe(record.seq(), record.qual());
@@ -391,8 +474,8 @@ fn parse_microraptor_visitor(input: &[u8]) -> AppResult<Stats> {
     Ok(stats)
 }
 
-fn parse_microraptor_visitor_no_validate(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = FastqReader::with_config(Cursor::new(input), microraptor_config(false));
+fn parse_microraptor_visitor_no_validate(input: &[u8], compression: InputCompression) -> AppResult<Stats> {
+    let mut reader = FastqReader::with_config(input_reader(input, compression), microraptor_config(false));
     let mut stats = Stats::new();
     reader.visit_records(|record| {
         stats.observe(record.seq(), record.qual());
@@ -401,8 +484,8 @@ fn parse_microraptor_visitor_no_validate(input: &[u8]) -> AppResult<Stats> {
     Ok(stats)
 }
 
-fn parse_microraptor_no_validate(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = FastqReader::with_config(Cursor::new(input), microraptor_config(false));
+fn parse_microraptor_no_validate(input: &[u8], compression: InputCompression) -> AppResult<Stats> {
+    let mut reader = FastqReader::with_config(input_reader(input, compression), microraptor_config(false));
     let mut stats = Stats::new();
     while let Some(batch) = reader.next_batch()? {
         for record in batch.records() {
@@ -412,8 +495,8 @@ fn parse_microraptor_no_validate(input: &[u8]) -> AppResult<Stats> {
     Ok(stats)
 }
 
-fn parse_microraptor_record_refs(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = FastqReader::with_config(Cursor::new(input), microraptor_config(false));
+fn parse_microraptor_record_refs(input: &[u8], compression: InputCompression) -> AppResult<Stats> {
+    let mut reader = FastqReader::with_config(input_reader(input, compression), microraptor_config(false));
     let mut stats = Stats::new();
     while let Some(batch) = reader.next_batch()? {
         let bytes = batch.bytes();
@@ -426,8 +509,8 @@ fn parse_microraptor_record_refs(input: &[u8]) -> AppResult<Stats> {
     Ok(stats)
 }
 
-fn parse_seq_io(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = seq_io::fastq::Reader::new(Cursor::new(input));
+fn parse_seq_io(input: &[u8], compression: InputCompression) -> AppResult<Stats> {
+    let mut reader = seq_io::fastq::Reader::new(input_reader(input, compression));
     let mut stats = Stats::new();
     while let Some(record) = reader.next() {
         let record = record?;
@@ -436,8 +519,8 @@ fn parse_seq_io(input: &[u8]) -> AppResult<Stats> {
     Ok(stats)
 }
 
-fn parse_noodles_fastq(input: &[u8]) -> AppResult<Stats> {
-    let mut reader = noodles_fastq::io::Reader::new(Cursor::new(input));
+fn parse_noodles_fastq(input: &[u8], compression: InputCompression) -> AppResult<Stats> {
+    let mut reader = noodles_fastq::io::Reader::new(input_reader(input, compression));
     let mut record = noodles_fastq::Record::default();
     let mut stats = Stats::new();
     loop {
@@ -450,8 +533,8 @@ fn parse_noodles_fastq(input: &[u8]) -> AppResult<Stats> {
     Ok(stats)
 }
 
-fn parse_bio(input: &[u8]) -> AppResult<Stats> {
-    let reader = bio_fastq::Reader::new(Cursor::new(input));
+fn parse_bio(input: &[u8], compression: InputCompression) -> AppResult<Stats> {
+    let reader = bio_fastq::Reader::new(input_reader(input, compression));
     let mut stats = Stats::new();
     for record in reader.records() {
         let record = record?;
@@ -481,7 +564,7 @@ fn mix_record_shape(mut state: u64, seq: &[u8], qual: &[u8]) -> u64 {
 }
 EOF
 
-args=(--iters "${iters}" --out "${raw_tsv}")
+args=(--iters "${iters}" --out "${raw_tsv}" --compression "${compression}")
 if [[ -n "${input}" ]]; then
   args+=(--input "${input}")
 else
@@ -531,7 +614,11 @@ awk -F '\t' '
   else
     printf 'Input: deterministic synthetic FASTQ, `%s` records, read length `%s`.\n\n' "${records}" "${read_len}"
   fi
-  printf 'The benchmark reads one in-memory raw FASTQ byte buffer through each Rust parser. It is parser-library evidence only: it does not compare gzip, BGZF, trimming, filtering, or command-line workflow behavior. The default consumer records shape/accounting work; set `MICRORAPTOR_RUST_PEER_CONSUMER=full` to hash every sequence and quality byte.\n\n'
+  if [[ "${compression}" == "gzip" ]]; then
+    printf 'The benchmark reads one gzip-compressed in-memory FASTQ byte buffer through each Rust parser using the same streaming flate2 decoder. It is parser-library plus decompression evidence only: it does not compare BGZF, trimming, filtering, or command-line workflow behavior. The resident slice visitor rows are excluded because that API intentionally operates on raw resident FASTQ bytes. The default consumer records shape/accounting work; set `MICRORAPTOR_RUST_PEER_CONSUMER=full` to hash every sequence and quality byte.\n\n'
+  else
+    printf 'The benchmark reads one in-memory raw FASTQ byte buffer through each Rust parser. It is parser-library evidence only: it does not compare gzip, BGZF, trimming, filtering, or command-line workflow behavior. The default consumer records shape/accounting work; set `MICRORAPTOR_RUST_PEER_CONSUMER=full` to hash every sequence and quality byte.\n\n'
+  fi
   printf '| tool | records | bases | best ms | records/s | bases/s | checksum |\n'
   printf '| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n'
   awk -F '\t' 'NR > 1 {
@@ -548,6 +635,7 @@ awk -F '\t' '
   printf -- '- cargo: %s\n' "$(cargo --version)"
   printf -- '- iterations: %s\n' "${iters}"
   printf -- '- consumer: %s\n' "${consumer}"
+  printf -- '- compression: %s\n' "${compression}"
   printf -- '- microraptor_features: %s\n' "${microraptor_features:-default}"
   printf -- '- microraptor_slab_size: %s\n' "${MICRORAPTOR_RUST_PEER_SLAB_SIZE:-FastqConfig::default}"
   if [[ -n "${input}" ]]; then

@@ -117,6 +117,7 @@ Benchmarking:
 - `scripts/discover-local-benchmark-corpus.sh`
 - `scripts/profile-perf.sh`
 - `scripts/profile-hotpath.sh`
+- `scripts/benchmark-rust-peer-size-sweep.sh`
 - `scripts/release-gate.sh`
 - `scripts/export-replication-kit.sh`
 
