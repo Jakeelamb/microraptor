@@ -84,6 +84,9 @@ run bash -n \
   scripts/check-benchmark-snapshots.sh \
   scripts/benchmark-rust-peers.sh \
   scripts/benchmark-rust-peer-size-sweep.sh \
+  scripts/benchmark-fasta-peers.sh \
+  scripts/benchmark-fasta-peer-size-sweep.sh \
+  scripts/benchmark-fasta-gauntlet.sh \
   scripts/check-replication-host.sh \
   scripts/discover-local-benchmark-corpus.sh \
   scripts/export-replication-kit.sh \

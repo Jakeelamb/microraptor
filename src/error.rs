@@ -3,7 +3,7 @@ use std::fmt;
 /// Crate-local result type.
 pub type Result<T> = std::result::Result<T, FastqError>;
 
-/// Location of a FASTQ parsing error.
+/// Location of a FASTQ or FASTA parsing error.
 ///
 /// `byte_offset` is absolute within the original byte stream. `record_index`
 /// is zero-based. `line_index` is `0` for header, `1` for sequence, `2` for
@@ -39,7 +39,7 @@ impl fmt::Display for FastqPosition {
     }
 }
 
-/// Error type for FASTQ, gzip, and BGZF operations.
+/// Error type for FASTQ, FASTA, gzip, and BGZF operations.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum FastqError {
@@ -67,13 +67,13 @@ impl fmt::Display for FastqError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(err) => write!(f, "I/O error: {err}"),
-            Self::Format(msg) => write!(f, "FASTQ parse error: {msg}"),
+            Self::Format(msg) => write!(f, "parse error: {msg}"),
             Self::FormatAt { message, position } => {
-                write!(f, "FASTQ parse error at {position}: {message}")
+                write!(f, "parse error at {position}: {message}")
             }
             Self::Bgzf(msg) => write!(f, "BGZF error: {msg}"),
             Self::RecordTooLarge { slab_size } => {
-                write!(f, "FASTQ record exceeds slab size ({slab_size} bytes)")
+                write!(f, "record exceeds slab size ({slab_size} bytes)")
             }
         }
     }

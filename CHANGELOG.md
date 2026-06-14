@@ -14,6 +14,16 @@ scientific users.
   interleaved records.
 - Single-pass FASTQ visitor APIs: `FastqReader::visit_records` for streaming
   readers and `visit_fastq_bytes` for complete resident FASTQ byte buffers.
+- Streaming multiline FASTA parsing via `FastaReader`, `FastaBatch`,
+  `FastaRecord`, `FastaReader::visit_records`, `open_fasta`, and
+  `open_fasta_with_config` over raw, gzip, and BGZF transport.
+- Resident FASTA visitors via `visit_fasta_bytes`, plus strict two-line FASTA
+  fast paths via `visit_two_line_fasta_bytes` and `visit_two_line_fasta_read`.
+- FASTA shape detection, automatic resident fast-path dispatch, and strict
+  two-line count/stat APIs via `detect_fasta_shape`, `visit_fasta_bytes_auto`,
+  `count_two_line_fasta_bytes`, `count_two_line_fasta_read`, and `FastaStats`.
+- FASTA fixture generation for two-line/wrapped layouts and DNA/protein
+  alphabets in `microraptor-fixture`.
 - Configurable pair validation modes: full normalized ID validation, fast
   `/1`/`/2` validation, and trusted no-validation mode.
 - Trusted four-line FASTQ pack paths for packed two-bit bases, ambiguity masks,
@@ -34,6 +44,12 @@ scientific users.
   benchmark review.
 - Rust parser-library peer benchmark script for `seq_io`, `noodles-fastq`, and
   `bio`.
+- FASTA parse-only benchmark mode in `microraptor-bench` via
+  `--format fasta --mode parse`.
+- FASTA Rust peer benchmark scripts and a checked raw/gzip size-sweep artifact
+  under `docs/benchmarks/fasta-peer-size-sweep/`.
+- FASTA shape/transport gauntlet under `scripts/benchmark-fasta-gauntlet.sh`
+  with checked artifacts under `docs/benchmarks/fasta-gauntlet/`.
 - Local biological corpus discovery for `~/Projects/Benchmarks`, including
   Drosophila Illumina PE, PacBio CLR, and ONT read-type rows.
 - GitHub issue and pull request templates for parser bugs, benchmark claims,
@@ -72,6 +88,14 @@ scientific users.
   separate the validated streaming batch row from the validated resident-slice
   visitor row and use light parser accounting by default; set
   `MICRORAPTOR_RUST_PEER_CONSUMER=full` to hash every sequence and quality byte.
+- FASTA parser-framework size sweep:
+  `docs/benchmarks/fasta-peer-size-sweep/summary.md`, generated with
+  `MICRORAPTOR_BENCH_THREADS=8` and a required microraptor-winner guard for
+  each requested raw/gzip size.
+- FASTA shape/transport gauntlet:
+  `docs/benchmarks/fasta-gauntlet/summary.md`, covering two-line DNA, wrapped
+  DNA, many tiny records, long wrapped contigs, protein FASTA, raw/gzip/BGZF
+  transport, RSS smoke rows, and installed command-line comparator timings.
 
 ### Claim Boundary
 

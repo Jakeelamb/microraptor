@@ -1,18 +1,26 @@
 # microraptor
 
-Microraptor is a slab-based FASTQ streaming and packing core for Rust. It is
-designed for downstream scientific tools that need raw, gzip, and BGZF FASTQ
-input to converge on one low-allocation parser path.
+Microraptor is a streaming FASTQ and FASTA parsing core for Rust. It is designed
+for downstream scientific tools that need raw, gzip, and BGZF sequence inputs to
+converge on low-allocation parser paths.
 
 The framework is built around one invariant: decompression is a transport layer.
-Raw FASTQ, gzip FASTQ, and BGZF paths produce the same decompressed byte slabs,
-and the parser only sees bytes.
+Raw, gzip, and BGZF paths produce the same decompressed byte stream for each
+format-specific parser.
+
+Compression engines are third-party backends, not microraptor inventions.
+`flate2` provides the default Rust gzip/BGZF transport path. `libdeflate` is the
+upstream high-performance DEFLATE implementation used through the Rust
+`libdeflater` wrapper when the optional `libdeflate` feature or a benchmark row
+explicitly selects it. Microraptor's own code is the FASTQ/FASTA parser surface,
+BGZF orchestration, backend selection, and benchmark harness around those
+compression libraries.
 
 Microraptor is intentionally not an all-in-one preprocessing suite. It does not
 trim adapters, filter reads, produce QC reports, align reads, or synchronize
 reordered paired-end files. Its useful surface is narrower: validated FASTQ
-batches, ordered mate validation, BGZF-aware input, and optional packed
-base/quality side channels.
+batches, streaming multiline FASTA batches, ordered mate validation, BGZF-aware
+input, and optional FASTQ packed base/quality side channels.
 
 Publication surfaces:
 
@@ -37,6 +45,12 @@ Current slice:
 - raw FASTQ from any `Read`
 - gzip FASTQ from paths with gzip magic, via `flate2::read::MultiGzDecoder`
 - BGZF FASTQ detected by BGZF headers before ordinary gzip
+- raw/gzip/BGZF FASTA via `FastaReader`, `open_fasta`, and
+  `open_fasta_with_config`
+- resident FASTA visitors, including strict two-line FASTA fast paths for
+  canonical `>header`/`sequence` inputs
+- light-accounting FASTA stats and strict resident/streaming two-line counters
+  for count/total-bases/checksum workloads
 - serial BGZF streaming reader and writer
 - parallel BGZF decompression/compression entry points for independent blocks
 - BGZF block index construction and `BgzfSeekReader` virtual-offset reads
@@ -59,7 +73,7 @@ Current slice:
   and slab/BGZF pack benchmark gates
 - canonical A/C/G/T SIMD chunk packing fast path and concrete trusted stats sink
   for low-overhead pack benchmarks
-- structured FASTQ parse errors with byte offset, record index, and line index
+- structured FASTQ/FASTA parse errors with byte offset, record index, and line index
 - zero-copy FASTQ record-id helpers for raw names, first tokens, and pair-normalized IDs
 - stateful separate-file paired reader and interleaved FASTQ iterators with
   normalized-id validation
@@ -69,18 +83,22 @@ Current slice:
 
 Backend boundary:
 
-- ordinary gzip auto-open uses streaming `flate2`; `open_fastq_gzip_libdeflate`
-  is explicit because it buffers the decompressed input
+- ordinary gzip auto-open uses streaming `flate2`, a third-party Rust
+  compression crate; `open_fastq_gzip_libdeflate` is explicit because it buffers
+  the decompressed input through the third-party `libdeflate` engine via the
+  `libdeflater` Rust wrapper
 - BGZF is already block-aware and has parallel whole-input compression and
   decompression helpers, a bounded streaming parallel reader, an adaptive
   serial/parallel reader, and virtual-offset indexing/seek reads
-- output compression supports flate2 by default and libdeflate when requested
+- output compression supports third-party `flate2` by default and third-party
+  `libdeflate` when requested
 
 Default streamer boundary:
 
-- `open_fastq_with_config` is the default streamer surface for raw, gzip, and
-  BGZF paths. Treat it as frozen for the current tiny-module scope unless a real
-  workload exposes a correctness issue or measured bottleneck.
+- `open_fastq_with_config` is the default FASTQ streamer surface for raw, gzip,
+  and BGZF paths. `open_fasta_with_config` is the matching FASTA opener for the
+  same transport layer. Treat them as frozen for the current tiny-module scope
+  unless a real workload exposes a correctness issue or measured bottleneck.
 - performance work should preserve the one-streamer shape: scripts and benchmark
   rows may compare explicit alternatives, but production callers should not need
   to choose between competing default FASTQ pipelines.
@@ -95,12 +113,22 @@ Features:
 - `gzip`: ordinary gzip input by gzip magic
 - `bgzf`: BGZF reader, writer, detection, and parallel block helpers
 - `libdeflate`: optional libdeflate BGZF inflate/deflate backends and explicit
-  buffered gzip opener; makes BGZF auto-open use the fastest available inflate backend
+  buffered gzip opener through the `libdeflater` wrapper; makes BGZF auto-open
+  use the fastest available configured inflate backend
 
 Current limitations:
 
 - FASTQ records must be four physical lines. Multiline sequence or quality
   fields are rejected as malformed or truncated input.
+- FASTA sequence lines may be multiline and are concatenated per record. FASTA
+  has no quality stream, so FASTQ quality summaries and trusted pack paths do
+  not apply to FASTA records.
+- `visit_two_line_fasta_bytes` and `visit_two_line_fasta_read` are strict fast
+  paths for canonical two-line FASTA. Use `FastaReader` or `visit_fasta_bytes`
+  when records may contain multiline sequences or blank lines.
+- `count_two_line_fasta_bytes` and `count_two_line_fasta_read` are stricter
+  count/stat paths for canonical two-line FASTA only. They do not replace the
+  robust multiline parser.
 - Paired R1/R2 support validates ordered mates; it does not synchronize files
   with reordered records.
 
@@ -113,11 +141,14 @@ Benchmarking:
 - `scripts/render-benchmark-report.sh`
 - `scripts/check-benchmark-snapshots.sh`
 - `scripts/benchmark-rust-peers.sh`
+- `scripts/benchmark-fasta-peers.sh`
 - `scripts/check-replication-host.sh`
 - `scripts/discover-local-benchmark-corpus.sh`
 - `scripts/profile-perf.sh`
 - `scripts/profile-hotpath.sh`
 - `scripts/benchmark-rust-peer-size-sweep.sh`
+- `scripts/benchmark-fasta-peer-size-sweep.sh`
+- `scripts/benchmark-fasta-gauntlet.sh`
 - `scripts/release-gate.sh`
 - `scripts/export-replication-kit.sh`
 
@@ -134,6 +165,13 @@ Current local benchmark snapshots:
 - [docs/benchmarks/drosophila-read-types/summary.md](docs/benchmarks/drosophila-read-types/summary.md):
   real Drosophila Illumina PE, PacBio CLR, and ONT FASTQ rows from the local
   benchmark corpus with installed command-line comparator timings.
+- [docs/benchmarks/fasta-peer-size-sweep/summary.md](docs/benchmarks/fasta-peer-size-sweep/summary.md):
+  synthetic two-line FASTA raw/gzip parser-framework size sweep with Rust
+  parser peers, an 8-thread cap, and a required microraptor-winner guard.
+- [docs/benchmarks/fasta-gauntlet/summary.md](docs/benchmarks/fasta-gauntlet/summary.md):
+  FASTA shape/transport gauntlet covering two-line DNA, wrapped DNA, many tiny
+  records, long contigs, protein FASTA, raw/gzip/BGZF transport, memory smoke
+  rows, and installed command-line comparator timings.
 - [docs/benchmarks/independent-organisms/summary.md](docs/benchmarks/independent-organisms/summary.md):
   independent non-Drosophila E. coli and yeast paired FASTQ rows from the local
   benchmark corpus with installed command-line comparator timings.
@@ -211,6 +249,21 @@ let mut reader = FastqReader::with_config(&data[..], FastqConfig::default().inte
 let batch = reader.next_batch()?.unwrap();
 for pair in batch.interleaved_pairs()? {
     assert_eq!(pair.pair_id(), b"frag");
+}
+# Ok::<(), microraptor::FastqError>(())
+```
+
+FASTA streams use a separate reader:
+
+```rust
+use microraptor::FastaReader;
+
+let data = b">seq1 description\nACG\nTN\n";
+let mut reader = FastaReader::new(&data[..]);
+let batch = reader.next_batch()?.unwrap();
+for record in batch.records() {
+    assert_eq!(record.id_token(), b"seq1");
+    assert_eq!(record.seq(), b"ACGTN");
 }
 # Ok::<(), microraptor::FastqError>(())
 ```

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="510" viewBox="0 0 880 510">
+<rect width="100%" height="100%" fill="white"/>
+<text x="24" y="28" font-family="Arial, sans-serif" font-size="18" font-weight="700">Rust FASTA parser peer throughput</text>
+<text x="24" y="46" font-family="Arial, sans-serif" font-size="12" fill="#555">bases/s over the same in-memory FASTA byte buffer</text>
+<text x="24" y="76" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-resident-visitor</text>
+<rect x="190" y="61" width="299" height="20" fill="#23645b"/>
+<text x="497" y="76" font-family="Arial, sans-serif" font-size="12" fill="#222">3.45 Gbases/s</text>
+<text x="24" y="110" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-libdeflate-resident-visitor</text>
+<rect x="190" y="95" width="464" height="20" fill="#23645b"/>
+<text x="662" y="110" font-family="Arial, sans-serif" font-size="12" fill="#222">5.34 Gbases/s</text>
+<text x="24" y="144" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-libdeflate-two-line-visitor</text>
+<rect x="190" y="129" width="500" height="20" fill="#23645b"/>
+<text x="698" y="144" font-family="Arial, sans-serif" font-size="12" fill="#222">5.75 Gbases/s</text>
+<text x="24" y="178" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-libdeflate-two-line-counter</text>
+<rect x="190" y="163" width="498" height="20" fill="#23645b"/>
+<text x="696" y="178" font-family="Arial, sans-serif" font-size="12" fill="#222">5.73 Gbases/s</text>
+<text x="24" y="212" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-two-line-resident-visitor</text>
+<rect x="190" y="197" width="310" height="20" fill="#23645b"/>
+<text x="508" y="212" font-family="Arial, sans-serif" font-size="12" fill="#222">3.57 Gbases/s</text>
+<text x="24" y="246" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-two-line-resident-counter</text>
+<rect x="190" y="231" width="238" height="20" fill="#23645b"/>
+<text x="436" y="246" font-family="Arial, sans-serif" font-size="12" fill="#222">2.74 Gbases/s</text>
+<text x="24" y="280" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-two-line-stream-visitor</text>
+<rect x="190" y="265" width="252" height="20" fill="#23645b"/>
+<text x="450" y="280" font-family="Arial, sans-serif" font-size="12" fill="#222">2.90 Gbases/s</text>
+<text x="24" y="314" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-two-line-stream-counter</text>
+<rect x="190" y="299" width="267" height="20" fill="#23645b"/>
+<text x="465" y="314" font-family="Arial, sans-serif" font-size="12" fill="#222">3.08 Gbases/s</text>
+<text x="24" y="348" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-stream</text>
+<rect x="190" y="333" width="189" height="20" fill="#23645b"/>
+<text x="387" y="348" font-family="Arial, sans-serif" font-size="12" fill="#222">2.18 Gbases/s</text>
+<text x="24" y="382" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-stream-visitor</text>
+<rect x="190" y="367" width="196" height="20" fill="#23645b"/>
+<text x="394" y="382" font-family="Arial, sans-serif" font-size="12" fill="#222">2.26 Gbases/s</text>
+<text x="24" y="416" font-family="Arial, sans-serif" font-size="12" fill="#222">seq_io</text>
+<rect x="190" y="401" width="358" height="20" fill="#23645b"/>
+<text x="556" y="416" font-family="Arial, sans-serif" font-size="12" fill="#222">4.13 Gbases/s</text>
+<text x="24" y="450" font-family="Arial, sans-serif" font-size="12" fill="#222">bio</text>
+<rect x="190" y="435" width="150" height="20" fill="#23645b"/>
+<text x="348" y="450" font-family="Arial, sans-serif" font-size="12" fill="#222">1.73 Gbases/s</text>
+</svg>

@@ -1,12 +1,11 @@
 #![cfg_attr(feature = "simd", feature(portable_simd))]
 #![warn(missing_docs)]
-//! Slab-based FASTQ streaming and packing for raw, gzip, and BGZF inputs.
+//! Streaming FASTQ and FASTA parsing for raw, gzip, and BGZF inputs.
 //!
-//! Microraptor is a library core for downstream scientific tools that need a
-//! low-allocation stream of ordinary short-read FASTQ records. Decompression is
-//! treated as a transport layer: raw FASTQ, gzip FASTQ, and BGZF FASTQ are
-//! converted into byte slabs, and the parser consumes the same slab model for
-//! all input backends.
+//! Microraptor is a library core for downstream scientific tools that need
+//! low-allocation streams of ordinary FASTQ records and multiline FASTA
+//! records. Decompression is treated as a transport layer: raw, gzip, and BGZF
+//! inputs feed the same parser for each sequence format.
 //!
 //! The default feature set builds on stable Rust and includes gzip and BGZF
 //! input support. Nightly-only SIMD acceleration is available through the
@@ -19,7 +18,11 @@
 //! buffer is already resident in memory. Use [`open_fastq`] or
 //! [`open_fastq_with_config`] when you want file-path auto-detection for raw
 //! FASTQ, ordinary gzip, and BGZF. Use [`PairedFastqReader`] or
-//! [`open_paired_fastq`] for ordered R1/R2 streams.
+//! [`open_paired_fastq`] for ordered R1/R2 streams. Use [`FastaReader`] or
+//! [`open_fasta`] for raw, gzip, or BGZF FASTA streams. Use
+//! [`visit_fasta_bytes`] for resident multiline FASTA, and
+//! [`visit_two_line_fasta_bytes`] or [`visit_two_line_fasta_read`] for strict
+//! canonical two-line FASTA fast paths.
 //!
 //! # Scope
 //!
@@ -30,10 +33,11 @@
 //!
 //! # Lifetimes and allocation
 //!
-//! Batches borrow from the reader's reusable slab buffer. A [`FastqBatch`] is
-//! valid until the next mutable reader call. Clone or copy record data if it
-//! must outlive the batch. This design keeps the parser low-allocation, but it
-//! means callers should process each batch before advancing the reader.
+//! Batches borrow from the reader's reusable storage. A [`FastqBatch`] or
+//! [`FastaBatch`] is valid until the next mutable reader call. Clone or copy
+//! record data if it must outlive the batch. This design keeps the parser
+//! low-allocation, but it means callers should process each batch before
+//! advancing the reader.
 //!
 //! # Feature flags
 //!
@@ -86,6 +90,7 @@ pub mod benchutil;
 #[cfg(feature = "bgzf")]
 mod bgzf;
 mod error;
+mod fasta;
 mod fastq;
 mod fastq_frame;
 /// Base/quality packing and trusted four-line FASTQ pack paths.
@@ -108,14 +113,20 @@ pub use bgzf::{
     decompress_bgzf_parallel, decompress_bgzf_parallel_with_inflate_backend,
 };
 pub use error::{FastqError, FastqPosition, Result};
+pub use fasta::{
+    FastaBatch, FastaConfig, FastaReader, FastaRecord, FastaRecordRef, FastaRecordSink, FastaShape,
+    FastaStats, FastaVisitRecord, count_two_line_fasta_bytes, count_two_line_fasta_read,
+    detect_fasta_shape, visit_fasta_bytes, visit_fasta_bytes_auto, visit_two_line_fasta_bytes,
+    visit_two_line_fasta_read,
+};
 pub use fastq::{
     FastqBatch, FastqConfig, FastqPair, FastqReader, FastqRecord, FastqVisitRecord,
     InterleavedPairs, PairValidation, PairedFastqBatch, PairedFastqPairs, PairedFastqReader,
     PairedRecords, PairingMode, RecordRef, paired_records, strip_pair_suffix, visit_fastq_bytes,
 };
 pub use source::{
-    open_fastq, open_fastq_with_config, open_paired_fastq, open_paired_fastq_with_config,
-    open_paired_fastq_with_configs,
+    open_fasta, open_fasta_with_config, open_fastq, open_fastq_with_config, open_paired_fastq,
+    open_paired_fastq_with_config, open_paired_fastq_with_configs,
 };
 #[cfg(feature = "bgzf")]
 pub use source::{

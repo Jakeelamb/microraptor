@@ -1,6 +1,6 @@
 # Benchmarking
 
-Microraptor has ten benchmark surfaces:
+Microraptor has fourteen benchmark surfaces:
 
 - `cargo +nightly bench --all-features`: nightly microbenchmarks using Rust's built-in
   benchmark harness.
@@ -16,6 +16,9 @@ Microraptor has ten benchmark surfaces:
   summaries/figures.
 - `scripts/benchmark-rust-peers.sh`: script-generated Rust parser-library peer
   comparison against `seq_io`, `noodles-fastq`, and `bio`.
+- `scripts/benchmark-fasta-peers.sh`: script-generated FASTA parser-library
+  peer comparison against `seq_io` and `bio`, including strict two-line FASTA
+  fast paths.
 - `scripts/check-replication-host.sh`: local host/toolchain/comparator
   preflight for release and benchmark regeneration.
 - `scripts/discover-local-benchmark-corpus.sh`: local biological FASTQ corpus
@@ -23,14 +26,30 @@ Microraptor has ten benchmark surfaces:
 - `scripts/profile-hotpath.sh`: isolated parse-vs-pack profiling output.
 - `scripts/benchmark-rust-peer-size-sweep.sh`: increasing-input-size Rust parser
   framework sweep for publication-style time-vs-size figures.
+- `scripts/benchmark-fasta-peer-size-sweep.sh`: increasing-input-size FASTA
+  parser framework sweep for raw and gzip two-line FASTA figures.
+- `scripts/benchmark-fasta-gauntlet.sh`: FASTA shape/transport gauntlet covering
+  two-line DNA, wrapped DNA, many tiny records, long contigs, protein FASTA,
+  raw/gzip/BGZF transport, memory rows, and installed command-line comparators.
 
-The benchmark binary generates deterministic synthetic FASTQ in memory, then
-measures the same parser and side-channel APIs used by downstream crates. It
-reports best-of-N wall time to reduce noise from scheduler spikes.
+The benchmark binary generates deterministic synthetic FASTQ or FASTA in memory,
+then measures the same parser and side-channel APIs used by downstream crates.
+It reports best-of-N wall time to reduce noise from scheduler spikes.
 
 For real input files, pass `--input PATH` or set `MICRORAPTOR_INPUT`. The file
 path goes through `open_fastq_with_config`, so raw FASTQ, gzip FASTQ, and BGZF
 FASTQ use the same auto-detection path as library callers.
+
+For FASTA parser benchmarks, pass `--format fasta --mode parse`. FASTA rows use
+`FastaReader` and the same raw/gzip/BGZF transport detection, but they are
+parse-only: paired FASTQ validation and FASTQ pack rows do not apply.
+
+Compression rows must be read literally. `flate2` and `libdeflate` are
+third-party compression implementations; microraptor uses them as transport
+backends. Benchmark rows named `libdeflate` measure microraptor parsing or
+orchestration after selecting the upstream libdeflate engine through the
+`libdeflater` Rust wrapper. They are not claims that microraptor implements a
+new DEFLATE codec.
 
 The FASTQ parser expects the common four-line record shape: name, sequence,
 plus, quality. Multiline sequence or quality fields are not supported.
@@ -53,6 +72,9 @@ scripts/benchmark-gauntlet.sh
 scripts/render-benchmark-report.sh
 scripts/check-benchmark-snapshots.sh
 scripts/benchmark-rust-peers.sh
+scripts/benchmark-fasta-peers.sh
+scripts/benchmark-fasta-peer-size-sweep.sh
+scripts/benchmark-fasta-gauntlet.sh
 scripts/check-replication-host.sh --strict
 scripts/check-pack-regression.sh
 scripts/check-pack-instructions.sh
@@ -68,6 +90,7 @@ For machine-readable output:
 cargo run --release --bin microraptor-bench -- --records 500000 --iters 7 --json
 cargo run --release --bin microraptor-bench -- --records 500000 --mode parse --json
 cargo run --release --bin microraptor-bench -- --records 500000 --mode pack --json
+cargo run --release --bin microraptor-bench -- --format fasta --mode parse --records 500000 --json
 ```
 
 Synthetic `--mode pack` uses the trusted streaming pack path for `pack-seq-qual`.
@@ -378,6 +401,56 @@ resident `microraptor-slice-visitor`; gzip rows exclude it because that API is
 intentionally raw resident-byte only. Treat the sweep as parser-framework
 evidence; run the gauntlet separately for command-line workflow comparisons.
 
+Run FASTA parser-library peer comparisons separately from the FASTQ gauntlet:
+
+```bash
+MICRORAPTOR_BENCH_THREADS=8 MICRORAPTOR_FASTA_PEER_ITERS=3 \
+scripts/benchmark-fasta-peers.sh
+```
+
+The FASTA peer harness writes `fasta-library-peers.tsv`, `summary.md`,
+`metadata.md`, and an SVG throughput figure. It compares robust multiline
+resident parsing, strict two-line resident visitors, strict two-line streaming
+visitors, strict resident/streaming light-accounting two-line counter paths,
+`seq_io`, and `bio`. Rows name whether they use raw bytes, third-party flate2
+gzip, or third-party libdeflate gzip via `libdeflater`. Treat strict `two-line`
+rows as evidence for canonical `>header`/`sequence` FASTA, not arbitrary
+multiline FASTA.
+
+For a FASTA publication-style parser-framework scaling plot:
+
+```bash
+MICRORAPTOR_BENCH_THREADS=8 \
+MICRORAPTOR_FASTA_SIZE_SWEEP_RECORDS="10000 50000 100000 500000 1000000" \
+MICRORAPTOR_FASTA_SIZE_SWEEP_COMPRESSIONS="raw gzip" \
+MICRORAPTOR_FASTA_SIZE_SWEEP_ITERS=3 \
+scripts/benchmark-fasta-peer-size-sweep.sh
+```
+
+The checked local artifact lives at
+[`docs/benchmarks/fasta-peer-size-sweep/summary.md`](docs/benchmarks/fasta-peer-size-sweep/summary.md).
+It includes the raw TSV and
+[`figures/fasta-peer-size-sweep-time.svg`](docs/benchmarks/fasta-peer-size-sweep/figures/fasta-peer-size-sweep-time.svg).
+By default this script fails if the best row for any requested size/compression
+does not start with `microraptor`; set
+`MICRORAPTOR_FASTA_SIZE_SWEEP_REQUIRE_MICRORAPTOR_WINS=0` only for diagnostics.
+
+For a broader FASTA robustness/performance gauntlet:
+
+```bash
+MICRORAPTOR_BENCH_THREADS=8 \
+MICRORAPTOR_FASTA_GAUNTLET_RECORDS=10000 \
+MICRORAPTOR_FASTA_GAUNTLET_READ_LEN=150 \
+MICRORAPTOR_FASTA_GAUNTLET_ITERS=3 \
+scripts/benchmark-fasta-gauntlet.sh
+```
+
+The checked local artifact lives at
+[`docs/benchmarks/fasta-gauntlet/summary.md`](docs/benchmarks/fasta-gauntlet/summary.md).
+It covers synthetic two-line DNA, wrapped DNA, many tiny records, long wrapped
+contigs, protein FASTA, raw/gzip/BGZF transport, RSS smoke rows, optional local
+corpus FASTA files, and installed command-line comparator timings.
+
 Use the opt-in diagnostic mode to investigate microraptor internals without
 changing the normal published peer table:
 
@@ -400,10 +473,11 @@ Build with `--features libdeflate` or `--all-features` to include explicit
 `bgzf-libdeflate-*` rows for synthetic BGZF and `file-bgzf-libdeflate-*` rows
 for real `.bgz` inputs. Ordinary gzip remains on the streaming flate2 path;
 `open_fastq_gzip_libdeflate` is an explicit buffered path for bounded gzip
-inputs. The normal BGZF auto-open path uses `BgzfAutoReader` by default: small
-compressed inputs stay serial and larger inputs switch to the bounded parallel
-reader only past the built-in size threshold. When the `libdeflate` feature is
-enabled, BGZF auto-open uses libdeflate inflate by default; use
+inputs. Both flate2 and libdeflate are third-party compression backends. The
+normal BGZF auto-open path uses `BgzfAutoReader` by default: small compressed
+inputs stay serial and larger inputs switch to the bounded parallel reader only
+past the built-in size threshold. When the `libdeflate` feature is enabled,
+BGZF auto-open uses the upstream libdeflate inflate backend by default; use
 `open_fastq_bgzf_flate2` or `open_fastq_bgzf_with_backend` when comparing or
 forcing a backend. BGZF output can use libdeflate through `BgzfDeflateBackend`.
 Use `open_fastq_bgzf_adaptive` when you need to pass an explicit BGZF worker or

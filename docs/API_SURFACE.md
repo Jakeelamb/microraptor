@@ -17,6 +17,14 @@ These APIs are the default entry points for downstream scientific tools.
 | `FastqBatch`, `FastqRecord`, `RecordRef` | Zero-copy record access within a reusable slab | Keep public |
 | `FastqConfig` | Slab size, validation, and pairing configuration | Keep public |
 | `open_fastq`, `open_fastq_with_config` | File-path opener for raw, gzip, and BGZF inputs | Keep public |
+| `FastaReader`, `FastaBatch`, `FastaRecord`, `FastaRecordRef` | Streaming multiline FASTA batches over any `Read` source | Keep public |
+| `FastaConfig` | FASTA batch, input-buffer, and sequence-length hint configuration | Keep public |
+| `visit_fasta_bytes` | Zero-copy resident FASTA visitor with multiline folding fallback | Keep public |
+| `visit_fasta_bytes_auto`, `detect_fasta_shape`, `FastaShape` | Resident FASTA shape detection and automatic strict two-line dispatch | Keep public |
+| `visit_two_line_fasta_bytes`, `visit_two_line_fasta_read` | Strict `>header`/`sequence` fast paths for canonical two-line FASTA | Keep public |
+| `count_two_line_fasta_bytes`, `count_two_line_fasta_read`, `FastaStats` | Strict two-line FASTA count/total-bases/light-checksum paths | Keep public |
+| `FastaRecordSink`, `FastaVisitRecord` | Borrowed FASTA visitor sink and record view | Keep public |
+| `open_fasta`, `open_fasta_with_config` | File-path opener for raw, gzip, and BGZF FASTA inputs | Keep public |
 | `PairedFastqReader`, `PairedFastqBatch`, `FastqPair` | Ordered paired-end streaming | Keep public |
 | `open_paired_fastq*` | Paired file opener variants | Keep public |
 | `PairingMode`, `PairValidation`, `strip_pair_suffix` | Explicit ordered-pair validation semantics | Keep public |
@@ -24,7 +32,13 @@ These APIs are the default entry points for downstream scientific tools.
 | `FastqBatchSource`, `FastqPairBatchSource` | Generic adapters for downstream pipelines | Keep public |
 
 Rationale: these are the crate's core value proposition. They expose borrowed
-FASTQ batches without imposing a workflow, allocator, or owned record model.
+FASTQ and FASTA batches without imposing a workflow, allocator, or owned record
+model.
+
+Compression backends are not owned by microraptor. `flate2` and `libdeflate`
+are third-party transport engines. Microraptor owns the parser APIs, BGZF
+orchestration, backend-selection surface, and benchmark labels around those
+engines.
 
 ## Tier 2: Advanced But Intentional Surface
 
@@ -86,6 +100,11 @@ transport tiers.
   but a future 1.0 API may prefer an opaque view if range layout changes.
 - Trusted pack functions assume ordinary four-line FASTQ. They are useful and
   benchmarked, but public examples must not imply multiline FASTQ support.
+- FASTA support is intentionally parser-only in `0.1.x`: no quality summaries,
+  paired validation, or trusted FASTQ pack APIs apply to FASTA records.
+- The `visit_two_line_fasta_*` and `count_two_line_fasta_*` functions are
+  deliberately strict fast paths for canonical two-line FASTA. Use
+  `FastaReader` or `visit_fasta_bytes` for ordinary multiline FASTA.
 - Whole-buffer BGZF helpers are convenient for fixtures and conversions, but
   large production workflows should prefer streaming readers/writers.
 - `PairValidation::FastSlash` is intentionally fast and narrow. Broader naming

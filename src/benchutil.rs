@@ -2,7 +2,7 @@ use crate::pack::{
     TrustedPackSink, TrustedPackedRecord, pack_trusted_fastq, pack_trusted_fastq_read_direct_sink,
     pack_trusted_fastq_read_sink,
 };
-use crate::{FastqConfig, FastqReader, Result};
+use crate::{FastaReader, FastqConfig, FastqReader, Result};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StreamStats {
@@ -25,6 +25,17 @@ impl StreamStats {
             .wrapping_mul(1_099_511_628_211)
             .wrapping_add(seq.len() as u64);
     }
+
+    pub fn observe_sequence_record(&mut self, name: &[u8], seq: &[u8]) {
+        self.records += 1;
+        self.bases += seq.len() as u64;
+        self.name_bytes += name.len() as u64;
+        self.checksum = self
+            .checksum
+            .wrapping_add(seq.first().copied().unwrap_or_default() as u64)
+            .wrapping_mul(1_099_511_628_211)
+            .wrapping_add(seq.len() as u64);
+    }
 }
 
 pub fn consume_fastq<R: std::io::Read>(reader: &mut FastqReader<R>) -> Result<StreamStats> {
@@ -34,6 +45,15 @@ pub fn consume_fastq<R: std::io::Read>(reader: &mut FastqReader<R>) -> Result<St
             stats.observe_record(record.name(), record.seq(), record.qual());
         }
     }
+    Ok(stats)
+}
+
+pub fn consume_fasta<R: std::io::Read>(reader: &mut FastaReader<R>) -> Result<StreamStats> {
+    let mut stats = StreamStats::default();
+    reader.visit_records(|record| {
+        stats.observe_sequence_record(record.name(), record.seq());
+        Ok(())
+    })?;
     Ok(stats)
 }
 
@@ -101,6 +121,21 @@ pub fn synthetic_fastq(records: usize, read_len: usize) -> Vec<u8> {
     out
 }
 
+pub fn synthetic_fasta(records: usize, read_len: usize) -> Vec<u8> {
+    let bases = b"ACGT";
+    let mut out = Vec::with_capacity(records.saturating_mul(read_len + 16));
+    for i in 0..records {
+        out.extend_from_slice(b">r");
+        push_usize_decimal(i, &mut out);
+        out.push(b'\n');
+        for j in 0..read_len {
+            out.push(bases[(i + j) & 3]);
+        }
+        out.push(b'\n');
+    }
+    out
+}
+
 fn push_usize_decimal(mut n: usize, out: &mut Vec<u8>) {
     if n == 0 {
         out.push(b'0');
@@ -119,8 +154,8 @@ fn push_usize_decimal(mut n: usize, out: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FastqReader;
     use crate::pack::pack_bases_and_summarize_qualities_into;
+    use crate::{FastaReader, FastqReader};
 
     #[test]
     fn synthetic_fixture_parses_to_expected_stats() {
@@ -130,6 +165,16 @@ mod tests {
         assert_eq!(stats.records, 3);
         assert_eq!(stats.bases, 12);
         assert_eq!(stats.qualities, 12);
+    }
+
+    #[test]
+    fn synthetic_fasta_fixture_parses_to_expected_stats() {
+        let input = synthetic_fasta(3, 4);
+        let mut reader = FastaReader::new(&input[..]);
+        let stats = consume_fasta(&mut reader).unwrap();
+        assert_eq!(stats.records, 3);
+        assert_eq!(stats.bases, 12);
+        assert_eq!(stats.qualities, 0);
     }
 
     #[test]

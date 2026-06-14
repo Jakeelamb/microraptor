@@ -7,6 +7,7 @@ use std::io::{Seek, SeekFrom};
 use std::path::Path;
 
 use crate::error::Result;
+use crate::fasta::{FastaConfig, FastaReader};
 use crate::fastq::{FastqConfig, FastqReader, PairedFastqReader};
 #[cfg(feature = "bgzf")]
 use crate::{
@@ -42,6 +43,23 @@ pub fn open_fastq_with_config(
 ) -> Result<FastqReader<Box<dyn Read + Send>>> {
     let reader = open_read_by_magic(path)?;
     Ok(FastqReader::with_config(reader, config))
+}
+
+/// Open a FASTA file with default configuration.
+///
+/// With default features, this detects raw FASTA, ordinary gzip, and BGZF by
+/// file magic. BGZF is checked before ordinary gzip.
+pub fn open_fasta(path: impl AsRef<Path>) -> Result<FastaReader<Box<dyn Read + Send>>> {
+    open_fasta_with_config(path, FastaConfig::default())
+}
+
+/// Open a FASTA file with explicit parser configuration.
+pub fn open_fasta_with_config(
+    path: impl AsRef<Path>,
+    config: FastaConfig,
+) -> Result<FastaReader<Box<dyn Read + Send>>> {
+    let reader = open_read_by_magic(path)?;
+    Ok(FastaReader::with_config(reader, config))
 }
 
 /// Open ordered R1/R2 FASTQ files with default configuration.
@@ -301,6 +319,25 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gzip")]
+    fn opens_gzip_fasta_by_magic() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("microraptor-{}.fa.gz", std::process::id()));
+        let file = File::create(&path).unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+        encoder.write_all(b">seq1\nAC\nGT\n").unwrap();
+        encoder.finish().unwrap();
+
+        let mut reader = open_fasta(&path).unwrap();
+        let batch = reader.next_batch().unwrap().unwrap();
+        let rec = batch.records().next().unwrap();
+        assert_eq!(rec.name_without_gt(), b"seq1");
+        assert_eq!(rec.seq(), b"ACGT");
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     #[cfg(feature = "bgzf")]
     fn opens_bgzf_by_magic() {
         let dir = std::env::temp_dir();
@@ -317,6 +354,24 @@ mod tests {
         let mut parallel = open_fastq_bgzf_parallel(&path, 2).unwrap();
         let batch = parallel.next_batch().unwrap().unwrap();
         let rec = batch.records().next().unwrap();
+        assert_eq!(rec.seq(), b"ACGT");
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "bgzf")]
+    fn opens_bgzf_fasta_by_magic() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("microraptor-fasta-{}.bgz", std::process::id()));
+        let mut writer = crate::BgzfWriter::new(File::create(&path).unwrap());
+        writer.write_all(b">seq1\nAC\nGT\n").unwrap();
+        writer.finish().unwrap();
+
+        let mut reader = open_fasta(&path).unwrap();
+        let batch = reader.next_batch().unwrap().unwrap();
+        let rec = batch.records().next().unwrap();
+        assert_eq!(rec.name_without_gt(), b"seq1");
         assert_eq!(rec.seq(), b"ACGT");
 
         std::fs::remove_file(path).unwrap();
@@ -433,5 +488,20 @@ mod tests {
 
         std::fs::remove_file(r1_path).unwrap();
         std::fs::remove_file(r2_path).unwrap();
+    }
+
+    #[test]
+    fn open_fasta_parses_raw_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("microraptor-{}.fa", std::process::id()));
+        std::fs::write(&path, b">seq1\nAC\nGT\n").unwrap();
+
+        let mut reader = open_fasta(&path).unwrap();
+        let batch = reader.next_batch().unwrap().unwrap();
+        let rec = batch.records().next().unwrap();
+        assert_eq!(rec.id_token(), b"seq1");
+        assert_eq!(rec.seq(), b"ACGT");
+
+        std::fs::remove_file(path).unwrap();
     }
 }

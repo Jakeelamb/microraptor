@@ -10,6 +10,9 @@ struct Config {
     records: usize,
     read_len: usize,
     pattern: Pattern,
+    format: Format,
+    fasta_layout: FastaLayout,
+    alphabet: Alphabet,
 }
 
 impl Default for Config {
@@ -19,6 +22,9 @@ impl Default for Config {
             records: 100_000,
             read_len: 150,
             pattern: Pattern::Cyclic,
+            format: Format::Fastq,
+            fasta_layout: FastaLayout::TwoLine,
+            alphabet: Alphabet::Dna,
         }
     }
 }
@@ -27,6 +33,24 @@ impl Default for Config {
 enum Pattern {
     Cyclic,
     Entropy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Format {
+    Fastq,
+    Fasta,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FastaLayout {
+    TwoLine,
+    Wrapped { width: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Alphabet {
+    Dna,
+    Protein,
 }
 
 fn main() {
@@ -39,6 +63,30 @@ fn main() {
 fn run() -> Result<()> {
     let config = parse_args();
     fs::create_dir_all(&config.out_dir)?;
+
+    if config.format == Format::Fasta {
+        let single = build_single_fasta(
+            config.records,
+            config.read_len,
+            config.pattern,
+            config.fasta_layout,
+            config.alphabet,
+        );
+        write_file(config.out_dir.join("single.fasta"), &single)?;
+
+        #[cfg(feature = "gzip")]
+        {
+            write_gzip(config.out_dir.join("single.fasta.gz"), &single)?;
+        }
+
+        #[cfg(feature = "bgzf")]
+        {
+            write_bgzf(config.out_dir.join("single.fasta.bgz"), &single)?;
+        }
+
+        println!("wrote fixtures to {}", config.out_dir.display());
+        return Ok(());
+    }
 
     let single = build_single_end(config.records, config.read_len, config.pattern);
     let interleaved = build_interleaved(config.records, config.read_len, config.pattern);
@@ -73,6 +121,31 @@ fn build_single_end(records: usize, read_len: usize, pattern: Pattern) -> Vec<u8
     let mut out = Vec::with_capacity(records.saturating_mul(read_len + 32));
     for i in 0..records {
         push_record(&mut out, b"r", i, None, read_len, 0, pattern);
+    }
+    out
+}
+
+fn build_single_fasta(
+    records: usize,
+    read_len: usize,
+    pattern: Pattern,
+    layout: FastaLayout,
+    alphabet: Alphabet,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(records.saturating_mul(read_len + 16));
+    for i in 0..records {
+        out.extend_from_slice(b">r");
+        push_usize_decimal(i, &mut out);
+        out.push(b'\n');
+        match layout {
+            FastaLayout::TwoLine => {
+                push_symbols(&mut out, i, 0, read_len, pattern, alphabet);
+                out.push(b'\n');
+            }
+            FastaLayout::Wrapped { width } => {
+                push_wrapped_symbols(&mut out, i, 0, read_len, pattern, alphabet, width.max(1));
+            }
+        }
     }
     out
 }
@@ -114,24 +187,52 @@ fn push_record(
     }
     out.push(b'\n');
 
-    push_bases(out, index, phase, read_len, pattern);
+    push_symbols(out, index, phase, read_len, pattern, Alphabet::Dna);
     out.extend_from_slice(b"\n+\n");
     push_qualities(out, index, phase, read_len, pattern);
     out.push(b'\n');
 }
 
-fn push_bases(out: &mut Vec<u8>, index: usize, phase: usize, read_len: usize, pattern: Pattern) {
-    let bases = b"ACGT";
+fn push_wrapped_symbols(
+    out: &mut Vec<u8>,
+    index: usize,
+    phase: usize,
+    read_len: usize,
+    pattern: Pattern,
+    alphabet: Alphabet,
+    width: usize,
+) {
+    let mut written = 0;
+    while written < read_len {
+        let chunk = (read_len - written).min(width);
+        push_symbols(out, index + written, phase, chunk, pattern, alphabet);
+        out.push(b'\n');
+        written += chunk;
+    }
+}
+
+fn push_symbols(
+    out: &mut Vec<u8>,
+    index: usize,
+    phase: usize,
+    read_len: usize,
+    pattern: Pattern,
+    alphabet: Alphabet,
+) {
+    let symbols = match alphabet {
+        Alphabet::Dna => &b"ACGT"[..],
+        Alphabet::Protein => &b"ACDEFGHIKLMNPQRSTVWY"[..],
+    };
     match pattern {
         Pattern::Cyclic => {
             for j in 0..read_len {
-                out.push(bases[(index + j + phase) & 3]);
+                out.push(symbols[(index + j + phase) % symbols.len()]);
             }
         }
         Pattern::Entropy => {
             let mut state = rng_seed(index, phase, 0xa076_1d64_78bd_642f);
             for _ in 0..read_len {
-                out.push(bases[(next_u64(&mut state) as usize) & 3]);
+                out.push(symbols[(next_u64(&mut state) as usize) % symbols.len()]);
             }
         }
     }
@@ -215,6 +316,11 @@ fn parse_args() -> Config {
             "--records" => config.records = parse_usize(&mut args, "--records"),
             "--read-len" => config.read_len = parse_usize(&mut args, "--read-len"),
             "--pattern" => config.pattern = parse_pattern(&mut args, "--pattern"),
+            "--format" => config.format = parse_format(&mut args, "--format"),
+            "--fasta-layout" => {
+                config.fasta_layout = parse_fasta_layout(&mut args, "--fasta-layout")
+            }
+            "--alphabet" => config.alphabet = parse_alphabet(&mut args, "--alphabet"),
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -266,8 +372,59 @@ fn parse_pattern(args: &mut impl Iterator<Item = String>, flag: &str) -> Pattern
     }
 }
 
+fn parse_format(args: &mut impl Iterator<Item = String>, flag: &str) -> Format {
+    let Some(value) = args.next() else {
+        eprintln!("{flag} requires one of: fastq, fasta");
+        std::process::exit(2);
+    };
+    match value.as_str() {
+        "fastq" => Format::Fastq,
+        "fasta" => Format::Fasta,
+        _ => {
+            eprintln!("{flag} requires one of: fastq, fasta; got {value}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn parse_fasta_layout(args: &mut impl Iterator<Item = String>, flag: &str) -> FastaLayout {
+    let Some(value) = args.next() else {
+        eprintln!("{flag} requires one of: two-line, wrapped:N");
+        std::process::exit(2);
+    };
+    if value == "two-line" {
+        return FastaLayout::TwoLine;
+    }
+    if let Some(width) = value.strip_prefix("wrapped:") {
+        return match width.parse() {
+            Ok(width) => FastaLayout::Wrapped { width },
+            Err(_) => {
+                eprintln!("{flag} wrapped width must be an unsigned integer; got {value}");
+                std::process::exit(2);
+            }
+        };
+    }
+    eprintln!("{flag} requires one of: two-line, wrapped:N; got {value}");
+    std::process::exit(2);
+}
+
+fn parse_alphabet(args: &mut impl Iterator<Item = String>, flag: &str) -> Alphabet {
+    let Some(value) = args.next() else {
+        eprintln!("{flag} requires one of: dna, protein");
+        std::process::exit(2);
+    };
+    match value.as_str() {
+        "dna" => Alphabet::Dna,
+        "protein" => Alphabet::Protein,
+        _ => {
+            eprintln!("{flag} requires one of: dna, protein; got {value}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn print_help() {
     eprintln!(
-        "microraptor-fixture [--out-dir PATH] [--records N] [--read-len N] [--pattern cyclic|entropy]"
+        "microraptor-fixture [--out-dir PATH] [--format fastq|fasta] [--records N] [--read-len N] [--pattern cyclic|entropy] [--fasta-layout two-line|wrapped:N] [--alphabet dna|protein]"
     );
 }
