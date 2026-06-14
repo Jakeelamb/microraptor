@@ -1,43 +1,38 @@
-#[cfg(feature = "simd")]
-use std::simd::{Simd, cmp::SimdPartialEq};
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+use std::arch::x86_64::{
+    __m256i, _mm256_cmpeq_epi8, _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_set1_epi8,
+};
 
 pub(crate) fn scan_newlines(bytes: &[u8], out: &mut Vec<usize>) {
     out.clear();
     scan_newlines_impl(bytes, out);
 }
 
-#[cfg(feature = "simd")]
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 fn scan_newlines_impl(bytes: &[u8], out: &mut Vec<usize>) {
-    const LANES: usize = 64;
-    type Chunk = Simd<u8, LANES>;
-
-    let needle = Chunk::splat(b'\n');
+    const LANES: usize = 32;
     let mut i = 0;
-    while i + LANES <= bytes.len() {
-        let chunk = Chunk::from_slice(&bytes[i..i + LANES]);
-        let mut mask = chunk.simd_eq(needle).to_bitmask();
-        while mask != 0 {
-            let bit = mask.trailing_zeros() as usize;
-            out.push(i + bit);
-            mask &= mask - 1;
+    if std::is_x86_feature_detected!("avx2") {
+        unsafe {
+            let needle = _mm256_set1_epi8(b'\n' as i8);
+            while i + LANES <= bytes.len() {
+                let chunk = _mm256_loadu_si256(bytes.as_ptr().add(i).cast::<__m256i>());
+                let mut mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(chunk, needle)) as u32;
+                while mask != 0 {
+                    let bit = mask.trailing_zeros() as usize;
+                    out.push(i + bit);
+                    mask &= mask - 1;
+                }
+                i += LANES;
+            }
         }
-        i += LANES;
     }
-    scan_newlines_scalar_offset(&bytes[i..], i, out);
+    out.extend(memchr::memchr_iter(b'\n', &bytes[i..]).map(|offset| i + offset));
 }
 
-#[cfg(not(feature = "simd"))]
+#[cfg(not(all(feature = "simd", target_arch = "x86_64")))]
 fn scan_newlines_impl(bytes: &[u8], out: &mut Vec<usize>) {
     out.extend(memchr::memchr_iter(b'\n', bytes));
-}
-
-#[cfg(feature = "simd")]
-fn scan_newlines_scalar_offset(bytes: &[u8], offset: usize, out: &mut Vec<usize>) {
-    for (i, &b) in bytes.iter().enumerate() {
-        if b == b'\n' {
-            out.push(offset + i);
-        }
-    }
 }
 
 #[cfg(test)]

@@ -38,7 +38,7 @@ parse_corpus_list "${corpus_paired_inputs}" corpus_paired_input_list
 
 mkdir -p "${input_dir}" "${result_dir}"
 
-cargo +nightly build --release --all-features --bin microraptor-bench --bin microraptor-fixture
+cargo build --release --all-features --bin microraptor --bin microraptor-bench --bin microraptor-fixture
 target/release/microraptor-fixture \
   --out-dir "${input_dir}" \
   --records "${records}" \
@@ -114,17 +114,117 @@ command_version() {
 } > "${md}"
 
 printf 'label\ttool\tstatus\telapsed_s\tcommand\n' > "${external_tsv}"
-printf 'label\ttool\tparity_status\texpected_records\texpected_bases\tobserved_records\tobserved_bases\tnotes\n' > "${external_parity_tsv}"
+printf 'label\ttool\tparity_status\texpected_records\texpected_bases\texpected_checksum\tobserved_records\tobserved_bases\tobserved_checksum\tnotes\n' > "${external_parity_tsv}"
 
 record_external_parity_timing_only() {
   local label="$1"
   local command_name="$2"
-  printf '%s\t%s\ttiming_only\t%s\t%s\tNA\tNA\t%s\n' \
+  printf '%s\t%s\ttiming_only\t%s\t%s\tNA\tNA\tNA\tNA\t%s\n' \
     "${label}" \
     "${command_name}" \
     "${records}" \
     "$((records * read_len))" \
     "no normalized comparator parser configured" >> "${external_parity_tsv}"
+}
+
+stats_triplet() {
+  awk -F '\t' '
+    $1 == "records" { records = $2 }
+    $1 == "bases" { bases = $2 }
+    $1 == "checksum" { checksum = $2 }
+    END { printf "%s\t%s\t%s\n", records, bases, checksum }
+  '
+}
+
+microraptor_fastq_triplet() {
+  target/release/microraptor stats --format fastq "$1" | stats_triplet
+}
+
+record_external_parity_triplets() {
+  local label="$1"
+  local tool="$2"
+  local expected="$3"
+  local observed="$4"
+  local notes="$5"
+  local expected_records expected_bases expected_checksum observed_records observed_bases observed_checksum
+  IFS=$'\t' read -r expected_records expected_bases expected_checksum <<< "${expected}"
+  IFS=$'\t' read -r observed_records observed_bases observed_checksum <<< "${observed}"
+  local status="mismatch"
+  if [[ "${expected_records}" == "${observed_records}" && "${expected_bases}" == "${observed_bases}" && "${expected_checksum}" == "${observed_checksum}" ]]; then
+    status="match"
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "${label}" \
+    "${tool}" \
+    "${status}" \
+    "${expected_records}" \
+    "${expected_bases}" \
+    "${expected_checksum}" \
+    "${observed_records}" \
+    "${observed_bases}" \
+    "${observed_checksum}" \
+    "${notes}" >> "${external_parity_tsv}"
+}
+
+record_external_parity_unknown() {
+  local label="$1"
+  local tool="$2"
+  local notes="$3"
+  printf '%s\t%s\tunknown\tNA\tNA\tNA\tNA\tNA\tNA\t%s\n' \
+    "${label}" \
+    "${tool}" \
+    "${notes}" >> "${external_parity_tsv}"
+}
+
+record_seqkit_fastq_parity() {
+  local label="$1"
+  local path="$2"
+  command -v seqkit >/dev/null 2>&1 || return 0
+  local expected observed
+  expected="$(microraptor_fastq_triplet "${path}")"
+  set +e
+  observed="$(seqkit seq -w 0 "${path}" 2>/dev/null | target/release/microraptor checksum --format fastq - 2>/dev/null | stats_triplet)"
+  local status="$?"
+  set -e
+  if [[ "${status}" -ne 0 || "${observed}" == $'\t\t' ]]; then
+    record_external_parity_unknown "${label}" seqkit "seqkit normalized FASTQ stream was unavailable"
+    return 0
+  fi
+  record_external_parity_triplets "${label}" seqkit "${expected}" "${observed}" "seqkit seq -w 0 normalized FASTQ stream"
+}
+
+record_seqtk_fastq_parity() {
+  local label="$1"
+  local path="$2"
+  command -v seqtk >/dev/null 2>&1 || return 0
+  local expected observed
+  expected="$(microraptor_fastq_triplet "${path}")"
+  set +e
+  observed="$(seqtk seq -A "${path}" 2>/dev/null | target/release/microraptor checksum --format fasta - 2>/dev/null | stats_triplet)"
+  local status="$?"
+  set -e
+  if [[ "${status}" -ne 0 || "${observed}" == $'\t\t' ]]; then
+    record_external_parity_unknown "${label}" seqtk "seqtk normalized FASTA stream was unavailable"
+    return 0
+  fi
+  record_external_parity_triplets "${label}" seqtk "${expected}" "${observed}" "seqtk seq -A normalized FASTA sequence stream"
+}
+
+record_samtools_single_fastq_parity() {
+  local label="$1"
+  local path="$2"
+  command -v samtools >/dev/null 2>&1 || return 0
+  local expected observed
+  expected="$(microraptor_fastq_triplet "${path}")"
+  set +e
+  observed="$(samtools import -0 "${path}" -o - -O SAM -@ "${workers}" 2>/dev/null | target/release/microraptor checksum --format sam - 2>/dev/null | stats_triplet)"
+  local status="$?"
+  set -e
+  if [[ "${status}" -ne 0 || "${observed}" == $'\t\t' ]]; then
+    record_external_parity_unknown "${label}" samtools "samtools SAM stream was unavailable"
+    return 0
+  fi
+  record_external_parity_triplets "${label}" samtools "${expected}" "${observed}" "samtools import -O SAM sequence stream"
 }
 
 run_microraptor() {
@@ -352,18 +452,31 @@ fi
 } >> "${md}"
 
 run_external "seqkit stats single/raw" seqkit seqkit stats "${input_dir}/single.fastq"
+record_seqkit_fastq_parity "seqkit stats single/raw" "${input_dir}/single.fastq"
 run_external "seqkit stats single/gzip" seqkit seqkit stats "${input_dir}/single.fastq.gz"
+record_seqkit_fastq_parity "seqkit stats single/gzip" "${input_dir}/single.fastq.gz"
 run_external "seqkit stats single/bgzf" seqkit seqkit stats "${input_dir}/single.fastq.bgz"
+record_seqkit_fastq_parity "seqkit stats single/bgzf" "${input_dir}/single.fastq.bgz"
 run_external "seqkit stats paired/r1/raw" seqkit seqkit stats "${input_dir}/r1.fastq"
+record_seqkit_fastq_parity "seqkit stats paired/r1/raw" "${input_dir}/r1.fastq"
 run_external "seqkit stats paired/r2/raw" seqkit seqkit stats "${input_dir}/r2.fastq"
+record_seqkit_fastq_parity "seqkit stats paired/r2/raw" "${input_dir}/r2.fastq"
 run_external "seqkit stats paired/r1/gzip" seqkit seqkit stats "${input_dir}/r1.fastq.gz"
+record_seqkit_fastq_parity "seqkit stats paired/r1/gzip" "${input_dir}/r1.fastq.gz"
 run_external "seqkit stats paired/r2/gzip" seqkit seqkit stats "${input_dir}/r2.fastq.gz"
+record_seqkit_fastq_parity "seqkit stats paired/r2/gzip" "${input_dir}/r2.fastq.gz"
 run_external "seqkit stats paired/r1/bgzf" seqkit seqkit stats "${input_dir}/r1.fastq.bgz"
+record_seqkit_fastq_parity "seqkit stats paired/r1/bgzf" "${input_dir}/r1.fastq.bgz"
 run_external "seqkit stats paired/r2/bgzf" seqkit seqkit stats "${input_dir}/r2.fastq.bgz"
+record_seqkit_fastq_parity "seqkit stats paired/r2/bgzf" "${input_dir}/r2.fastq.bgz"
 run_external_stdout_null "seqtk comp single/raw" seqtk seqtk comp "${input_dir}/single.fastq"
+record_seqtk_fastq_parity "seqtk comp single/raw" "${input_dir}/single.fastq"
 run_external_stdout_null "seqtk comp single/gzip" seqtk seqtk comp "${input_dir}/single.fastq.gz"
+record_seqtk_fastq_parity "seqtk comp single/gzip" "${input_dir}/single.fastq.gz"
 run_external_stdout_null "seqtk comp single/bgzf" seqtk seqtk comp "${input_dir}/single.fastq.bgz"
+record_seqtk_fastq_parity "seqtk comp single/bgzf" "${input_dir}/single.fastq.bgz"
 run_external "seqtk fqchk single/raw" seqtk seqtk fqchk "${input_dir}/single.fastq"
+record_seqtk_fastq_parity "seqtk fqchk single/raw" "${input_dir}/single.fastq"
 run_external "bgzip test single/bgzf" bgzip bgzip -t "${input_dir}/single.fastq.bgz"
 run_external_stdout_null "bgzip decompress single/bgzf" bgzip bgzip -dc "${input_dir}/single.fastq.bgz"
 run_external "samtools import single/raw" samtools samtools import \
@@ -371,6 +484,7 @@ run_external "samtools import single/raw" samtools samtools import \
   -o /dev/null \
   -O BAM \
   -@ "${workers}"
+record_samtools_single_fastq_parity "samtools import single/raw" "${input_dir}/single.fastq"
 run_external "samtools import paired/raw" samtools samtools import \
   -1 "${input_dir}/r1.fastq" \
   -2 "${input_dir}/r2.fastq" \

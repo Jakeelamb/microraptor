@@ -69,6 +69,7 @@ fi
 
 run cargo fmt --all -- --check
 run env RUSTFLAGS=-D\ warnings cargo check --lib
+run cargo check --lib --bins --all-features
 run env RUSTDOCFLAGS=-D\ warnings cargo doc --no-deps
 run cargo test --all
 

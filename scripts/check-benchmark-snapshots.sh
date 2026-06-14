@@ -32,20 +32,44 @@ check_external_parity() {
   local tsv="$1"
   awk -F '\t' '
     NR == 1 {
-      expected = "label\ttool\tparity_status\texpected_records\texpected_bases\tobserved_records\tobserved_bases\tnotes"
+      expected = "label\ttool\tparity_status\texpected_records\texpected_bases\texpected_checksum\tobserved_records\tobserved_bases\tobserved_checksum\tnotes"
+      legacy = "label\ttool\tparity_status\texpected_records\texpected_bases\tobserved_records\tobserved_bases\tnotes"
+      if ($0 == legacy) {
+        legacy_header = 1
+        next
+      }
       if ($0 != expected) {
         printf "%s:%d: invalid external parity header\n", FILENAME, NR > "/dev/stderr"
         bad = 1
       }
       next
     }
-    NF != 8 {
-      printf "%s:%d: expected 8 columns, saw %d\n", FILENAME, NR, NF > "/dev/stderr"
+    legacy_header {
+      if (NF != 8) {
+        printf "%s:%d: expected 8 legacy columns, saw %d\n", FILENAME, NR, NF > "/dev/stderr"
+        bad = 1
+      }
+      if ($3 !~ /^(match|mismatch|timing_only|skipped|unknown)$/) {
+        printf "%s:%d: invalid parity_status: %s\n", FILENAME, NR, $3 > "/dev/stderr"
+        bad = 1
+      }
+      next
+    }
+    NF != 10 {
+      printf "%s:%d: expected 10 columns, saw %d\n", FILENAME, NR, NF > "/dev/stderr"
       bad = 1
     }
     $3 !~ /^(match|mismatch|timing_only|skipped|unknown)$/ {
       printf "%s:%d: invalid parity_status: %s\n", FILENAME, NR, $3 > "/dev/stderr"
       bad = 1
+    }
+    $3 ~ /^(match|mismatch)$/ {
+      for (i = 4; i <= 9; i++) {
+        if ($i !~ /^[0-9]+$/) {
+          printf "%s:%d: nonnumeric parity field %d for %s row: %s\n", FILENAME, NR, i, $3, $i > "/dev/stderr"
+          bad = 1
+        }
+      }
     }
     END {
       exit bad

@@ -32,6 +32,9 @@ jobs:
       - name: Test default library
         run: cargo test --lib
 
+      - name: Check stable all-feature lib and bins
+        run: cargo check --lib --bins --all-features
+
       - name: Check release documentation artifacts
         run: |
           test -s CITATION.cff

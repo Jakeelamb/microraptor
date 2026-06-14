@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::ops::Range;
 
 use crate::error::{FastqError, FastqPosition, Result};
 #[cfg(feature = "bgzf")]
-use crate::{BgzfDecodedBlockReader, BgzfIndexEntry, BgzfVirtualOffset};
+use crate::{BgzfDecodedBlockReader, BgzfIndex, BgzfIndexEntry, BgzfSeekReader, BgzfVirtualOffset};
 use memchr::memchr;
 
 const DEFAULT_BATCH_RECORDS: usize = 1024;
@@ -175,6 +175,74 @@ pub struct FastaIndexEntry {
     pub virtual_offset: Option<BgzfVirtualOffset>,
 }
 
+impl FastaIndexEntry {
+    /// Return the uncompressed FASTA byte offset for a zero-based sequence
+    /// position.
+    ///
+    /// Coordinates are 0-based and do not include FASTA line separators.
+    pub fn sequence_offset(&self, pos: u64) -> Result<u64> {
+        if pos > self.len {
+            return Err(FastqError::Format(
+                "FASTA sequence position exceeds reference length".into(),
+            ));
+        }
+        if pos == self.len {
+            return self.sequence_end_offset();
+        }
+        if self.line_bases == 0 {
+            return Err(FastqError::Format(
+                "FASTA index entry has zero line_bases for non-empty sequence".into(),
+            ));
+        }
+        Ok(self.offset + (pos / self.line_bases) * self.line_width + (pos % self.line_bases))
+    }
+
+    /// Return physical FASTA byte spans covering a zero-based half-open
+    /// sequence range.
+    ///
+    /// Each returned span points only at sequence bytes and excludes physical
+    /// newline bytes.
+    pub fn sequence_spans(&self, range: Range<u64>) -> Result<Vec<Range<u64>>> {
+        self.validate_range(range.clone())?;
+        let mut spans = Vec::new();
+        let mut pos = range.start;
+        while pos < range.end {
+            if self.line_bases == 0 {
+                return Err(FastqError::Format(
+                    "FASTA index entry has zero line_bases for non-empty range".into(),
+                ));
+            }
+            let in_line = pos % self.line_bases;
+            let take = (range.end - pos).min(self.line_bases - in_line);
+            let start = self.sequence_offset(pos)?;
+            spans.push(start..start + take);
+            pos += take;
+        }
+        Ok(spans)
+    }
+
+    fn sequence_end_offset(&self) -> Result<u64> {
+        if self.len == 0 {
+            return Ok(self.offset);
+        }
+        self.sequence_offset(self.len - 1).map(|offset| offset + 1)
+    }
+
+    fn validate_range(&self, range: Range<u64>) -> Result<()> {
+        if range.start > range.end {
+            return Err(FastqError::Format(
+                "FASTA range start must be <= end".into(),
+            ));
+        }
+        if range.end > self.len {
+            return Err(FastqError::Format(
+                "FASTA range end exceeds reference length".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// A `.fai`-style FASTA index.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FastaIndex {
@@ -221,6 +289,235 @@ impl FastaIndex {
             out.push('\n');
         }
         out
+    }
+
+    /// Parse a standard five-column `.fai` index from bytes.
+    pub fn from_fai_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut entries = Vec::new();
+        let mut seen = HashSet::new();
+        for (line_idx, line) in bytes.split(|&b| b == b'\n').enumerate() {
+            let line = trim_line(line);
+            if line.is_empty() {
+                continue;
+            }
+            let fields = line.split(|&b| b == b'\t').collect::<Vec<_>>();
+            if fields.len() != 5 {
+                return Err(FastqError::Format(format!(
+                    "invalid .fai line {}: expected 5 tab-delimited fields",
+                    line_idx + 1
+                )));
+            }
+            if fields[0].is_empty() {
+                return Err(FastqError::Format(format!(
+                    "invalid .fai line {}: empty reference name",
+                    line_idx + 1
+                )));
+            }
+            if !seen.insert(fields[0].to_vec()) {
+                return Err(FastqError::Format(format!(
+                    "invalid .fai line {}: duplicate reference name",
+                    line_idx + 1
+                )));
+            }
+            let len = parse_fai_u64(fields[1], line_idx + 1, "length")?;
+            let offset = parse_fai_u64(fields[2], line_idx + 1, "offset")?;
+            let line_bases = parse_fai_u64(fields[3], line_idx + 1, "line_bases")?;
+            let line_width = parse_fai_u64(fields[4], line_idx + 1, "line_width")?;
+            if len > 0 && line_bases == 0 {
+                return Err(FastqError::Format(format!(
+                    "invalid .fai line {}: non-empty reference has zero line_bases",
+                    line_idx + 1
+                )));
+            }
+            if line_width < line_bases {
+                return Err(FastqError::Format(format!(
+                    "invalid .fai line {}: line_width is smaller than line_bases",
+                    line_idx + 1
+                )));
+            }
+            entries.push(FastaIndexEntry {
+                name: fields[0].to_vec(),
+                len,
+                offset,
+                line_bases,
+                line_width,
+                #[cfg(feature = "bgzf")]
+                virtual_offset: None,
+            });
+        }
+        Ok(Self::from_entries(entries))
+    }
+
+    /// Parse a standard five-column `.fai` index from UTF-8 text.
+    pub fn from_fai_str(text: &str) -> Result<Self> {
+        Self::from_fai_bytes(text.as_bytes())
+    }
+
+    /// Parse a standard five-column `.fai` index from a reader.
+    pub fn from_fai_read<R: Read>(mut reader: R) -> Result<Self> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        Self::from_fai_bytes(&bytes)
+    }
+
+    fn from_entries(entries: Vec<FastaIndexEntry>) -> Self {
+        let name_to_index = entries
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| (entry.name.clone(), idx))
+            .collect();
+        Self {
+            entries,
+            name_to_index,
+        }
+    }
+}
+
+fn parse_fai_u64(value: &[u8], line: usize, field: &str) -> Result<u64> {
+    let text = std::str::from_utf8(value).map_err(|_| {
+        FastqError::Format(format!(
+            "invalid .fai line {line}: {field} is not valid UTF-8"
+        ))
+    })?;
+    text.parse::<u64>().map_err(|_| {
+        FastqError::Format(format!(
+            "invalid .fai line {line}: {field} is not an unsigned integer"
+        ))
+    })
+}
+
+#[cfg(feature = "bgzf")]
+fn copy_exact_into<R: Read>(
+    reader: &mut R,
+    mut len: u64,
+    out: &mut Vec<u8>,
+    scratch: &mut [u8],
+) -> Result<()> {
+    while len > 0 {
+        let take = usize::try_from(len.min(scratch.len() as u64))
+            .map_err(|_| FastqError::Format("FASTA fetch span exceeds usize range".into()))?;
+        reader.read_exact(&mut scratch[..take])?;
+        out.extend_from_slice(&scratch[..take]);
+        len -= take as u64;
+    }
+    Ok(())
+}
+
+/// Seekable FASTA reader backed by a `.fai` index.
+pub struct IndexedFastaReader<R> {
+    inner: R,
+    index: FastaIndex,
+}
+
+impl<R: Read + Seek> IndexedFastaReader<R> {
+    /// Create a seekable FASTA reader from an input stream and index.
+    pub fn new(inner: R, index: FastaIndex) -> Self {
+        Self { inner, index }
+    }
+
+    /// Return the loaded FASTA index.
+    pub fn index(&self) -> &FastaIndex {
+        &self.index
+    }
+
+    /// Fetch a zero-based half-open sequence range into `out`.
+    pub fn fetch_into(&mut self, name: &[u8], range: Range<u64>, out: &mut Vec<u8>) -> Result<()> {
+        let entry = self.index.get(name).ok_or_else(|| {
+            FastqError::Format(format!(
+                "FASTA reference not found in index: {}",
+                String::from_utf8_lossy(name)
+            ))
+        })?;
+        entry.validate_range(range.clone())?;
+        out.clear();
+        out.reserve(usize::try_from(range.end - range.start).map_err(|_| {
+            FastqError::Format("FASTA fetch range length exceeds usize range".into())
+        })?);
+        for span in entry.sequence_spans(range)? {
+            self.inner.seek(SeekFrom::Start(span.start))?;
+            let len = usize::try_from(span.end - span.start).map_err(|_| {
+                FastqError::Format("FASTA physical span length exceeds usize range".into())
+            })?;
+            let start = out.len();
+            out.resize(start + len, 0);
+            self.inner.read_exact(&mut out[start..])?;
+        }
+        Ok(())
+    }
+
+    /// Fetch a zero-based half-open sequence range into an owned buffer.
+    pub fn fetch(&mut self, name: &[u8], range: Range<u64>) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.fetch_into(name, range, &mut out)?;
+        Ok(out)
+    }
+
+    /// Return the wrapped reader and index.
+    pub fn into_inner(self) -> (R, FastaIndex) {
+        (self.inner, self.index)
+    }
+}
+
+/// Seekable BGZF-compressed FASTA reader backed by `.fai` and BGZF block
+/// indexes.
+#[cfg(feature = "bgzf")]
+pub struct BgzfIndexedFastaReader<R> {
+    inner: BgzfSeekReader<R>,
+    fasta_index: FastaIndex,
+    bgzf_index: BgzfIndex,
+}
+
+#[cfg(feature = "bgzf")]
+impl<R: Read + Seek> BgzfIndexedFastaReader<R> {
+    /// Create a BGZF FASTA random-access reader.
+    pub fn new(inner: R, fasta_index: FastaIndex, bgzf_index: BgzfIndex) -> Self {
+        Self {
+            inner: BgzfSeekReader::new(inner),
+            fasta_index,
+            bgzf_index,
+        }
+    }
+
+    /// Return the loaded FASTA index.
+    pub fn fasta_index(&self) -> &FastaIndex {
+        &self.fasta_index
+    }
+
+    /// Return the loaded BGZF index.
+    pub fn bgzf_index(&self) -> &BgzfIndex {
+        &self.bgzf_index
+    }
+
+    /// Fetch a zero-based half-open sequence range into `out`.
+    pub fn fetch_into(&mut self, name: &[u8], range: Range<u64>, out: &mut Vec<u8>) -> Result<()> {
+        let entry = self.fasta_index.get(name).ok_or_else(|| {
+            FastqError::Format(format!(
+                "FASTA reference not found in index: {}",
+                String::from_utf8_lossy(name)
+            ))
+        })?;
+        entry.validate_range(range.clone())?;
+        out.clear();
+        out.reserve(usize::try_from(range.end - range.start).map_err(|_| {
+            FastqError::Format("FASTA fetch range length exceeds usize range".into())
+        })?);
+        let mut scratch = vec![0_u8; 8192];
+        for span in entry.sequence_spans(range)? {
+            let virtual_offset = self
+                .bgzf_index
+                .virtual_offset_for_uncompressed_offset(span.start)?
+                .ok_or_else(|| FastqError::Bgzf("BGZF span offset is not indexed".into()))?;
+            self.inner.seek_virtual_offset(virtual_offset)?;
+            copy_exact_into(&mut self.inner, span.end - span.start, out, &mut scratch)?;
+        }
+        Ok(())
+    }
+
+    /// Fetch a zero-based half-open sequence range into an owned buffer.
+    pub fn fetch(&mut self, name: &[u8], range: Range<u64>) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.fetch_into(name, range, &mut out)?;
+        Ok(out)
     }
 }
 
@@ -1706,5 +2003,57 @@ mod tests {
     fn two_line_stream_rejects_multiline_fasta() {
         let err = visit_two_line_fasta_read(&b">seq1\nAC\nGT\n"[..], |_| Ok(())).unwrap_err();
         assert!(err.to_string().contains("header must start"));
+    }
+
+    #[test]
+    fn parses_fai_and_fetches_wrapped_range() {
+        let input = b">chr1 desc\nACGT\nTGCA\nAA\n>chr2\nGG\n";
+        let index = build_fasta_index(&input[..]).unwrap();
+        let fai = index.to_fai_string();
+        let parsed = FastaIndex::from_fai_str(&fai).unwrap();
+        assert_eq!(parsed.to_fai_string(), fai);
+
+        let chr1 = parsed.get(b"chr1").unwrap();
+        assert_eq!(chr1.sequence_offset(0).unwrap(), 11);
+        assert_eq!(chr1.sequence_offset(4).unwrap(), 16);
+        assert_eq!(chr1.sequence_spans(2..8).unwrap(), vec![13..15, 16..20]);
+
+        let mut reader = IndexedFastaReader::new(std::io::Cursor::new(input), parsed);
+        assert_eq!(reader.fetch(b"chr1", 2..8).unwrap(), b"GTTGCA");
+        assert_eq!(reader.fetch(b"chr1", 10..10).unwrap(), b"");
+        assert_eq!(reader.fetch(b"chr2", 0..2).unwrap(), b"GG");
+    }
+
+    #[test]
+    fn rejects_bad_fai_and_bad_fetch_ranges() {
+        assert!(FastaIndex::from_fai_str("chr1\t1\t2\t3\n").is_err());
+        assert!(FastaIndex::from_fai_str("chr1\t1\t2\t0\t1\n").is_err());
+        assert!(FastaIndex::from_fai_str("chr1\t1\t2\t1\t1\nchr1\t1\t2\t1\t1\n").is_err());
+
+        let input = b">chr1\nACGT\n";
+        let index = build_fasta_index(&input[..]).unwrap();
+        let mut reader = IndexedFastaReader::new(std::io::Cursor::new(input), index);
+        assert!(reader.fetch(b"missing", 0..1).is_err());
+        assert!(reader.fetch(b"chr1", Range { start: 3, end: 2 }).is_err());
+        assert!(reader.fetch(b"chr1", 0..5).is_err());
+    }
+
+    #[cfg(feature = "bgzf")]
+    #[test]
+    fn fetches_bgzf_fasta_range_using_arbitrary_virtual_offsets() {
+        let mut input = b">chr1\n".to_vec();
+        let seq = (0..70_010).map(|i| b"ACGT"[i % 4]).collect::<Vec<_>>();
+        for chunk in seq.chunks(80) {
+            input.extend_from_slice(chunk);
+            input.push(b'\n');
+        }
+        let encoded = crate::compress_bgzf_parallel(&input, 2).unwrap();
+        let fasta_index = build_fasta_index_bgzf(&encoded[..]).unwrap();
+        let bgzf_index = crate::build_bgzf_index_strict(&encoded[..]).unwrap();
+        let mut reader =
+            BgzfIndexedFastaReader::new(std::io::Cursor::new(encoded), fasta_index, bgzf_index);
+
+        let fetched = reader.fetch(b"chr1", 69_998..70_006).unwrap();
+        assert_eq!(fetched, &seq[69_998..70_006]);
     }
 }

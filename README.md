@@ -54,6 +54,9 @@ Current slice:
   canonical count/total-bases/checksum workloads
 - `.fai`-style FASTA reference index construction via `build_fasta_index` and
   BGZF virtual-offset annotation via `build_fasta_index_bgzf`
+- `.fai` parsing plus `IndexedFastaReader` and `BgzfIndexedFastaReader` for
+  zero-based half-open reference range fetches
+- optional memory-mapped resident FASTQ/FASTA visitors behind `mmap`
 - serial BGZF streaming reader and writer
 - parallel BGZF decompression/compression entry points for independent blocks
 - BGZF block index construction and `BgzfSeekReader` virtual-offset reads
@@ -61,8 +64,8 @@ Current slice:
 - explicit buffered libdeflate gzip openers for bounded single gzip FASTQ and
   FASTA inputs
 - reusable slab buffer with carry handling for records crossing slab boundaries
-- stable default `memchr` newline scanner, with nightly `std::simd`
-  acceleration behind the explicit `simd` feature
+- stable default `memchr` newline scanner, with stable x86_64 `std::arch`
+  acceleration behind the explicit `simd` feature where AVX2 is available
 - borrowed `RecordRef` ranges instead of per-record allocation
 - optional 2-bit base packing with an ambiguity mask
 - Phred+33 quality summaries and threshold binning
@@ -75,8 +78,8 @@ Current slice:
 - lockstep streaming paired trusted pack path with bounded mate buffering
 - fused base+quality packing with compact quad LUTs, AVX2 quality reductions,
   and slab/BGZF pack benchmark gates
-- canonical A/C/G/T SIMD chunk packing fast path and concrete trusted stats sink
-  for low-overhead pack benchmarks
+- canonical A/C/G/T chunk packing, stable AVX2 quality reductions, and
+  concrete trusted stats sink for low-overhead pack benchmarks
 - structured FASTQ/FASTA parse errors with byte offset, record index, and line index
 - zero-copy FASTQ record-id helpers for raw names, first tokens, and pair-normalized IDs
 - stateful separate-file paired reader and interleaved FASTQ iterators with
@@ -88,7 +91,7 @@ Current slice:
 Backend boundary:
 
 - ordinary gzip auto-open uses streaming `flate2`, a third-party Rust
-  compression crate; `open_fastq_gzip_libdeflate` and
+  compression crate configured for its pure-Rust backend; `open_fastq_gzip_libdeflate` and
   `open_fasta_gzip_libdeflate` are explicit because they buffer the
   decompressed input through the third-party `libdeflate` engine via the
   `libdeflater` Rust wrapper
@@ -117,12 +120,24 @@ Default streamer boundary:
 Features:
 
 - default: stable Rust raw/gzip/BGZF streaming
-- `simd`: nightly portable-SIMD newline and pack-path acceleration
+- `simd`: stable x86_64 `std::arch` newline and pack-path acceleration when
+  AVX2 is available, with scalar fallback elsewhere
+- `mmap`: optional resident file visitors backed by read-only memory maps
+- `pure-rust-compression`: explicit alias for the default Rust-only flate2
+  transport stack
 - `gzip`: ordinary gzip input by gzip magic
 - `bgzf`: BGZF reader, writer, detection, and parallel block helpers
 - `libdeflate`: optional libdeflate BGZF inflate/deflate backends and explicit
   buffered FASTQ/FASTA gzip openers through the `libdeflater` wrapper; makes
   BGZF auto-open use the fastest available configured inflate backend
+
+CLI:
+
+`cargo run --release --bin microraptor -- stats --format fasta reference.fa`
+prints records, bases, and the lightweight stream checksum. `fasta-index`
+prints a five-column `.fai`, `fasta-fetch` fetches a zero-based half-open
+reference range from a `.fai` sidecar, and `verify-bgzf` validates BGZF block
+structure plus the canonical EOF marker.
 
 Current limitations:
 

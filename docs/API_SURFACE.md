@@ -37,10 +37,11 @@ Rationale: these are the crate's core value proposition. They expose borrowed
 FASTQ and FASTA batches without imposing a workflow, allocator, or owned record
 model.
 
-Compression backends are not owned by microraptor. `flate2` and `libdeflate`
-are third-party transport engines. Microraptor owns the parser APIs, BGZF
-orchestration, backend-selection surface, and benchmark labels around those
-engines.
+Compression backends are not owned by microraptor. `flate2` is configured for
+its pure-Rust backend by default, and `libdeflate` remains an explicit
+third-party C-backed opt-in through the `libdeflater` wrapper. Microraptor owns
+the parser APIs, BGZF orchestration, backend-selection surface, and benchmark
+labels around those engines.
 
 ## Tier 2: Advanced But Intentional Surface
 
@@ -80,6 +81,8 @@ auto-detection.
 | `BgzfVirtualOffset`, `BgzfIndex`, `BgzfIndexEntry`, `build_bgzf_index`, `build_bgzf_index_strict` | Seek/index support, including optional canonical EOF-marker validation | Keep public |
 | `DetectedInputKind`, `detect_file_input_kind` | Shared raw/gzip/BGZF file-magic detection for tools and benchmarks | Keep public |
 | `FastaIndex`, `FastaIndexEntry`, `build_fasta_index`, `build_fasta_index_bgzf` | `.fai`-style FASTA reference indexing, with BGZF sequence-start virtual offsets when `bgzf` is enabled | Keep public |
+| `IndexedFastaReader`, `BgzfIndexedFastaReader` | `.fai`/BGZF-backed zero-based half-open reference range fetching | Keep public |
+| `visit_fastq_mmap`, `visit_fasta_mmap`, `count_fasta_mmap` | Optional resident file visitors behind `mmap` | Keep public behind feature |
 | `open_fastq_bgzf_*` | Explicit BGZF openers for benchmarking and tuning | Keep public |
 | `compress_bgzf_parallel*`, `decompress_bgzf_parallel*` | Whole-buffer helpers for fixtures and controlled conversions | Keep public, but not the main streaming path |
 
@@ -112,9 +115,11 @@ transport tiers.
   `FastaReader`, `FastaReader::stats`, `count_fasta_read`,
   `count_fasta_bytes`, or `visit_fasta_bytes` for ordinary multiline FASTA.
 - `build_fasta_index` follows `.fai` wrapping constraints and reports
-  uncompressed offsets. `build_fasta_index_bgzf` annotates entries with BGZF
-  virtual offsets for the first sequence byte; random-access reference slicing
-  should be built as a separate transport/index layer on top of this.
+  uncompressed offsets. `FastaIndex::from_fai_*` parses five-column `.fai`
+  sidecars. `IndexedFastaReader` fetches uncompressed FASTA ranges, while
+  `BgzfIndexedFastaReader` combines `.fai` math with `BgzfIndex` so arbitrary
+  BGZF range starts use the correct virtual offset rather than only the
+  sequence-start offset.
 - Whole-buffer BGZF helpers are convenient for fixtures and conversions, but
   large production workflows should prefer streaming readers/writers.
 - Explicit `libdeflate` gzip openers buffer compressed and decompressed data by

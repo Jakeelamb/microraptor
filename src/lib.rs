@@ -1,4 +1,3 @@
-#![cfg_attr(feature = "simd", feature(portable_simd))]
 #![warn(missing_docs)]
 //! Streaming FASTQ and FASTA parsing for raw, gzip, and BGZF inputs.
 //!
@@ -8,8 +7,9 @@
 //! inputs feed the same parser for each sequence format.
 //!
 //! The default feature set builds on stable Rust and includes gzip and BGZF
-//! input support. Nightly-only SIMD acceleration is available through the
-//! explicit `simd` feature.
+//! input support through flate2's pure-Rust backend. SIMD acceleration is
+//! available through the explicit `simd` feature on stable Rust targets that
+//! expose supported `std::arch` intrinsics.
 //!
 //! # Choosing an entry point
 //!
@@ -46,7 +46,12 @@
 //!   decoding.
 //! - `libdeflate` enables optional libdeflate BGZF backends and an explicit
 //!   buffered gzip opener.
-//! - `simd` enables nightly portable-SIMD scanner and packing paths.
+//! - `mmap` enables resident file visitors backed by memory maps.
+//! - `pure-rust-compression` selects the default Rust-only flate2 transport
+//!   stack. This is the crate default; `libdeflate` remains an explicit
+//!   third-party C-backed opt-in.
+//! - `simd` enables stable `std::arch` scanner and packing paths where
+//!   supported.
 //!
 //! # Example
 //!
@@ -93,6 +98,8 @@ mod error;
 mod fasta;
 mod fastq;
 mod fastq_frame;
+#[cfg(feature = "mmap")]
+mod mmap;
 /// Base/quality packing and trusted four-line FASTQ pack paths.
 ///
 /// The high-level FASTQ readers expose borrowed records. This module provides
@@ -115,19 +122,21 @@ pub use bgzf::{
 };
 pub use error::{FastqError, FastqPosition, Result};
 #[cfg(feature = "bgzf")]
-pub use fasta::build_fasta_index_bgzf;
+pub use fasta::{BgzfIndexedFastaReader, build_fasta_index_bgzf};
 pub use fasta::{
     FastaBatch, FastaConfig, FastaIndex, FastaIndexEntry, FastaReader, FastaRecord, FastaRecordRef,
-    FastaRecordSink, FastaShape, FastaStats, FastaVisitRecord, build_fasta_index,
-    count_fasta_bytes, count_fasta_read, count_two_line_fasta_bytes, count_two_line_fasta_read,
-    detect_fasta_shape, visit_fasta_bytes, visit_fasta_bytes_auto, visit_two_line_fasta_bytes,
-    visit_two_line_fasta_read,
+    FastaRecordSink, FastaShape, FastaStats, FastaVisitRecord, IndexedFastaReader,
+    build_fasta_index, count_fasta_bytes, count_fasta_read, count_two_line_fasta_bytes,
+    count_two_line_fasta_read, detect_fasta_shape, visit_fasta_bytes, visit_fasta_bytes_auto,
+    visit_two_line_fasta_bytes, visit_two_line_fasta_read,
 };
 pub use fastq::{
     FastqBatch, FastqConfig, FastqPair, FastqReader, FastqRecord, FastqVisitRecord,
     InterleavedPairs, PairValidation, PairedFastqBatch, PairedFastqPairs, PairedFastqReader,
     PairedRecords, PairingMode, RecordRef, paired_records, strip_pair_suffix, visit_fastq_bytes,
 };
+#[cfg(feature = "mmap")]
+pub use mmap::{count_fasta_mmap, visit_fasta_mmap, visit_fastq_mmap};
 pub use source::{
     DetectedInputKind, detect_file_input_kind, open_fasta, open_fasta_with_config, open_fastq,
     open_fastq_with_config, open_paired_fastq, open_paired_fastq_with_config,

@@ -471,7 +471,7 @@ changing the normal published peer table:
 ```bash
 MICRORAPTOR_RUST_PEER_DIAGNOSTICS=1 scripts/benchmark-rust-peers.sh
 
-MICRORAPTOR_RUST_PEER_CARGO='cargo +nightly' \
+MICRORAPTOR_RUST_PEER_CARGO='cargo' \
 MICRORAPTOR_RUST_PEER_MICRORAPTOR_FEATURES=simd \
 MICRORAPTOR_RUST_PEER_INPUT=~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq \
 scripts/benchmark-rust-peers.sh
@@ -480,12 +480,14 @@ scripts/benchmark-rust-peers.sh
 The diagnostic rows split validated microraptor parsing from no-validation and
 direct `record_refs` iteration. On the local Drosophila R1 row, those variants
 showed that validation and accessors were not the main loss; newline discovery
-was. Stable default newline search now uses `memchr`, while the nightly `simd`
-feature remains the highest-throughput parser-only path in this harness.
+was. Stable default newline search now uses `memchr`; the `simd` feature uses
+stable x86_64 `std::arch` acceleration when AVX2 is available and falls back to
+scalar code elsewhere.
 
 Build with `--features libdeflate` or `--all-features` to include explicit
 `bgzf-libdeflate-*` rows for synthetic BGZF and `file-bgzf-libdeflate-*` rows
 for real `.bgz` inputs. Ordinary gzip remains on the streaming flate2 path;
+flate2 is configured for its pure-Rust backend by default.
 `open_fastq_gzip_libdeflate` is an explicit buffered path for bounded gzip
 inputs. Both flate2 and libdeflate are third-party compression backends. The
 normal BGZF auto-open path uses `BgzfAutoReader` by default: small compressed

@@ -13,11 +13,6 @@ use std::arch::x86_64::{
 };
 use std::fmt;
 use std::io::Read;
-#[cfg(feature = "simd")]
-use std::simd::{
-    Select, Simd,
-    cmp::{SimdPartialEq, SimdPartialOrd},
-};
 
 use crate::fastq_frame::{self, RecordLines, RecordValidation};
 use crate::scan::scan_newlines;
@@ -226,7 +221,10 @@ pub struct TrustedPackedPair<'a> {
 pub enum PackKernel {
     /// Portable scalar implementation.
     Scalar,
-    /// Nightly portable-SIMD implementation.
+    /// Legacy portable-SIMD implementation marker.
+    ///
+    /// Current `simd` builds use stable `std::arch` paths where available and
+    /// otherwise fall back to [`Scalar`](Self::Scalar).
     PortableSimd,
     /// x86-64 AVX2 implementation.
     Avx2,
@@ -237,16 +235,15 @@ pub fn selected_pack_kernel() -> PackKernel {
     select_pack_kernel()
 }
 
-#[cfg(feature = "simd")]
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
 fn select_pack_kernel() -> PackKernel {
-    #[cfg(target_arch = "x86_64")]
     if std::is_x86_feature_detected!("avx2") {
         return PackKernel::Avx2;
     }
-    PackKernel::PortableSimd
+    PackKernel::Scalar
 }
 
-#[cfg(not(feature = "simd"))]
+#[cfg(not(all(feature = "simd", target_arch = "x86_64")))]
 fn select_pack_kernel() -> PackKernel {
     PackKernel::Scalar
 }
@@ -977,10 +974,6 @@ pub fn summarize_qualities(qualities: &[u8]) -> Result<QualitySummary, PackError
     if qualities.len() >= 32 && std::is_x86_feature_detected!("avx2") {
         return unsafe { summarize_qualities_avx2(qualities) };
     }
-    #[cfg(feature = "simd")]
-    if qualities.len() >= 32 {
-        return summarize_qualities_simd(qualities);
-    }
     let mut summary = QualityAccumulator::default();
     for (offset, &byte) in qualities.iter().enumerate() {
         summary.observe(byte, offset)?;
@@ -1065,48 +1058,6 @@ unsafe fn finish_avx2_quality_vectors(
         summary.max_phred = summary.max_phred.max(phred);
     }
     summary.sum_phred = sum_lanes.iter().copied().sum();
-}
-
-#[cfg(feature = "simd")]
-fn summarize_qualities_simd(qualities: &[u8]) -> Result<QualitySummary, PackError> {
-    const LANES: usize = 32;
-    type Chunk = Simd<u8, LANES>;
-
-    let low = Chunk::splat(33);
-    let high = Chunk::splat(126);
-    let offset = Chunk::splat(33);
-    let q20 = Chunk::splat(20);
-    let q30 = Chunk::splat(30);
-
-    let mut summary = QualityAccumulator::default();
-    let mut i = 0;
-    while i + LANES <= qualities.len() {
-        let bytes = Chunk::from_slice(&qualities[i..i + LANES]);
-        if (bytes.simd_lt(low) | bytes.simd_gt(high)).any() {
-            let mut j = 0;
-            while j < LANES {
-                phred33(qualities[i + j], i + j)?;
-                j += 1;
-            }
-        }
-        let phreds = bytes - offset;
-        for phred in phreds.to_array() {
-            summary.min_phred = summary.min_phred.min(phred);
-            summary.max_phred = summary.max_phred.max(phred);
-            summary.sum_phred += u64::from(phred);
-        }
-        summary.len += LANES;
-        summary.q20_bases += phreds.simd_ge(q20).to_bitmask().count_ones() as usize;
-        summary.q30_bases += phreds.simd_ge(q30).to_bitmask().count_ones() as usize;
-        i += LANES;
-    }
-
-    while i < qualities.len() {
-        summary.observe(qualities[i], i)?;
-        i += 1;
-    }
-
-    Ok(summary.finish())
 }
 
 /// Bin Phred+33 qualities into threshold indexes.
@@ -1647,23 +1598,13 @@ unsafe fn pack_bases_and_qualities_exact_avx2(
 #[cfg(feature = "simd")]
 fn base_codes_16(seq: &[u8]) -> [u8; 16] {
     debug_assert!(seq.len() >= 16);
-    type Chunk = Simd<u8, 16>;
-
-    let lower = Chunk::from_slice(&seq[..16]) | Chunk::splat(0x20);
-    let mut codes = Chunk::splat(BASE_N);
-    codes = lower
-        .simd_eq(Chunk::splat(b'a'))
-        .select(Chunk::splat(0), codes);
-    codes = lower
-        .simd_eq(Chunk::splat(b'c'))
-        .select(Chunk::splat(1), codes);
-    codes = lower
-        .simd_eq(Chunk::splat(b'g'))
-        .select(Chunk::splat(2), codes);
-    codes = lower
-        .simd_eq(Chunk::splat(b't'))
-        .select(Chunk::splat(3), codes);
-    codes.to_array()
+    let mut codes = [BASE_N; 16];
+    let mut i = 0;
+    while i < 16 {
+        codes[i] = BASE_LUT[usize::from(seq[i])];
+        i += 1;
+    }
+    codes
 }
 
 #[cfg(feature = "simd")]

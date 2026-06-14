@@ -42,9 +42,10 @@ The default feature set is intended to build on stable Rust:
 - `bgzf`: BGZF reader/writer, detection, virtual-offset indexing, and adaptive
   serial/parallel BGZF reading.
 
-Nightly SIMD remains available behind the `simd` feature. This keeps crates.io
-and downstream library adoption practical without removing the higher-throughput
-research path.
+Stable x86_64 SIMD remains available behind the `simd` feature through
+`std::arch` intrinsics guarded by runtime CPU detection. Non-AVX2 hosts fall
+back to scalar code. This keeps crates.io and downstream library adoption
+practical without requiring nightly Rust for parser acceleration.
 
 Stable default newline discovery uses `memchr`; the older scalar byte loop was
 the main reason microraptor trailed Rust parser peers on raw in-memory FASTQ
@@ -56,7 +57,8 @@ FASTQ byte buffer is already resident in memory.
 
 ### Compression Backends
 
-Ordinary gzip auto-open uses a streaming `flate2::read::MultiGzDecoder`.
+Ordinary gzip auto-open uses a streaming `flate2::read::MultiGzDecoder`
+configured for flate2's pure-Rust backend.
 `open_fastq_gzip_libdeflate` and `open_fasta_gzip_libdeflate` are explicit
 because they buffer the decompressed input through the third-party
 `libdeflater` wrapper and are only appropriate for bounded inputs.
@@ -67,9 +69,10 @@ compressed inputs and bounded parallel reading above the adaptive threshold. Wit
 
 FASTA reference indexing is intentionally a transport/index layer. Plain
 `build_fasta_index` emits `.fai`-style uncompressed offsets and validates
-FAI-compatible wrapping. `build_fasta_index_bgzf` adds sequence-start BGZF
-virtual offsets so later random-access reference APIs can be built without
-changing the parser contract.
+FAI-compatible wrapping. `FastaIndex::from_fai_*` loads five-column `.fai`
+sidecars. `IndexedFastaReader` fetches uncompressed reference ranges, and
+`BgzfIndexedFastaReader` combines `.fai` offsets with `BgzfIndex` lookups for
+arbitrary BGZF virtual-offset range starts.
 
 ### Pairing Model
 

@@ -7,9 +7,11 @@ fig_dir="${out_dir}/figures"
 result_dir="$(dirname "${jsonl}")"
 metadata="${result_dir}/microraptor-gauntlet-metadata.md"
 external_tsv="${result_dir}/external-tools.tsv"
+external_parity_tsv="${result_dir}/external-parity.tsv"
 raw_jsonl_out="${out_dir}/microraptor-gauntlet.jsonl"
 metadata_out="${out_dir}/metadata.md"
 external_tsv_out="${out_dir}/external-tools.tsv"
+external_parity_tsv_out="${out_dir}/external-parity.tsv"
 
 if [[ ! -s "${jsonl}" ]]; then
   printf 'benchmark JSONL not found or empty: %s\n' "${jsonl}" >&2
@@ -41,6 +43,9 @@ if [[ -f "${metadata}" ]]; then
 fi
 if [[ -f "${external_tsv}" ]]; then
   write_sanitized_file "${external_tsv}" "${external_tsv_out}"
+fi
+if [[ -f "${external_parity_tsv}" ]]; then
+  write_sanitized_file "${external_parity_tsv}" "${external_parity_tsv_out}"
 fi
 
 rows="$(mktemp)"

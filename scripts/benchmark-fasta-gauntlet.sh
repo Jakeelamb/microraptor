@@ -24,7 +24,7 @@ export MKL_NUM_THREADS="${MKL_NUM_THREADS:-${workers}}"
 mkdir -p "${input_root}" "${result_dir}"
 : > "${jsonl}"
 printf 'label\ttool\tstatus\telapsed_s\tmax_rss_kb\tcommand\n' > "${external_tsv}"
-printf 'label\ttool\tparity_status\texpected_records\texpected_bases\tobserved_records\tobserved_bases\tnotes\n' > "${external_parity_tsv}"
+printf 'label\ttool\tparity_status\texpected_records\texpected_bases\texpected_checksum\tobserved_records\tobserved_bases\tobserved_checksum\tnotes\n' > "${external_parity_tsv}"
 printf 'label\tstatus\telapsed_s\tmax_rss_kb\tcommand\n' > "${microraptor_memory_tsv}"
 
 parse_corpus_inputs() {
@@ -53,13 +53,96 @@ command_version() {
 record_external_parity_timing_only() {
   local label="$1"
   local tool="$2"
-  printf '%s\t%s\ttiming_only\tNA\tNA\tNA\tNA\t%s\n' \
+  printf '%s\t%s\ttiming_only\tNA\tNA\tNA\tNA\tNA\tNA\t%s\n' \
     "${label}" \
     "${tool}" \
     "no normalized FASTA comparator parser configured" >> "${external_parity_tsv}"
 }
 
-cargo +nightly build --release --all-features --bin microraptor-bench --bin microraptor-fixture
+stats_triplet() {
+  awk -F '\t' '
+    $1 == "records" { records = $2 }
+    $1 == "bases" { bases = $2 }
+    $1 == "checksum" { checksum = $2 }
+    END { printf "%s\t%s\t%s\n", records, bases, checksum }
+  '
+}
+
+microraptor_fasta_triplet() {
+  target/release/microraptor stats --format fasta "$1" | stats_triplet
+}
+
+record_external_parity_triplets() {
+  local label="$1"
+  local tool="$2"
+  local expected="$3"
+  local observed="$4"
+  local notes="$5"
+  local expected_records expected_bases expected_checksum observed_records observed_bases observed_checksum
+  IFS=$'\t' read -r expected_records expected_bases expected_checksum <<< "${expected}"
+  IFS=$'\t' read -r observed_records observed_bases observed_checksum <<< "${observed}"
+  local status="mismatch"
+  if [[ "${expected_records}" == "${observed_records}" && "${expected_bases}" == "${observed_bases}" && "${expected_checksum}" == "${observed_checksum}" ]]; then
+    status="match"
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "${label}" \
+    "${tool}" \
+    "${status}" \
+    "${expected_records}" \
+    "${expected_bases}" \
+    "${expected_checksum}" \
+    "${observed_records}" \
+    "${observed_bases}" \
+    "${observed_checksum}" \
+    "${notes}" >> "${external_parity_tsv}"
+}
+
+record_external_parity_unknown() {
+  local label="$1"
+  local tool="$2"
+  local notes="$3"
+  printf '%s\t%s\tunknown\tNA\tNA\tNA\tNA\tNA\tNA\t%s\n' \
+    "${label}" \
+    "${tool}" \
+    "${notes}" >> "${external_parity_tsv}"
+}
+
+record_seqkit_fasta_parity() {
+  local label="$1"
+  local path="$2"
+  command -v seqkit >/dev/null 2>&1 || return 0
+  local expected observed
+  expected="$(microraptor_fasta_triplet "${path}")"
+  set +e
+  observed="$(seqkit seq -w 0 "${path}" 2>/dev/null | target/release/microraptor checksum --format fasta - 2>/dev/null | stats_triplet)"
+  local status="$?"
+  set -e
+  if [[ "${status}" -ne 0 || "${observed}" == $'\t\t' ]]; then
+    record_external_parity_unknown "${label}" seqkit "seqkit normalized FASTA stream was unavailable"
+    return 0
+  fi
+  record_external_parity_triplets "${label}" seqkit "${expected}" "${observed}" "seqkit seq -w 0 normalized FASTA stream"
+}
+
+record_seqtk_fasta_parity() {
+  local label="$1"
+  local path="$2"
+  command -v seqtk >/dev/null 2>&1 || return 0
+  local expected observed
+  expected="$(microraptor_fasta_triplet "${path}")"
+  set +e
+  observed="$(seqtk seq -A "${path}" 2>/dev/null | target/release/microraptor checksum --format fasta - 2>/dev/null | stats_triplet)"
+  local status="$?"
+  set -e
+  if [[ "${status}" -ne 0 || "${observed}" == $'\t\t' ]]; then
+    record_external_parity_unknown "${label}" seqtk "seqtk normalized FASTA stream was unavailable"
+    return 0
+  fi
+  record_external_parity_triplets "${label}" seqtk "${expected}" "${observed}" "seqtk seq -A normalized FASTA stream"
+}
+
+cargo build --release --all-features --bin microraptor --bin microraptor-bench --bin microraptor-fixture
 
 make_fixture() {
   local label="$1"
@@ -177,7 +260,9 @@ run_path_suite() {
   local path="$2"
   run_microraptor "${label}" "${path}"
   run_external "seqkit stats ${label}" seqkit seqkit stats "${path}"
+  record_seqkit_fasta_parity "seqkit stats ${label}" "${path}"
   run_external "seqtk comp ${label}" seqtk seqtk comp "${path}"
+  record_seqtk_fasta_parity "seqtk comp ${label}" "${path}"
   case "${path}" in
     *.gz | *.bgz)
       run_external "bgzip decompress ${label}" bgzip bgzip -dc "${path}"

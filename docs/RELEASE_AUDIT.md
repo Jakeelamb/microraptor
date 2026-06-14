@@ -20,7 +20,7 @@ the release commit.
 | Requirement | Evidence | Status |
 | --- | --- | --- |
 | Crate metadata is suitable for crates.io | `Cargo.toml` has license, readme, repository, homepage, documentation, keywords, categories, and `rust-version`; `LICENSE-MIT` and `LICENSE-APACHE` are present | Satisfied |
-| Default build is stable Rust | `rust-toolchain.toml` uses stable; default features are `bgzf` and `gzip`; nightly SIMD is behind `simd` | Satisfied |
+| Default build is stable Rust | `rust-toolchain.toml` uses stable; default features are `bgzf` and `gzip`; `simd` uses stable `std::arch` with runtime AVX2 detection | Satisfied |
 | Public API is documented | `#![warn(missing_docs)]`; `RUSTFLAGS="-D warnings" cargo check --lib`; `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` | Satisfied |
 | Public API release surface is classified | `docs/API_SURFACE.md` tiers primary FASTQ readers/openers, advanced pack side channels, BGZF transport/indexing, and hidden bench helpers | Satisfied |
 | README explains capabilities and limitations | `README.md` states scope, features, benchmark snapshots, limitations, examples, and claim boundary | Satisfied |

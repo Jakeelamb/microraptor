@@ -52,6 +52,7 @@ struct Config {
     format: InputFormat,
     bgzf_pack_check: Option<BgzfPackCheck>,
     profile_bgzf_parallel: bool,
+    mmap: bool,
 }
 
 impl Default for Config {
@@ -70,6 +71,7 @@ impl Default for Config {
             format: InputFormat::Fastq,
             bgzf_pack_check: None,
             profile_bgzf_parallel: false,
+            mmap: false,
         }
     }
 }
@@ -316,6 +318,15 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
             input_bytes,
             config,
         )?);
+        #[cfg(feature = "mmap")]
+        if config.mmap && microraptor::detect_file_input_kind(path)? == DetectedInputKind::Raw {
+            measurements.push(measure_path_fasta_mmap(
+                "file-fasta-mmap",
+                path,
+                input_bytes,
+                config,
+            )?);
+        }
         let source = path.to_string_lossy();
         emit_report(config, &source, input_bytes, &measurements);
         return Ok(());
@@ -323,6 +334,15 @@ fn run_real_input(path: &Path, config: &Config) -> Result<()> {
 
     if config.mode.includes_parse() {
         measurements.push(measure_path_fastq("file-auto", path, input_bytes, config)?);
+        #[cfg(feature = "mmap")]
+        if config.mmap && microraptor::detect_file_input_kind(path)? == DetectedInputKind::Raw {
+            measurements.push(measure_path_fastq_mmap(
+                "file-mmap",
+                path,
+                input_bytes,
+                config,
+            )?);
+        }
         #[cfg(all(feature = "bgzf", feature = "libdeflate"))]
         if path_has_bgzf_header(path)? {
             measurements.push(measure_path_bgzf_libdeflate_serial(
@@ -814,6 +834,23 @@ fn measure_path_fastq(
     })
 }
 
+#[cfg(feature = "mmap")]
+fn measure_path_fastq_mmap(
+    name: &str,
+    path: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let mut stats = StreamStats::default();
+        microraptor::visit_fastq_mmap(path, fastq_config(config), |record| {
+            stats.observe_record(record.name(), record.seq(), record.qual());
+            Ok(())
+        })?;
+        Ok(stats)
+    })
+}
+
 fn measure_path_fasta(
     name: &str,
     path: &Path,
@@ -829,6 +866,23 @@ fn measure_path_fasta(
             },
         );
         consume_fasta(&mut reader)
+    })
+}
+
+#[cfg(feature = "mmap")]
+fn measure_path_fasta_mmap(
+    name: &str,
+    path: &Path,
+    input_bytes: usize,
+    config: &Config,
+) -> Result<Measurement> {
+    measure(name, input_bytes, config.iters, || {
+        let mut stats = StreamStats::default();
+        microraptor::visit_fasta_mmap(path, |record| {
+            stats.observe_sequence_record(record.name(), record.seq());
+            Ok(())
+        })?;
+        Ok(stats)
     })
 }
 
@@ -1276,6 +1330,7 @@ fn parse_args() -> Config {
                     .check_timing = false;
             }
             "--profile-bgzf-parallel" => config.profile_bgzf_parallel = true,
+            "--mmap" => config.mmap = true,
             "--json" => config.json = true,
             "--help" | "-h" => {
                 print_help();
@@ -1371,7 +1426,7 @@ fn parse_format(args: &mut impl Iterator<Item = String>, flag: &str) -> InputFor
 
 fn print_help() {
     eprintln!(
-        "microraptor-bench [--input PATH | --paired-inputs R1 R2] [--format fastq|fasta] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--bgzf-parallel-min-bytes N] [--json] [--check-bgzf-pack-regression] [--check-label NAME] [--min-input-bytes N] [--tolerance-pct N] [--skip-timing-checks] [--profile-bgzf-parallel]"
+        "microraptor-bench [--input PATH | --paired-inputs R1 R2] [--format fastq|fasta] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--bgzf-parallel-min-bytes N] [--json] [--mmap] [--check-bgzf-pack-regression] [--check-label NAME] [--min-input-bytes N] [--tolerance-pct N] [--skip-timing-checks] [--profile-bgzf-parallel]"
     );
 }
 
