@@ -48,8 +48,10 @@ jsonl="${result_dir}/microraptor-gauntlet.jsonl"
 md="${result_dir}/microraptor-gauntlet.md"
 metadata="${result_dir}/microraptor-gauntlet-metadata.md"
 external_tsv="${result_dir}/external-tools.tsv"
+external_parity_tsv="${result_dir}/external-parity.tsv"
 : > "${jsonl}"
 : > "${external_tsv}"
+: > "${external_parity_tsv}"
 
 command_version() {
   local command_name="$1"
@@ -112,6 +114,18 @@ command_version() {
 } > "${md}"
 
 printf 'label\ttool\tstatus\telapsed_s\tcommand\n' > "${external_tsv}"
+printf 'label\ttool\tparity_status\texpected_records\texpected_bases\tobserved_records\tobserved_bases\tnotes\n' > "${external_parity_tsv}"
+
+record_external_parity_timing_only() {
+  local label="$1"
+  local command_name="$2"
+  printf '%s\t%s\ttiming_only\t%s\t%s\tNA\tNA\t%s\n' \
+    "${label}" \
+    "${command_name}" \
+    "${records}" \
+    "$((records * read_len))" \
+    "no normalized comparator parser configured" >> "${external_parity_tsv}"
+}
 
 run_microraptor() {
   local label="$1"
@@ -247,6 +261,7 @@ run_external() {
         "${status}" \
         "${elapsed:-NA}" \
         "${command_display}" >> "${external_tsv}"
+      record_external_parity_timing_only "${label}" "${command_name}"
       if [[ "${status}" -ne 0 ]]; then
         printf 'exit_status\t%s\n' "${status}"
       fi
@@ -257,6 +272,7 @@ run_external() {
         "${label}" \
         "${command_name}" \
         "${command_display}" >> "${external_tsv}"
+      record_external_parity_timing_only "${label}" "${command_name}"
     fi
   } >> "${md}"
 }
@@ -285,6 +301,7 @@ run_external_stdout_null() {
         "${status}" \
         "${elapsed:-NA}" \
         "${command_display}" >> "${external_tsv}"
+      record_external_parity_timing_only "${label}" "${command_name}"
       if [[ "${status}" -ne 0 ]]; then
         printf 'exit_status\t%s\n' "${status}"
       fi
@@ -295,6 +312,7 @@ run_external_stdout_null() {
         "${label}" \
         "${command_name}" \
         "${command_display}" >> "${external_tsv}"
+      record_external_parity_timing_only "${label}" "${command_name}"
     fi
   } >> "${md}"
 }

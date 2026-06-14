@@ -1,7 +1,5 @@
-use std::io::Read;
 #[cfg(feature = "gzip")]
 use std::io::Write;
-use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 #[cfg(feature = "bgzf")]
 use std::sync::Arc;
@@ -12,7 +10,9 @@ use microraptor::benchutil::{
     consume_trusted_fastq_read_with_pack, synthetic_fasta, synthetic_fastq,
 };
 use microraptor::pack::{TrustedPackedRecord, pack_bases_and_summarize_qualities_into};
-use microraptor::{FastaReader, FastqConfig, FastqReader, PairValidation, Result};
+use microraptor::{
+    DetectedInputKind, FastaReader, FastqConfig, FastqReader, PairValidation, Result,
+};
 
 #[path = "microraptor_bench/report.rs"]
 mod report;
@@ -140,6 +140,7 @@ struct Measurement {
     records: u64,
     bases: u64,
     best: Duration,
+    samples: Vec<Duration>,
     checksum: u64,
     extras: Vec<(&'static str, u64)>,
 }
@@ -503,41 +504,24 @@ fn checked_file_len(path: &Path) -> Result<usize> {
 }
 
 fn open_bench_read(path: &Path, _config: &Config) -> Result<BenchRead> {
-    let mut file = std::fs::File::open(path)?;
-    let mut prefix = [0_u8; 18];
-    let _n = file.read(&mut prefix)?;
-    file.seek(SeekFrom::Start(0))?;
-
-    #[cfg(feature = "bgzf")]
-    if is_bgzf_header(&prefix[.._n]) {
-        let compressed_len = file.metadata()?.len();
-        return Ok(BenchRead::Bgzf(microraptor::BgzfAutoReader::with_config(
-            file,
-            compressed_len,
-            bgzf_config(_config),
-        )?));
+    match microraptor::detect_file_input_kind(path)? {
+        #[cfg(feature = "bgzf")]
+        DetectedInputKind::Bgzf => {
+            let file = std::fs::File::open(path)?;
+            let compressed_len = file.metadata()?.len();
+            Ok(BenchRead::Bgzf(microraptor::BgzfAutoReader::with_config(
+                file,
+                compressed_len,
+                bgzf_config(_config),
+            )?))
+        }
+        #[cfg(feature = "gzip")]
+        DetectedInputKind::Gzip => {
+            let file = std::fs::File::open(path)?;
+            Ok(BenchRead::Gzip(flate2::read::MultiGzDecoder::new(file)))
+        }
+        DetectedInputKind::Raw => Ok(BenchRead::Raw(std::fs::File::open(path)?)),
     }
-
-    #[cfg(feature = "gzip")]
-    if _n >= 2 && prefix[..2] == [0x1f, 0x8b] {
-        return Ok(BenchRead::Gzip(flate2::read::MultiGzDecoder::new(file)));
-    }
-
-    Ok(BenchRead::Raw(file))
-}
-
-#[cfg(feature = "bgzf")]
-fn is_bgzf_header(prefix: &[u8]) -> bool {
-    prefix.len() >= 18
-        && prefix[0] == 31
-        && prefix[1] == 139
-        && prefix[2] == 8
-        && prefix[3] & 4 != 0
-        && u16::from_le_bytes([prefix[10], prefix[11]]) >= 6
-        && prefix[12] == b'B'
-        && prefix[13] == b'C'
-        && prefix[14] == 2
-        && prefix[15] == 0
 }
 
 fn measure_fastq(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
@@ -1122,19 +1106,10 @@ fn measure_path_bgzf_libdeflate_adaptive_trusted_pack(
 
 #[cfg(feature = "bgzf")]
 fn path_has_bgzf_header(path: &Path) -> Result<bool> {
-    let mut file = std::fs::File::open(path)?;
-    let mut prefix = [0_u8; 18];
-    let n = file.read(&mut prefix)?;
-    Ok(n >= 18
-        && prefix[0] == 31
-        && prefix[1] == 139
-        && prefix[2] == 8
-        && prefix[3] & 4 != 0
-        && u16::from_le_bytes([prefix[10], prefix[11]]) >= 6
-        && prefix[12] == b'B'
-        && prefix[13] == b'C'
-        && prefix[14] == 2
-        && prefix[15] == 0)
+    Ok(matches!(
+        microraptor::detect_file_input_kind(path)?,
+        DetectedInputKind::Bgzf
+    ))
 }
 
 fn fastq_config(config: &Config) -> FastqConfig {
@@ -1183,11 +1158,14 @@ where
     F: FnMut() -> Result<StreamStats>,
 {
     let mut best = Duration::MAX;
+    let mut samples = Vec::with_capacity(iters.max(1));
     let mut last = StreamStats::default();
     for _ in 0..iters.max(1) {
         let start = Instant::now();
         last = f()?;
-        best = best.min(start.elapsed());
+        let elapsed = start.elapsed();
+        best = best.min(elapsed);
+        samples.push(elapsed);
     }
     Ok(Measurement {
         name: name.to_string(),
@@ -1195,6 +1173,7 @@ where
         records: last.records,
         bases: last.bases,
         best,
+        samples,
         checksum: last.checksum,
         extras: Vec::new(),
     })
@@ -1239,6 +1218,7 @@ fn report_rows(rows: &[Measurement]) -> Vec<report::ReportRow<'_>> {
             records: row.records,
             bases: row.bases,
             best: row.best,
+            samples: &row.samples,
             checksum: row.checksum,
             extras: &row.extras,
         })

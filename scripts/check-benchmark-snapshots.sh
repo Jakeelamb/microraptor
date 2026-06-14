@@ -28,6 +28,51 @@ check_external_tool_commands() {
   ' "${tsv}"
 }
 
+check_external_parity() {
+  local tsv="$1"
+  awk -F '\t' '
+    NR == 1 {
+      expected = "label\ttool\tparity_status\texpected_records\texpected_bases\tobserved_records\tobserved_bases\tnotes"
+      if ($0 != expected) {
+        printf "%s:%d: invalid external parity header\n", FILENAME, NR > "/dev/stderr"
+        bad = 1
+      }
+      next
+    }
+    NF != 8 {
+      printf "%s:%d: expected 8 columns, saw %d\n", FILENAME, NR, NF > "/dev/stderr"
+      bad = 1
+    }
+    $3 !~ /^(match|mismatch|timing_only|skipped|unknown)$/ {
+      printf "%s:%d: invalid parity_status: %s\n", FILENAME, NR, $3 > "/dev/stderr"
+      bad = 1
+    }
+    END {
+      exit bad
+    }
+  ' "${tsv}"
+}
+
+check_bench_jsonl() {
+  local jsonl="$1"
+  if command -v jq >/dev/null 2>&1; then
+    jq -e '
+      .measurements and
+      (.measurements | type == "array") and
+      all(.measurements[];
+        (.name | type == "string") and
+        (.records | type == "number") and
+        (.bases | type == "number") and
+        (.checksum | type == "number") and
+        (.best_ns | type == "number") and
+        ((has("sample_ns") | not) or (.sample_ns | type == "array"))
+      )
+    ' "${jsonl}" >/dev/null
+  else
+    awk 'NF == 0 { next } $0 !~ /^\{/ { printf "%s:%d: invalid JSONL-looking row\n", FILENAME, NR > "/dev/stderr"; bad = 1 } END { exit bad }' "${jsonl}"
+  fi
+}
+
 metadata_value() {
   local metadata="$1"
   local key="$2"
@@ -313,6 +358,10 @@ for external_tsv in "${root}"/*/external-tools.tsv; do
   [[ -e "${external_tsv}" ]] || continue
   check_external_tool_commands "${external_tsv}"
 done
+for external_parity_tsv in "${root}"/*/external-parity.tsv; do
+  [[ -e "${external_parity_tsv}" ]] || continue
+  check_external_parity "${external_parity_tsv}"
+done
 
 for jsonl in "${root}"/*/microraptor-gauntlet.jsonl; do
   [[ -e "${jsonl}" ]] || continue
@@ -367,21 +416,22 @@ for tsv in "${root}"/*/rust-library-peers.tsv; do
 done
 
 fasta_peer_checked=0
-for tsv in "${root}"/*/fasta-library-peers.tsv; do
-  [[ -e "${tsv}" ]] || continue
+while IFS= read -r -d '' tsv; do
 
   snapshot_dir="$(dirname "${tsv}")"
-  snapshot_name="$(basename "${snapshot_dir}")"
+  snapshot_name="$(printf '%s' "${snapshot_dir#${root}/}" | tr '/' '-')"
   rendered_dir="${tmp}/${snapshot_name}.fasta-peers"
 
   render_fasta_peer_snapshot "${tsv}" "${rendered_dir}"
   diff -u "${snapshot_dir}/summary.md" "${rendered_dir}/summary.md"
-  diff -u \
-    "${snapshot_dir}/figures/fasta-library-peer-bases-throughput.svg" \
-    "${rendered_dir}/figures/fasta-library-peer-bases-throughput.svg"
+  if [[ -f "${snapshot_dir}/figures/fasta-library-peer-bases-throughput.svg" ]]; then
+    diff -u \
+      "${snapshot_dir}/figures/fasta-library-peer-bases-throughput.svg" \
+      "${rendered_dir}/figures/fasta-library-peer-bases-throughput.svg"
+  fi
 
   fasta_peer_checked=$((fasta_peer_checked + 1))
-done
+done < <(find "${root}" -name fasta-library-peers.tsv -print0)
 
 fasta_size_checked=0
 for tsv in "${root}"/*/fasta-peer-size-sweep.tsv; do
@@ -409,11 +459,14 @@ for jsonl in "${root}"/*/microraptor-fasta-gauntlet.jsonl; do
   rendered_dir="${tmp}/${snapshot_name}.fasta-gauntlet"
 
   test -s "${snapshot_dir}/external-tools.tsv"
+  if [[ -f "${snapshot_dir}/external-parity.tsv" ]]; then
+    check_external_parity "${snapshot_dir}/external-parity.tsv"
+  fi
   test -s "${snapshot_dir}/microraptor-memory.tsv"
   test -s "${snapshot_dir}/metadata.md"
   render_fasta_gauntlet_summary "${rendered_dir}"
   diff -u "${snapshot_dir}/summary.md" "${rendered_dir}/summary.md"
-  awk 'NF == 0 { next } $0 !~ /^\{/ { printf "%s:%d: invalid JSONL-looking row\n", FILENAME, NR > "/dev/stderr"; bad = 1 } END { exit bad }' "${jsonl}"
+  check_bench_jsonl "${jsonl}"
 
   fasta_gauntlet_checked=$((fasta_gauntlet_checked + 1))
 done

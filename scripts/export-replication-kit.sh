@@ -4,6 +4,22 @@ set -euo pipefail
 out_dir="${1:-target/replication-kit}"
 artifact_dir="${out_dir}/checked-artifacts"
 
+case "${out_dir}" in
+  "" | "/" | "." | ".." | "${HOME}" | "${HOME}/"* )
+    printf 'refusing unsafe replication kit output path: %s\n' "${out_dir}" >&2
+    exit 2
+    ;;
+  target/* )
+    ;;
+  * )
+    if [[ "${MICRORAPTOR_ALLOW_CUSTOM_REPLICATION_OUT:-0}" != "1" ]]; then
+      printf 'refusing non-target output path: %s\n' "${out_dir}" >&2
+      printf 'set MICRORAPTOR_ALLOW_CUSTOM_REPLICATION_OUT=1 to override intentionally\n' >&2
+      exit 2
+    fi
+    ;;
+esac
+
 rm -rf "${out_dir}"
 mkdir -p "${artifact_dir}"
 
@@ -26,10 +42,15 @@ for path in \
   docs/RELEASE_AUDIT.md \
   docs/REPLICATION.md \
   docs/benchmarks/CORPUS.md \
+  scripts/benchmark-common.sh \
   scripts/benchmark-gauntlet.sh \
   scripts/render-benchmark-report.sh \
   scripts/check-benchmark-snapshots.sh \
   scripts/benchmark-rust-peers.sh \
+  scripts/benchmark-rust-peer-size-sweep.sh \
+  scripts/benchmark-fasta-peers.sh \
+  scripts/benchmark-fasta-peer-size-sweep.sh \
+  scripts/benchmark-fasta-gauntlet.sh \
   scripts/check-replication-host.sh \
   scripts/discover-local-benchmark-corpus.sh \
   scripts/prepare-real-benchmark-inputs.sh \
@@ -39,17 +60,7 @@ done
 
 for snapshot in docs/benchmarks/*; do
   [[ -d "${snapshot}" ]] || continue
-  case "${snapshot}" in
-    docs/benchmarks/latest|\
-    docs/benchmarks/drosophila-1m|\
-    docs/benchmarks/drosophila-compressed|\
-    docs/benchmarks/drosophila-read-types|\
-    docs/benchmarks/independent-organisms|\
-    docs/benchmarks/rust-peers|\
-    docs/benchmarks/rust-peers-drosophila-r1)
-      copy_if_present "${snapshot}"
-      ;;
-  esac
+  copy_if_present "${snapshot}"
 done
 
 {

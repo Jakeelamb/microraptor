@@ -15,6 +15,39 @@ use crate::{
     bgzf::is_bgzf_header,
 };
 
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+const DEFAULT_LIBDEFLATE_GZIP_MAX_COMPRESSED_BYTES: usize = if usize::BITS >= 64 {
+    1024 * 1024 * 1024
+} else {
+    usize::MAX / 2
+};
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+const DEFAULT_LIBDEFLATE_GZIP_MAX_DECOMPRESSED_BYTES: usize = if usize::BITS >= 64 {
+    1024 * 1024 * 1024
+} else {
+    usize::MAX / 2
+};
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+/// Memory limits for explicit buffered libdeflate gzip openers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LibdeflateGzipLimits {
+    /// Maximum compressed bytes accepted before buffering.
+    pub max_compressed_bytes: usize,
+    /// Maximum decompressed bytes accepted before parsing.
+    pub max_decompressed_bytes: usize,
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+impl Default for LibdeflateGzipLimits {
+    fn default() -> Self {
+        Self {
+            max_compressed_bytes: DEFAULT_LIBDEFLATE_GZIP_MAX_COMPRESSED_BYTES,
+            max_decompressed_bytes: DEFAULT_LIBDEFLATE_GZIP_MAX_DECOMPRESSED_BYTES,
+        }
+    }
+}
+
 #[cfg(any(feature = "bgzf", feature = "gzip"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputKind {
@@ -23,6 +56,46 @@ enum InputKind {
     Gzip,
     #[cfg(feature = "bgzf")]
     Bgzf,
+}
+
+/// Compression/container detected from input file magic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetectedInputKind {
+    /// Plain uncompressed input.
+    Raw,
+    /// Ordinary gzip input.
+    #[cfg(feature = "gzip")]
+    Gzip,
+    /// BGZF blocked gzip input.
+    #[cfg(feature = "bgzf")]
+    Bgzf,
+}
+
+#[cfg(any(feature = "bgzf", feature = "gzip"))]
+impl From<InputKind> for DetectedInputKind {
+    fn from(value: InputKind) -> Self {
+        match value {
+            InputKind::Raw => Self::Raw,
+            #[cfg(feature = "gzip")]
+            InputKind::Gzip => Self::Gzip,
+            #[cfg(feature = "bgzf")]
+            InputKind::Bgzf => Self::Bgzf,
+        }
+    }
+}
+
+/// Detect raw, gzip, or BGZF input by file magic.
+pub fn detect_file_input_kind(path: impl AsRef<Path>) -> Result<DetectedInputKind> {
+    #[cfg(any(feature = "bgzf", feature = "gzip"))]
+    {
+        let mut file = File::open(path)?;
+        detect_input_kind(&mut file).map(DetectedInputKind::from)
+    }
+    #[cfg(not(any(feature = "bgzf", feature = "gzip")))]
+    {
+        let _ = path;
+        Ok(DetectedInputKind::Raw)
+    }
 }
 
 /// Open a FASTQ file with default configuration.
@@ -152,7 +225,8 @@ fn default_bgzf_workers() -> usize {
 /// Open an ordinary gzip FASTQ file through a buffered libdeflate path.
 ///
 /// Unlike [`open_fastq`], this buffers the fully decompressed input before
-/// parsing. Use it only for bounded inputs and explicit backend comparisons.
+/// parsing. It accepts a single gzip member and applies default memory limits;
+/// use [`open_fastq_gzip_libdeflate_with_limits`] to set tighter bounds.
 pub fn open_fastq_gzip_libdeflate(path: impl AsRef<Path>) -> Result<FastqReader<Cursor<Vec<u8>>>> {
     open_fastq_gzip_libdeflate_with_config(path, FastqConfig::default())
 }
@@ -164,9 +238,19 @@ pub fn open_fastq_gzip_libdeflate_with_config(
     path: impl AsRef<Path>,
     config: FastqConfig,
 ) -> Result<FastqReader<Cursor<Vec<u8>>>> {
-    let mut compressed = Vec::new();
-    File::open(path)?.read_to_end(&mut compressed)?;
-    let decoded = decompress_gzip_libdeflate_buffered(&compressed)?;
+    open_fastq_gzip_libdeflate_with_limits(path, config, LibdeflateGzipLimits::default())
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+/// Open an ordinary single-member gzip FASTQ file through buffered libdeflate
+/// with explicit parser configuration and memory limits.
+pub fn open_fastq_gzip_libdeflate_with_limits(
+    path: impl AsRef<Path>,
+    config: FastqConfig,
+    limits: LibdeflateGzipLimits,
+) -> Result<FastqReader<Cursor<Vec<u8>>>> {
+    let compressed = read_limited(path, limits.max_compressed_bytes)?;
+    let decoded = decompress_gzip_libdeflate_buffered(&compressed, limits)?;
     Ok(FastqReader::with_config(Cursor::new(decoded), config))
 }
 
@@ -174,7 +258,8 @@ pub fn open_fastq_gzip_libdeflate_with_config(
 /// Open an ordinary gzip FASTA file through a buffered libdeflate path.
 ///
 /// Unlike [`open_fasta`], this buffers the fully decompressed input before
-/// parsing. Use it only for bounded inputs and explicit backend comparisons.
+/// parsing. It accepts a single gzip member and applies default memory limits;
+/// use [`open_fasta_gzip_libdeflate_with_limits`] to set tighter bounds.
 pub fn open_fasta_gzip_libdeflate(path: impl AsRef<Path>) -> Result<FastaReader<Cursor<Vec<u8>>>> {
     open_fasta_gzip_libdeflate_with_config(path, FastaConfig::default())
 }
@@ -186,15 +271,55 @@ pub fn open_fasta_gzip_libdeflate_with_config(
     path: impl AsRef<Path>,
     config: FastaConfig,
 ) -> Result<FastaReader<Cursor<Vec<u8>>>> {
-    let mut compressed = Vec::new();
-    File::open(path)?.read_to_end(&mut compressed)?;
-    let decoded = decompress_gzip_libdeflate_buffered(&compressed)?;
+    open_fasta_gzip_libdeflate_with_limits(path, config, LibdeflateGzipLimits::default())
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+/// Open an ordinary single-member gzip FASTA file through buffered libdeflate
+/// with explicit parser configuration and memory limits.
+pub fn open_fasta_gzip_libdeflate_with_limits(
+    path: impl AsRef<Path>,
+    config: FastaConfig,
+    limits: LibdeflateGzipLimits,
+) -> Result<FastaReader<Cursor<Vec<u8>>>> {
+    let compressed = read_limited(path, limits.max_compressed_bytes)?;
+    let decoded = decompress_gzip_libdeflate_buffered(&compressed, limits)?;
     Ok(FastaReader::with_config(Cursor::new(decoded), config))
 }
 
 #[cfg(all(feature = "gzip", feature = "libdeflate"))]
-fn decompress_gzip_libdeflate_buffered(compressed: &[u8]) -> Result<Vec<u8>> {
-    let mut out = vec![0_u8; initial_gzip_output_capacity(compressed)];
+fn read_limited(path: impl AsRef<Path>, max_bytes: usize) -> Result<Vec<u8>> {
+    let path = path.as_ref();
+    let len = std::fs::metadata(path)?.len();
+    if len > max_bytes as u64 {
+        return Err(crate::FastqError::Format(format!(
+            "gzip input exceeds libdeflate compressed limit ({len} > {max_bytes} bytes)"
+        )));
+    }
+    let mut compressed = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
+    File::open(path)?.read_to_end(&mut compressed)?;
+    if compressed.len() > max_bytes {
+        return Err(crate::FastqError::Format(format!(
+            "gzip input exceeds libdeflate compressed limit ({} > {max_bytes} bytes)",
+            compressed.len()
+        )));
+    }
+    Ok(compressed)
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+fn decompress_gzip_libdeflate_buffered(
+    compressed: &[u8],
+    limits: LibdeflateGzipLimits,
+) -> Result<Vec<u8>> {
+    if limits.max_decompressed_bytes == 0 {
+        return Err(crate::FastqError::Format(
+            "libdeflate decompressed limit must be greater than zero".into(),
+        ));
+    }
+    ensure_single_gzip_member(compressed)?;
+    let initial = initial_gzip_output_capacity(compressed).min(limits.max_decompressed_bytes);
+    let mut out = vec![0_u8; initial.max(1)];
     let mut decompressor = libdeflater::Decompressor::new();
     loop {
         match decompressor.gzip_decompress(compressed, &mut out) {
@@ -206,6 +331,12 @@ fn decompress_gzip_libdeflate_buffered(compressed: &[u8]) -> Result<Vec<u8>> {
                 let next = out.len().checked_mul(2).ok_or_else(|| {
                     crate::FastqError::Format("gzip output size exceeds usize range".into())
                 })?;
+                if next > limits.max_decompressed_bytes {
+                    return Err(crate::FastqError::Format(format!(
+                        "gzip output exceeds libdeflate decompressed limit (>{} bytes)",
+                        limits.max_decompressed_bytes
+                    )));
+                }
                 out.resize(next.max(1), 0);
             }
             Err(err) => {
@@ -215,6 +346,122 @@ fn decompress_gzip_libdeflate_buffered(compressed: &[u8]) -> Result<Vec<u8>> {
             }
         }
     }
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+fn ensure_single_gzip_member(compressed: &[u8]) -> Result<()> {
+    let end = gzip_first_member_end(compressed)?;
+    if end != compressed.len() {
+        return Err(crate::FastqError::Format(
+            "libdeflate gzip opener accepts exactly one gzip member; use open_fastq/open_fasta for concatenated gzip streams".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+fn gzip_first_member_end(compressed: &[u8]) -> Result<usize> {
+    use flate2::{Decompress, FlushDecompress, Status};
+
+    if compressed.len() < 18 || compressed[..2] != [0x1f, 0x8b] || compressed[2] != 8 {
+        return Err(crate::FastqError::Format("invalid gzip header".into()));
+    }
+    let flags = compressed[3];
+    if flags & 0xe0 != 0 {
+        return Err(crate::FastqError::Format(
+            "gzip header uses reserved flags".into(),
+        ));
+    }
+
+    let mut pos = 10;
+    if flags & 0x04 != 0 {
+        let xlen = read_gzip_u16(compressed, pos)? as usize;
+        pos = pos
+            .checked_add(2)
+            .and_then(|p| p.checked_add(xlen))
+            .ok_or_else(|| crate::FastqError::Format("gzip extra field is too large".into()))?;
+        if pos > compressed.len() {
+            return Err(crate::FastqError::Format(
+                "truncated gzip extra field".into(),
+            ));
+        }
+    }
+    if flags & 0x08 != 0 {
+        pos = scan_gzip_cstring(compressed, pos, "name")?;
+    }
+    if flags & 0x10 != 0 {
+        pos = scan_gzip_cstring(compressed, pos, "comment")?;
+    }
+    if flags & 0x02 != 0 {
+        pos = pos
+            .checked_add(2)
+            .ok_or_else(|| crate::FastqError::Format("gzip header CRC is too large".into()))?;
+        if pos > compressed.len() {
+            return Err(crate::FastqError::Format(
+                "truncated gzip header CRC".into(),
+            ));
+        }
+    }
+    if pos + 8 > compressed.len() {
+        return Err(crate::FastqError::Format("truncated gzip member".into()));
+    }
+
+    let deflate = &compressed[pos..];
+    let mut decoder = Decompress::new(false);
+    let mut scratch = [0_u8; 8192];
+    loop {
+        let consumed_before = decoder.total_in();
+        let produced_before = decoder.total_out();
+        let consumed = usize::try_from(consumed_before)
+            .map_err(|_| crate::FastqError::Format("gzip member exceeds usize range".into()))?;
+        let status = decoder
+            .decompress(
+                deflate.get(consumed..).ok_or_else(|| {
+                    crate::FastqError::Format("truncated gzip deflate stream".into())
+                })?,
+                &mut scratch,
+                FlushDecompress::None,
+            )
+            .map_err(|err| {
+                crate::FastqError::Format(format!("gzip deflate parse failed: {err}"))
+            })?;
+        if status == Status::StreamEnd {
+            let deflate_len = usize::try_from(decoder.total_in()).map_err(|_| {
+                crate::FastqError::Format("gzip deflate stream exceeds usize range".into())
+            })?;
+            let end = pos
+                .checked_add(deflate_len)
+                .and_then(|p| p.checked_add(8))
+                .ok_or_else(|| crate::FastqError::Format("gzip member is too large".into()))?;
+            if end > compressed.len() {
+                return Err(crate::FastqError::Format("truncated gzip trailer".into()));
+            }
+            return Ok(end);
+        }
+        if decoder.total_in() == consumed_before && decoder.total_out() == produced_before {
+            return Err(crate::FastqError::Format(
+                "gzip deflate parser made no progress".into(),
+            ));
+        }
+    }
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+fn read_gzip_u16(bytes: &[u8], pos: usize) -> Result<u16> {
+    let Some(pair) = bytes.get(pos..pos + 2) else {
+        return Err(crate::FastqError::Format("truncated gzip header".into()));
+    };
+    Ok(u16::from_le_bytes([pair[0], pair[1]]))
+}
+
+#[cfg(all(feature = "gzip", feature = "libdeflate"))]
+fn scan_gzip_cstring(bytes: &[u8], pos: usize, field: &str) -> Result<usize> {
+    let Some(relative_end) = bytes[pos..].iter().position(|&b| b == 0) else {
+        return Err(crate::FastqError::Format(format!(
+            "unterminated gzip {field} field"
+        )));
+    };
+    Ok(pos + relative_end + 1)
 }
 
 #[cfg(all(feature = "gzip", feature = "libdeflate"))]
@@ -321,6 +568,17 @@ mod tests {
     use std::io::Write;
 
     use super::*;
+
+    #[cfg(all(feature = "gzip", feature = "libdeflate"))]
+    fn gzip_member(payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut encoder = flate2::write::GzEncoder::new(&mut out, flate2::Compression::fast());
+            encoder.write_all(payload).unwrap();
+            encoder.finish().unwrap();
+        }
+        out
+    }
 
     #[test]
     #[cfg(feature = "gzip")]
@@ -495,6 +753,83 @@ mod tests {
 
     #[test]
     #[cfg(feature = "libdeflate")]
+    fn explicit_libdeflate_gzip_rejects_concatenated_fastq_members() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "microraptor-libdeflate-gzip-multi-{}.fq.gz",
+            std::process::id()
+        ));
+        let mut encoded = gzip_member(b"@r1\nACGT\n+\nIIII\n");
+        encoded.extend_from_slice(&gzip_member(b"@r2\nTGCA\n+\nJJJJ\n"));
+        std::fs::write(&path, encoded).unwrap();
+
+        let mut default_reader = open_fastq(&path).unwrap();
+        let default_stats = crate::benchutil::consume_fastq(&mut default_reader).unwrap();
+        assert_eq!(default_stats.records, 2);
+
+        let err = match open_fastq_gzip_libdeflate(&path) {
+            Ok(_) => panic!("concatenated gzip member was accepted"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("one gzip member"));
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "libdeflate")]
+    fn explicit_libdeflate_gzip_limits_compressed_input() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "microraptor-libdeflate-gzip-limit-{}.fq.gz",
+            std::process::id()
+        ));
+        std::fs::write(&path, gzip_member(b"@r1\nACGT\n+\nIIII\n")).unwrap();
+
+        let err = match open_fastq_gzip_libdeflate_with_limits(
+            &path,
+            FastqConfig::default(),
+            LibdeflateGzipLimits {
+                max_compressed_bytes: 1,
+                max_decompressed_bytes: 1024,
+            },
+        ) {
+            Ok(_) => panic!("compressed limit was not enforced"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("compressed limit"));
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "libdeflate")]
+    fn explicit_libdeflate_gzip_limits_decompressed_output() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "microraptor-libdeflate-gzip-output-limit-{}.fq.gz",
+            std::process::id()
+        ));
+        std::fs::write(&path, gzip_member(b"@r1\nACGT\n+\nIIII\n")).unwrap();
+
+        let err = match open_fastq_gzip_libdeflate_with_limits(
+            &path,
+            FastqConfig::default(),
+            LibdeflateGzipLimits {
+                max_compressed_bytes: 1024,
+                max_decompressed_bytes: 4,
+            },
+        ) {
+            Ok(_) => panic!("decompressed limit was not enforced"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("decompressed limit"));
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "libdeflate")]
     fn explicit_libdeflate_gzip_fasta_opener_parses_same_file() {
         let dir = std::env::temp_dir();
         let path = dir.join(format!(
@@ -512,6 +847,31 @@ mod tests {
         let flate2_stats = crate::benchutil::consume_fasta(&mut flate2).unwrap();
         let libdeflate_stats = crate::benchutil::consume_fasta(&mut libdeflate).unwrap();
         assert_eq!(flate2_stats, libdeflate_stats);
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "libdeflate")]
+    fn explicit_libdeflate_gzip_rejects_concatenated_fasta_members() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "microraptor-libdeflate-gzip-fasta-multi-{}.fa.gz",
+            std::process::id()
+        ));
+        let mut encoded = gzip_member(b">seq1\nAC\n");
+        encoded.extend_from_slice(&gzip_member(b">seq2\nGT\n"));
+        std::fs::write(&path, encoded).unwrap();
+
+        let mut default_reader = open_fasta(&path).unwrap();
+        let default_stats = crate::benchutil::consume_fasta(&mut default_reader).unwrap();
+        assert_eq!(default_stats.records, 2);
+
+        let err = match open_fasta_gzip_libdeflate(&path) {
+            Ok(_) => panic!("concatenated gzip member was accepted"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("one gzip member"));
 
         std::fs::remove_file(path).unwrap();
     }

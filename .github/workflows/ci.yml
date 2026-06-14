@@ -60,6 +60,17 @@ jobs:
           bash -n scripts/prepare-real-benchmark-inputs.sh
           bash -n scripts/release-gate.sh
 
+      - name: Shellcheck benchmark and release scripts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck --external-sources --severity=warning scripts/*.sh
+
+      - name: Check dependency policy
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny check
+
       - name: Verify checked benchmark snapshots
         run: scripts/check-benchmark-snapshots.sh
 

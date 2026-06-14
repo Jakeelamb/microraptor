@@ -10,6 +10,7 @@ result_dir="${MICRORAPTOR_FASTA_GAUNTLET_RESULT_DIR:-target/bench-results/fasta-
 corpus_inputs="${MICRORAPTOR_FASTA_GAUNTLET_CORPUS_INPUTS:-}"
 jsonl="${result_dir}/microraptor-fasta-gauntlet.jsonl"
 external_tsv="${result_dir}/external-tools.tsv"
+external_parity_tsv="${result_dir}/external-parity.tsv"
 microraptor_memory_tsv="${result_dir}/microraptor-memory.tsv"
 metadata="${result_dir}/metadata.md"
 summary="${result_dir}/summary.md"
@@ -23,6 +24,7 @@ export MKL_NUM_THREADS="${MKL_NUM_THREADS:-${workers}}"
 mkdir -p "${input_root}" "${result_dir}"
 : > "${jsonl}"
 printf 'label\ttool\tstatus\telapsed_s\tmax_rss_kb\tcommand\n' > "${external_tsv}"
+printf 'label\ttool\tparity_status\texpected_records\texpected_bases\tobserved_records\tobserved_bases\tnotes\n' > "${external_parity_tsv}"
 printf 'label\tstatus\telapsed_s\tmax_rss_kb\tcommand\n' > "${microraptor_memory_tsv}"
 
 parse_corpus_inputs() {
@@ -46,6 +48,15 @@ command_version() {
   else
     printf '%s not installed\n' "${command_name}"
   fi
+}
+
+record_external_parity_timing_only() {
+  local label="$1"
+  local tool="$2"
+  printf '%s\t%s\ttiming_only\tNA\tNA\tNA\tNA\t%s\n' \
+    "${label}" \
+    "${tool}" \
+    "no normalized FASTA comparator parser configured" >> "${external_parity_tsv}"
 }
 
 cargo +nightly build --release --all-features --bin microraptor-bench --bin microraptor-fixture
@@ -120,6 +131,7 @@ run_external() {
   shift 2
   if ! command -v "${tool}" >/dev/null 2>&1; then
     printf '%s\t%s\tskipped\t\t\t%s not installed\n' "${label}" "${tool}" "${tool}" >> "${external_tsv}"
+    record_external_parity_timing_only "${label}" "${tool}"
     return 0
   fi
 
@@ -142,6 +154,7 @@ run_external() {
   else
     printf '%s\t%s\tfailed:%s\t%s\t%s\t%s\n' "${label}" "${tool}" "${status}" "${elapsed}" "${rss}" "${command_text}" >> "${external_tsv}"
   fi
+  record_external_parity_timing_only "${label}" "${tool}"
 }
 
 run_external_samtools_faidx() {
@@ -149,9 +162,11 @@ run_external_samtools_faidx() {
   local path="$2"
   command -v samtools >/dev/null 2>&1 || {
     printf '%s\tsamtools\tskipped\t\t\tsamtools not installed\n' "${label}" >> "${external_tsv}"
+    record_external_parity_timing_only "${label}" samtools
     return 0
   }
-  local tmp="${result_dir}/$(basename "${path}").faidx.tmp"
+  local tmp
+  tmp="${result_dir}/$(basename "${path}").faidx.tmp"
   cp "${path}" "${tmp}"
   run_external "${label}" samtools samtools faidx "${tmp}"
   rm -f "${tmp}" "${tmp}.fai" "${tmp}.gzi"

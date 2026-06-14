@@ -26,7 +26,7 @@ These APIs are the default entry points for downstream scientific tools.
 | `count_two_line_fasta_bytes`, `count_two_line_fasta_read` | Strict two-line FASTA count/total-bases/light-checksum fast paths | Keep public |
 | `FastaRecordSink`, `FastaVisitRecord` | Borrowed FASTA visitor sink and record view | Keep public |
 | `open_fasta`, `open_fasta_with_config` | File-path opener for raw, gzip, and BGZF FASTA inputs | Keep public |
-| `open_fastq_gzip_libdeflate`, `open_fasta_gzip_libdeflate` | Explicit buffered single gzip openers through the third-party `libdeflater` wrapper | Keep public behind `gzip` + `libdeflate` |
+| `open_fastq_gzip_libdeflate*`, `open_fasta_gzip_libdeflate*`, `LibdeflateGzipLimits` | Explicit bounded buffered single-member gzip openers through the third-party `libdeflater` wrapper | Keep public behind `gzip` + `libdeflate` |
 | `PairedFastqReader`, `PairedFastqBatch`, `FastqPair` | Ordered paired-end streaming | Keep public |
 | `open_paired_fastq*` | Paired file opener variants | Keep public |
 | `PairingMode`, `PairValidation`, `strip_pair_suffix` | Explicit ordered-pair validation semantics | Keep public |
@@ -73,10 +73,12 @@ auto-detection.
 | API | Role | 0.1.x decision |
 | --- | --- | --- |
 | `BgzfReader`, `BgzfAutoReader`, `BgzfParallelReader` | Serial, adaptive, and bounded parallel BGZF decode | Keep public |
+| `BgzfDecodedBlockReader`, `BgzfDecodedBlock` | Block-aware decoded streaming with compressed and uncompressed offsets | Keep public for indexing/reference builders |
 | `BgzfWriter`, `BGZF_EOF_BLOCK` | BGZF output support | Keep public |
 | `BgzfInflateBackend`, `BgzfDeflateBackend` | Backend selection when `libdeflate` is enabled | Keep public |
 | `BgzfParallelConfig`, `BgzfPipelineMetrics*` | Parallel threshold, queue, backend, and backpressure tuning | Keep public |
-| `BgzfVirtualOffset`, `BgzfIndex`, `BgzfIndexEntry`, `build_bgzf_index` | Seek/index support | Keep public |
+| `BgzfVirtualOffset`, `BgzfIndex`, `BgzfIndexEntry`, `build_bgzf_index`, `build_bgzf_index_strict` | Seek/index support, including optional canonical EOF-marker validation | Keep public |
+| `DetectedInputKind`, `detect_file_input_kind` | Shared raw/gzip/BGZF file-magic detection for tools and benchmarks | Keep public |
 | `FastaIndex`, `FastaIndexEntry`, `build_fasta_index`, `build_fasta_index_bgzf` | `.fai`-style FASTA reference indexing, with BGZF sequence-start virtual offsets when `bgzf` is enabled | Keep public |
 | `open_fastq_bgzf_*` | Explicit BGZF openers for benchmarking and tuning | Keep public |
 | `compress_bgzf_parallel*`, `decompress_bgzf_parallel*` | Whole-buffer helpers for fixtures and controlled conversions | Keep public, but not the main streaming path |
@@ -115,6 +117,10 @@ transport tiers.
   should be built as a separate transport/index layer on top of this.
 - Whole-buffer BGZF helpers are convenient for fixtures and conversions, but
   large production workflows should prefer streaming readers/writers.
+- Explicit `libdeflate` gzip openers buffer compressed and decompressed data by
+  design, enforce caller-visible limits, and reject concatenated gzip members
+  rather than silently undercounting relative to the default streaming gzip
+  opener.
 - `PairValidation::FastSlash` is intentionally fast and narrow. Broader naming
   conventions should be modeled as new explicit validation modes, not hidden
   behavior changes.

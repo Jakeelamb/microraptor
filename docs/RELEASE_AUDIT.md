@@ -27,7 +27,7 @@ the release commit.
 | Framework is ruthlessly analyzed | `docs/FRAMEWORK.md` defines the model, competitor categories, local evidence, and explicit "do claim" / "do not claim" boundaries | Satisfied |
 | Independent replication protocol exists | `docs/REPLICATION.md`, `scripts/check-replication-host.sh`, and `scripts/export-replication-kit.sh` define host preflight, release-commit regeneration, replication-kit contents, independent-machine evidence fields, and claim boundaries | Satisfied |
 | Benchmark protocol is reproducible | `BENCHMARKING.md`, `scripts/benchmark-gauntlet.sh`, `scripts/benchmark-common.sh`, `scripts/render-benchmark-report.sh`, `scripts/check-benchmark-snapshots.sh`, `scripts/benchmark-rust-peers.sh`, `scripts/benchmark-fasta-peers.sh`, `scripts/benchmark-fasta-peer-size-sweep.sh`, `scripts/benchmark-fasta-gauntlet.sh`, `scripts/prepare-real-benchmark-inputs.sh`, and `scripts/discover-local-benchmark-corpus.sh`; gauntlet metadata records commit state, toolchains, all-feature release mode, machine class, filesystem, comparator versions, and parameters | Satisfied |
-| Benchmark figures and raw measurement artifacts are generated from scripts | `docs/benchmarks/*/figures/*.svg`, `docs/benchmarks/*/microraptor-gauntlet.jsonl`, `docs/benchmarks/*/microraptor-fasta-gauntlet.jsonl`, `docs/benchmarks/*/external-tools.tsv`, `docs/benchmarks/*/rust-library-peers.tsv`, and `docs/benchmarks/*/fasta-peer-size-sweep.tsv` rendered or copied by repository scripts with local home paths sanitized; `scripts/check-benchmark-snapshots.sh` re-renders checked gauntlet, Rust peer, FASTA peer, and FASTA size-sweep snapshots, checks FASTA gauntlet sidecars, diffs summaries/figures, and rejects legacy shell-wrapped external command records | Satisfied |
+| Benchmark figures and raw measurement artifacts are generated from scripts | `docs/benchmarks/*/figures/*.svg`, `docs/benchmarks/*/microraptor-gauntlet.jsonl`, `docs/benchmarks/*/microraptor-fasta-gauntlet.jsonl`, `docs/benchmarks/*/external-tools.tsv`, `docs/benchmarks/*/external-parity.tsv`, `docs/benchmarks/*/rust-library-peers.tsv`, and `docs/benchmarks/*/fasta-peer-size-sweep.tsv` rendered or copied by repository scripts with local home paths sanitized; `scripts/check-benchmark-snapshots.sh` re-renders checked gauntlet, Rust peer, FASTA peer, nested FASTA peer, and FASTA size-sweep snapshots, checks FASTA gauntlet sidecars, validates JSONL schemas and parity sidecars when present, diffs summaries/figures, and rejects legacy shell-wrapped external command records | Satisfied |
 | Command-line competitor comparisons exist | `docs/benchmarks/drosophila-1m`, `docs/benchmarks/drosophila-compressed`, `docs/benchmarks/drosophila-read-types`, and `docs/benchmarks/independent-organisms` include `seqkit`, `seqtk`, `samtools`, and `fastp` rows where available | Satisfied |
 | Rust parser-library peer comparisons exist | `docs/benchmarks/rust-peers` and `docs/benchmarks/rust-peers-drosophila-r1` compare `seq_io`, `noodles-fastq`, `bio`, and microraptor | Satisfied |
 | Real biological datasets are covered | Local Drosophila Illumina PE, PacBio CLR, ONT, E. coli MG1655 paired-end, and yeast BTT paired-end rows are discovered and summarized; gzip/BGZF derivatives are benchmarked | Satisfied |
@@ -36,12 +36,14 @@ the release commit.
 | Release notes exist | `CHANGELOG.md` | Satisfied |
 | Contribution expectations are explicit | `CONTRIBUTING.md` | Satisfied |
 | GitHub contribution workflow is structured | `.github/ISSUE_TEMPLATE/*`, `.github/pull_request_template.md`, and `SECURITY.md` request reproducible parser, benchmark, API, and vulnerability evidence | Satisfied |
-| CI covers release-facing documentation gates | `.github/workflows/ci.yml` checks warning-denied library/rustdoc surfaces, release docs, benchmark script syntax, package dry-run, nightly feature modes, and fuzz target compilation | Satisfied |
+| CI covers release-facing documentation gates | `.github/workflows/ci.yml` checks warning-denied library/rustdoc surfaces, release docs, benchmark script syntax, shellcheck, dependency policy via `cargo deny check`, package dry-run, nightly feature modes, and fuzz target compilation | Satisfied |
 | Final crates.io package verifies | `cargo package --allow-dirty` currently verifies; rerun on clean release tree before publishing | Partially satisfied |
 
-## Current Local Verification
+## Historical Local Verification
 
-The current dirty development tree has passed:
+The following dirty development tree verification passed before this cleanup
+round and should be treated as historical evidence, not as a clean release
+commit gate:
 
 ```bash
 scripts/release-gate.sh --allow-dirty --nightly
@@ -66,9 +68,8 @@ Observed test coverage from that run:
 - Package dry run: 160 files, 998.1 KiB unpacked, approximately 184.3 KiB
   compressed.
 
-This is strong development evidence, but it is not a clean release-commit gate
-because the current tree is intentionally dirty while release work is being
-assembled.
+This is strong development evidence, but it is not a clean release-commit gate.
+Rerun the required gate from the final release commit before publishing.
 
 ## Required Release Gate
 
@@ -90,6 +91,8 @@ cargo +nightly clippy --all-targets --all-features -- -D warnings
 cargo +nightly clippy --all-targets --no-default-features -- -D warnings
 RUSTFLAGS="-D warnings" cargo check --lib
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+cargo deny check
+shellcheck scripts/*.sh
 scripts/benchmark-gauntlet.sh
 scripts/render-benchmark-report.sh
 scripts/check-benchmark-snapshots.sh

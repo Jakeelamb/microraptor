@@ -1,9 +1,10 @@
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read};
 use std::ops::Range;
 
 use crate::error::{FastqError, FastqPosition, Result};
 #[cfg(feature = "bgzf")]
-use crate::{BgzfReader, BgzfVirtualOffset, build_bgzf_index};
+use crate::{BgzfDecodedBlockReader, BgzfIndexEntry, BgzfVirtualOffset};
 use memchr::memchr;
 
 const DEFAULT_BATCH_RECORDS: usize = 1024;
@@ -178,6 +179,7 @@ pub struct FastaIndexEntry {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FastaIndex {
     entries: Vec<FastaIndexEntry>,
+    name_to_index: HashMap<Vec<u8>, usize>,
 }
 
 impl FastaIndex {
@@ -198,7 +200,9 @@ impl FastaIndex {
 
     /// Find an entry by reference name bytes.
     pub fn get(&self, name: &[u8]) -> Option<&FastaIndexEntry> {
-        self.entries.iter().find(|entry| entry.name == name)
+        self.name_to_index
+            .get(name)
+            .and_then(|&idx| self.entries.get(idx))
     }
 
     /// Render the standard five-column `.fai` representation.
@@ -233,15 +237,23 @@ impl Default for FastaStats {
 impl FastaStats {
     /// Observe one sequence.
     pub fn observe_sequence(&mut self, seq: &[u8]) {
+        self.observe_sequence_parts(
+            seq.len() as u64,
+            seq.first().copied().unwrap_or_default(),
+            seq.last().copied().unwrap_or_default(),
+        );
+    }
+
+    fn observe_sequence_parts(&mut self, len: u64, first: u8, last: u8) {
         self.records += 1;
-        self.bases += seq.len() as u64;
-        self.checksum ^= seq.len() as u64;
+        self.bases += len;
+        self.checksum ^= len;
         self.checksum = self
             .checksum
             .rotate_left(5)
             .wrapping_mul(0x0000_0100_0000_01b3);
-        self.checksum ^= seq.first().copied().unwrap_or_default() as u64;
-        self.checksum ^= (seq.last().copied().unwrap_or_default() as u64) << 8;
+        self.checksum ^= first as u64;
+        self.checksum ^= (last as u64) << 8;
     }
 }
 
@@ -424,11 +436,51 @@ impl<R: Read> FastaReader<R> {
     /// [`next_batch`](Self::next_batch).
     pub fn stats(&mut self) -> Result<FastaStats> {
         let mut stats = FastaStats::default();
-        self.visit_records(|record| {
-            stats.observe_sequence(record.seq());
-            Ok(())
-        })?;
+        while let Some(header) = self.next_header()? {
+            self.observe_record_stats(header, &mut stats)?;
+            self.record_index += 1;
+        }
         Ok(stats)
+    }
+
+    fn observe_record_stats(
+        &mut self,
+        _header: PendingHeader,
+        stats: &mut FastaStats,
+    ) -> Result<()> {
+        let record_index = self.record_index;
+        let mut bases = 0_u64;
+        let mut first = 0_u8;
+        let mut last = 0_u8;
+
+        loop {
+            let line_start = self.byte_offset;
+            let n = self.read_line()?;
+            if n == 0 {
+                self.eof = true;
+                break;
+            }
+            let trimmed = trim_line(&self.line);
+            if trimmed.starts_with(b">") {
+                validate_header(trimmed, line_start, record_index + 1)?;
+                self.pending_header = Some(PendingHeader {
+                    bytes: trimmed.to_vec(),
+                    byte_offset: line_start,
+                });
+                break;
+            }
+            if trimmed.is_empty() {
+                continue;
+            }
+            if bases == 0 {
+                first = trimmed[0];
+            }
+            last = *trimmed.last().unwrap_or(&0);
+            bases += trimmed.len() as u64;
+        }
+
+        stats.observe_sequence_parts(bases, first, last);
+        Ok(())
     }
 
     fn next_header(&mut self) -> Result<Option<PendingHeader>> {
@@ -551,24 +603,50 @@ pub fn build_fasta_index<R: Read>(reader: R) -> Result<FastaIndex> {
 /// carries a BGZF virtual offset for the first sequence byte, allowing callers
 /// to pair the index with [`crate::BgzfSeekReader`].
 #[cfg(feature = "bgzf")]
-pub fn build_fasta_index_bgzf<R: Read>(mut reader: R) -> Result<FastaIndex> {
-    let mut compressed = Vec::new();
-    reader.read_to_end(&mut compressed)?;
-    let bgzf_index = build_bgzf_index(&compressed[..])?;
-
-    let mut decoded_reader = BufReader::new(BgzfReader::new(&compressed[..]));
+pub fn build_fasta_index_bgzf<R: Read>(reader: R) -> Result<FastaIndex> {
+    let mut block_reader = BgzfDecodedBlockReader::new(reader);
     let mut builder = FastaIndexBuilder::default();
-    build_fasta_index_bufread(&mut decoded_reader, &mut builder)?;
+    let mut bgzf_entries = Vec::new();
+    let mut line = Vec::new();
+
+    while let Some(block) = block_reader.next_block()? {
+        bgzf_entries.push(block.index_entry());
+        for &byte in block.bytes() {
+            line.push(byte);
+            if byte == b'\n' {
+                builder.observe_physical_line(&line)?;
+                line.clear();
+            }
+        }
+    }
+    if !line.is_empty() {
+        builder.observe_physical_line(&line)?;
+    }
+    builder.finish_current()?;
+
     let mut index = builder.finish();
     for entry in &mut index.entries {
-        entry.virtual_offset = bgzf_index.virtual_offset_for_uncompressed_offset(entry.offset)?;
+        entry.virtual_offset = bgzf_virtual_offset_for(&bgzf_entries, entry.offset)?;
     }
     Ok(index)
+}
+
+#[cfg(feature = "bgzf")]
+fn bgzf_virtual_offset_for(
+    entries: &[BgzfIndexEntry],
+    offset: u64,
+) -> Result<Option<BgzfVirtualOffset>> {
+    let idx = entries.partition_point(|entry| entry.uncompressed_offset <= offset);
+    let Some(entry) = idx.checked_sub(1).and_then(|idx| entries.get(idx)) else {
+        return Ok(None);
+    };
+    entry.virtual_offset_for(offset)
 }
 
 #[derive(Debug, Default)]
 struct FastaIndexBuilder {
     entries: Vec<FastaIndexEntry>,
+    seen_names: HashSet<Vec<u8>>,
     current: Option<FastaIndexRecord>,
     byte_offset: u64,
 }
@@ -592,37 +670,42 @@ fn build_fasta_index_bufread<R: BufRead>(
     let mut line = Vec::new();
     loop {
         line.clear();
-        let line_start = builder.byte_offset;
         let n = reader.read_until(b'\n', &mut line)?;
         if n == 0 {
             break;
         }
-        builder.byte_offset += n as u64;
-        let trimmed = trim_line(&line);
-        if trimmed.is_empty() {
-            builder.observe_blank(line_start)?;
-        } else if trimmed.starts_with(b">") {
-            builder.start_record(trimmed, line_start)?;
-        } else {
-            builder.observe_sequence_line(trimmed.len() as u64, line.len() as u64, line_start)?;
-        }
+        builder.observe_physical_line(&line)?;
     }
     builder.finish_current()?;
     Ok(())
 }
 
 impl FastaIndexBuilder {
+    fn observe_physical_line(&mut self, line: &[u8]) -> Result<()> {
+        let line_start = self.byte_offset;
+        self.byte_offset += line.len() as u64;
+        let trimmed = trim_line(line);
+        if trimmed.is_empty() {
+            self.observe_blank(line_start)
+        } else if trimmed.starts_with(b">") {
+            self.start_record(trimmed, line_start)
+        } else {
+            self.observe_sequence_line(trimmed.len() as u64, line.len() as u64, line_start)
+        }
+    }
+
     fn start_record(&mut self, header: &[u8], byte_offset: u64) -> Result<()> {
         self.finish_current()?;
         validate_header(header, byte_offset, self.entries.len() as u64)?;
         let name = fasta_index_name(header);
-        if self.entries.iter().any(|entry| entry.name == name) {
+        if self.seen_names.contains(name) {
             return Err(format_at(
                 "duplicate FASTA index reference name",
                 byte_offset,
                 self.entries.len() as u64,
             ));
         }
+        self.seen_names.insert(name.to_vec());
         self.current = Some(FastaIndexRecord {
             name: name.to_vec(),
             len: 0,
@@ -712,8 +795,15 @@ impl FastaIndexBuilder {
     }
 
     fn finish(mut self) -> FastaIndex {
+        let name_to_index = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| (entry.name.clone(), idx))
+            .collect();
         FastaIndex {
             entries: std::mem::take(&mut self.entries),
+            name_to_index,
         }
     }
 }
@@ -1418,6 +1508,28 @@ mod tests {
     }
 
     #[test]
+    fn stats_continue_after_partial_batch_without_folding_next_records() {
+        let input = b">seq1\nAC\n>seq2\nGT\nTA\n>seq3\nCC\n";
+        let mut reader = FastaReader::with_config(
+            &input[..],
+            FastaConfig {
+                batch_records: 1,
+                ..FastaConfig::default()
+            },
+        );
+        {
+            let first = reader.next_batch().unwrap().unwrap();
+            assert_eq!(first.records().next().unwrap().seq(), b"AC");
+        }
+
+        let stats = reader.stats().unwrap();
+        let mut expected = FastaStats::default();
+        expected.observe_sequence(b"GTTA");
+        expected.observe_sequence(b"CC");
+        assert_eq!(stats, expected);
+    }
+
+    #[test]
     fn builds_fasta_index_for_wrapped_reference() {
         let input = b">chr1 description\nACGT\nAC\n>chr2\nTTTT\n";
         let index = build_fasta_index(&input[..]).unwrap();
@@ -1469,6 +1581,35 @@ mod tests {
         let vo = chr1.virtual_offset.unwrap();
         assert_eq!(vo.compressed_offset(), 0);
         assert_eq!(vo.in_block_offset(), 6);
+    }
+
+    #[test]
+    #[cfg(feature = "bgzf")]
+    fn bgzf_fasta_index_streams_lines_across_block_boundaries() {
+        use std::io::Read;
+
+        let mut input = b">chr1\n".to_vec();
+        input.extend(std::iter::repeat_n(b'A', 70_000));
+        input.extend_from_slice(b"\n>chr2\nTTTT\n");
+        let encoded = crate::compress_bgzf_parallel(&input, 2).unwrap();
+        let index = build_fasta_index_bgzf(&encoded[..]).unwrap();
+
+        let chr1 = index.get(b"chr1").unwrap();
+        assert_eq!(chr1.len, 70_000);
+        assert_eq!(chr1.offset, 6);
+        assert_eq!(chr1.line_bases, 70_000);
+        assert_eq!(chr1.line_width, 70_001);
+
+        let chr2 = index.get(b"chr2").unwrap();
+        assert_eq!(chr2.len, 4);
+        let chr2_vo = chr2.virtual_offset.unwrap();
+        assert!(chr2_vo.compressed_offset() > 0);
+
+        let mut reader = crate::BgzfSeekReader::new(std::io::Cursor::new(encoded));
+        reader.seek_virtual_offset(chr2_vo).unwrap();
+        let mut out = [0_u8; 4];
+        reader.read_exact(&mut out).unwrap();
+        assert_eq!(&out, b"TTTT");
     }
 
     #[test]

@@ -19,6 +19,7 @@ pub(crate) struct ReportRow<'a> {
     pub(crate) records: u64,
     pub(crate) bases: u64,
     pub(crate) best: Duration,
+    pub(crate) samples: &'a [Duration],
     pub(crate) checksum: u64,
     pub(crate) extras: &'a [(&'static str, u64)],
 }
@@ -69,16 +70,41 @@ pub(crate) fn render_json(
         if i != 0 {
             out.push(',');
         }
+        let sample_ns = row
+            .samples
+            .iter()
+            .map(Duration::as_nanos)
+            .collect::<Vec<_>>();
+        let min_ns = sample_ns
+            .iter()
+            .copied()
+            .min()
+            .unwrap_or(row.best.as_nanos());
+        let max_ns = sample_ns
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(row.best.as_nanos());
+        let median_ns = median_nanos(&sample_ns).unwrap_or(row.best.as_nanos());
         let _ = write!(
             out,
-            "{{\"name\":{},\"input_bytes\":{},\"records\":{},\"bases\":{},\"best_ns\":{},\"checksum\":{}",
+            "{{\"name\":{},\"input_bytes\":{},\"records\":{},\"bases\":{},\"best_ns\":{},\"min_ns\":{},\"median_ns\":{},\"max_ns\":{},\"sample_ns\":[",
             JsonStr(row.name),
             row.bytes,
             row.records,
             row.bases,
             row.best.as_nanos(),
-            row.checksum
+            min_ns,
+            median_ns,
+            max_ns,
         );
+        for (sample_idx, value) in sample_ns.iter().enumerate() {
+            if sample_idx != 0 {
+                out.push(',');
+            }
+            let _ = write!(out, "{value}");
+        }
+        let _ = write!(out, "],\"checksum\":{}", row.checksum);
         for (key, value) in row.extras {
             let _ = write!(out, ",{}:{}", JsonStr(key), value);
         }
@@ -86,6 +112,20 @@ pub(crate) fn render_json(
     }
     out.push_str("]}");
     out
+}
+
+fn median_nanos(samples: &[u128]) -> Option<u128> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    let mid = sorted.len() / 2;
+    if sorted.len().is_multiple_of(2) {
+        Some((sorted[mid - 1] + sorted[mid]) / 2)
+    } else {
+        Some(sorted[mid])
+    }
 }
 
 struct JsonStr<'a>(&'a str);
@@ -149,6 +189,11 @@ mod tests {
             records: 2,
             bases: 3,
             best: Duration::from_nanos(4),
+            samples: &[
+                Duration::from_nanos(7),
+                Duration::from_nanos(4),
+                Duration::from_nanos(9),
+            ],
             checksum: 5,
             extras: &[("bgzf_job_queue_full", 6)],
         };
@@ -156,5 +201,7 @@ mod tests {
         let json = render_json(&config, "synthetic", 1, &[row]);
 
         assert!(json.contains("\"bgzf_job_queue_full\":6"));
+        assert!(json.contains("\"sample_ns\":[7,4,9]"));
+        assert!(json.contains("\"median_ns\":7"));
     }
 }

@@ -1,0 +1,12 @@
+[package]
+name = "microraptor-rust-peer-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bio = "=4.0.0"
+flate2 = "=1.1.9"
+__MICRORAPTOR_DEPENDENCY__
+noodles-fastq = "=0.23.0"
+seq_io = "=0.3.4"

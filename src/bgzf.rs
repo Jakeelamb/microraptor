@@ -352,6 +352,96 @@ impl CompressedBlock {
     }
 }
 
+/// One decoded BGZF block with enough offset metadata to build virtual offsets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BgzfDecodedBlock {
+    /// Compressed stream byte offset of the block.
+    pub compressed_offset: u64,
+    /// Uncompressed stream byte offset of the block.
+    pub uncompressed_offset: u64,
+    /// Compressed block size in bytes.
+    pub compressed_size: u32,
+    bytes: Vec<u8>,
+}
+
+impl BgzfDecodedBlock {
+    /// Decoded block bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Uncompressed block size in bytes.
+    pub fn uncompressed_size(&self) -> u32 {
+        self.bytes.len() as u32
+    }
+
+    /// Convert this block to an index entry.
+    pub fn index_entry(&self) -> BgzfIndexEntry {
+        BgzfIndexEntry {
+            compressed_offset: self.compressed_offset,
+            uncompressed_offset: self.uncompressed_offset,
+            compressed_size: self.compressed_size,
+            uncompressed_size: self.uncompressed_size(),
+        }
+    }
+}
+
+/// Streaming decoded BGZF block iterator.
+pub struct BgzfDecodedBlockReader<R> {
+    inner: R,
+    backend: BgzfInflateBackend,
+    compressed_offset: u64,
+    uncompressed_offset: u64,
+    eof: bool,
+}
+
+impl<R: Read> BgzfDecodedBlockReader<R> {
+    /// Construct a decoded block reader using the default inflate backend.
+    pub fn new(inner: R) -> Self {
+        Self::with_inflate_backend(inner, BgzfInflateBackend::default())
+    }
+
+    /// Construct a decoded block reader using an explicit inflate backend.
+    pub fn with_inflate_backend(inner: R, backend: BgzfInflateBackend) -> Self {
+        Self {
+            inner,
+            backend,
+            compressed_offset: 0,
+            uncompressed_offset: 0,
+            eof: false,
+        }
+    }
+
+    /// Decode and return the next non-EOF BGZF block.
+    pub fn next_block(&mut self) -> Result<Option<BgzfDecodedBlock>> {
+        if self.eof {
+            return Ok(None);
+        }
+        let Some(block) = read_block(&mut self.inner)? else {
+            self.eof = true;
+            return Ok(None);
+        };
+        let compressed_size = u32::try_from(block.bytes.len())
+            .map_err(|_| FastqError::Bgzf("BGZF block size exceeds u32 range".into()))?;
+        if block.is_eof() {
+            self.compressed_offset += u64::from(compressed_size);
+            self.eof = true;
+            return Ok(None);
+        }
+
+        let bytes = decode_block_with_backend(&block, self.backend)?;
+        let decoded = BgzfDecodedBlock {
+            compressed_offset: self.compressed_offset,
+            uncompressed_offset: self.uncompressed_offset,
+            compressed_size,
+            bytes,
+        };
+        self.compressed_offset += u64::from(compressed_size);
+        self.uncompressed_offset += u64::from(decoded.uncompressed_size());
+        Ok(Some(decoded))
+    }
+}
+
 pub fn is_bgzf_header(prefix: &[u8]) -> bool {
     prefix.len() >= BGZF_HEADER_LEN
         && prefix[0] == 31
@@ -900,15 +990,30 @@ pub fn compress_bgzf_parallel_with_deflate_backend(
 
 /// Build a BGZF block index from a complete BGZF stream.
 pub fn build_bgzf_index<R: Read>(mut reader: R) -> Result<BgzfIndex> {
+    build_bgzf_index_impl(&mut reader, false)
+}
+
+/// Build a BGZF block index and require the canonical BGZF EOF marker.
+///
+/// This is stricter than [`build_bgzf_index`] and is intended for benchmark,
+/// release, and scientific validation paths where a block-boundary truncation
+/// must not be accepted as a clean stream end.
+pub fn build_bgzf_index_strict<R: Read>(mut reader: R) -> Result<BgzfIndex> {
+    build_bgzf_index_impl(&mut reader, true)
+}
+
+fn build_bgzf_index_impl<R: Read>(reader: &mut R, require_eof: bool) -> Result<BgzfIndex> {
     let mut entries = Vec::new();
     let mut compressed_offset = 0_u64;
     let mut uncompressed_offset = 0_u64;
+    let mut saw_eof = false;
 
-    while let Some(block) = read_block(&mut reader)? {
+    while let Some(block) = read_block(reader)? {
         let compressed_size = u32::try_from(block.bytes.len())
             .map_err(|_| FastqError::Bgzf("BGZF block size exceeds u32 range".into()))?;
         if block.is_eof() {
             compressed_offset += u64::from(compressed_size);
+            saw_eof = true;
             break;
         }
 
@@ -930,6 +1035,10 @@ pub fn build_bgzf_index<R: Read>(mut reader: R) -> Result<BgzfIndex> {
         });
         compressed_offset += u64::from(compressed_size);
         uncompressed_offset += u64::from(uncompressed_size);
+    }
+
+    if require_eof && !saw_eof {
+        return Err(FastqError::Bgzf("missing BGZF EOF marker".into()));
     }
 
     Ok(BgzfIndex {
@@ -1046,6 +1155,7 @@ fn send_bounded<T>(
     metrics: Option<&BgzfPipelineMetrics>,
     channel: BgzfBackpressureChannel,
 ) -> bool {
+    let mut spins = 0_u8;
     while !cancel.load(Ordering::Acquire) {
         match tx.try_send(msg) {
             Ok(()) => return true,
@@ -1054,7 +1164,12 @@ fn send_bounded<T>(
                     metrics.record(channel);
                 }
                 msg = returned;
-                thread::sleep(Duration::from_millis(1));
+                if spins < 16 {
+                    spins += 1;
+                    thread::yield_now();
+                } else {
+                    thread::park_timeout(Duration::from_micros(50));
+                }
             }
             Err(TrySendError::Disconnected(_)) => return false,
         }
@@ -1169,6 +1284,11 @@ fn decode_block_into_with_backend(
         bytes[compressed_end + 6],
         bytes[compressed_end + 7],
     ]) as usize;
+    if expected_len > BGZF_MAX_BLOCK_SIZE {
+        return Err(FastqError::Bgzf(
+            "BGZF uncompressed block exceeds 64 KiB".into(),
+        ));
+    }
 
     let deflate = &bytes[BGZF_HEADER_LEN..compressed_end];
     match backend {

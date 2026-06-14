@@ -65,6 +65,50 @@ fn reader_rejects_truncated_trailing_header() {
     assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
 }
 
+fn oversized_uncompressed_block_stream() -> Vec<u8> {
+    let input = vec![b'A'; BGZF_MAX_BLOCK_SIZE + 1];
+    let compressed = deflate_block_flate2(&input, flate2::Compression::fast()).unwrap();
+    let total_size = BGZF_HEADER_LEN + compressed.len() + GZIP_TRAILER_LEN;
+    assert!(total_size <= BGZF_MAX_BLOCK_SIZE);
+
+    let mut out = Vec::with_capacity(total_size + BGZF_EOF_BLOCK.len());
+    out.extend_from_slice(&[31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0]);
+    out.extend_from_slice(&[b'B', b'C', 2, 0]);
+    out.extend_from_slice(
+        &u16::try_from(total_size - 1)
+            .unwrap_or(u16::MAX)
+            .to_le_bytes(),
+    );
+    out.extend_from_slice(&compressed);
+
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&input);
+    out.extend_from_slice(&hasher.finalize().to_le_bytes());
+    out.extend_from_slice(&(input.len() as u32).to_le_bytes());
+    out.extend_from_slice(BGZF_EOF_BLOCK);
+    out
+}
+
+#[test]
+fn bgzf_decoders_reject_oversized_uncompressed_blocks() {
+    let encoded = oversized_uncompressed_block_stream();
+
+    let mut serial = BgzfReader::new(&encoded[..]);
+    let mut out = Vec::new();
+    let serial_err = serial.read_to_end(&mut out).unwrap_err();
+    assert_eq!(serial_err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(serial_err.to_string().contains("exceeds 64 KiB"));
+
+    let mut parallel = BgzfParallelReader::new(std::io::Cursor::new(encoded.clone()), 2).unwrap();
+    let mut out = Vec::new();
+    let parallel_err = parallel.read_to_end(&mut out).unwrap_err();
+    assert_eq!(parallel_err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(parallel_err.to_string().contains("exceeds 64 KiB"));
+
+    let index_err = build_bgzf_index(&encoded[..]).unwrap_err();
+    assert!(index_err.to_string().contains("exceeds 64 KiB"));
+}
+
 #[test]
 fn bounded_send_records_full_queue_metric() {
     let metrics = BgzfPipelineMetrics::default();
@@ -252,6 +296,29 @@ fn builds_empty_index_for_eof_only_stream() {
     assert!(index.is_empty());
     assert_eq!(index.uncompressed_len(), 0);
     assert_eq!(index.compressed_len(), encoded.len() as u64);
+}
+
+#[test]
+fn strict_bgzf_index_requires_eof_marker() {
+    let input = patterned_input(BGZF_MAX_PAYLOAD + 17);
+    let mut encoded = compress_bgzf_parallel(&input, 2).unwrap();
+    encoded.truncate(encoded.len() - BGZF_EOF_BLOCK.len());
+
+    let lenient = build_bgzf_index(&encoded[..]).unwrap();
+    assert_eq!(lenient.uncompressed_len(), input.len() as u64);
+
+    let strict_err = build_bgzf_index_strict(&encoded[..]).unwrap_err();
+    assert!(strict_err.to_string().contains("missing BGZF EOF marker"));
+}
+
+#[test]
+fn strict_bgzf_index_accepts_canonical_eof_marker() {
+    let input = patterned_input(BGZF_MAX_PAYLOAD + 17);
+    let encoded = compress_bgzf_parallel(&input, 2).unwrap();
+
+    let strict = build_bgzf_index_strict(&encoded[..]).unwrap();
+    assert_eq!(strict.uncompressed_len(), input.len() as u64);
+    assert_eq!(strict.compressed_len(), encoded.len() as u64);
 }
 
 #[test]

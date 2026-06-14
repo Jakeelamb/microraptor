@@ -223,20 +223,18 @@ fi
 if [[ -f "${dros_dir}/ont.50k.fq" ]]; then
   recommended_inputs+=("${dros_dir}/ont.50k.fq")
 fi
-for scale in 1m; do
-  r1="${dros_dir}/illumina_pe_r1.${scale}.fq"
-  r2="${dros_dir}/illumina_pe_r2.${scale}.fq"
-  if [[ -f "${r1}" && -f "${r2}" ]]; then
-    recommended_pairs+=("${r1},${r2},drosophila_illumina_${scale}_raw")
-  fi
-done
-for scale in 5m; do
-  r1="${dros_dir}/illumina_pe_r1.${scale}.fq"
-  r2="${dros_dir}/illumina_pe_r2.${scale}.fq"
-  if [[ -f "${r1}" && -f "${r2}" ]]; then
-    larger_pairs+=("${r1},${r2},drosophila_illumina_${scale}_raw")
-  fi
-done
+scale="1m"
+r1="${dros_dir}/illumina_pe_r1.${scale}.fq"
+r2="${dros_dir}/illumina_pe_r2.${scale}.fq"
+if [[ -f "${r1}" && -f "${r2}" ]]; then
+  recommended_pairs+=("${r1},${r2},drosophila_illumina_${scale}_raw")
+fi
+scale="5m"
+r1="${dros_dir}/illumina_pe_r1.${scale}.fq"
+r2="${dros_dir}/illumina_pe_r2.${scale}.fq"
+if [[ -f "${r1}" && -f "${r2}" ]]; then
+  larger_pairs+=("${r1},${r2},drosophila_illumina_${scale}_raw")
+fi
 if [[ -f "${local_manifest}" ]]; then
   while IFS=$'\t' read -r dataset_id _organism _read_layout _scale local_path _reference _notes; do
     case "${dataset_id}" in

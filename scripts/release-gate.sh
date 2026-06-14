@@ -3,18 +3,22 @@ set -euo pipefail
 
 allow_dirty=0
 nightly=0
-bench=0
+bench_tier=""
 
 usage() {
   cat <<'EOF'
-usage: scripts/release-gate.sh [--allow-dirty] [--nightly] [--bench]
+usage: scripts/release-gate.sh [--allow-dirty] [--nightly] [--bench[=synthetic|fastq|fasta|all-local]]
 
 Runs the local pre-publish gate for microraptor.
 
 Options:
   --allow-dirty  allow a dirty git tree and pass --allow-dirty to cargo package
   --nightly      also run nightly all-feature/no-default-feature checks and fuzz build
-  --bench        also regenerate the synthetic gauntlet and Rust peer benchmark snapshots
+  --bench        alias for --bench=synthetic
+  --bench=fastq  regenerate synthetic FASTQ gauntlet and Rust peer snapshots
+  --bench=fasta  regenerate FASTA peer and FASTA size-sweep snapshots
+  --bench=all-local
+                 regenerate all local synthetic FASTQ/FASTA benchmark snapshots
   -h, --help     show this help
 EOF
 }
@@ -28,7 +32,10 @@ while [[ "$#" -gt 0 ]]; do
       nightly=1
       ;;
     --bench)
-      bench=1
+      bench_tier="synthetic"
+      ;;
+    --bench=*)
+      bench_tier="${1#--bench=}"
       ;;
     -h | --help)
       usage
@@ -94,6 +101,18 @@ run bash -n \
   scripts/prepare-real-benchmark-inputs.sh \
   scripts/release-gate.sh
 
+if command -v shellcheck >/dev/null 2>&1; then
+  run shellcheck --external-sources --severity=warning scripts/*.sh
+else
+  printf 'shellcheck not installed; CI enforces shell script linting\n' >&2
+fi
+
+if command -v cargo-deny >/dev/null 2>&1; then
+  run cargo deny check
+else
+  printf 'cargo-deny not installed; CI enforces dependency policy\n' >&2
+fi
+
 run scripts/check-benchmark-snapshots.sh
 
 if [[ "${nightly}" -eq 1 ]]; then
@@ -104,11 +123,33 @@ if [[ "${nightly}" -eq 1 ]]; then
   run cargo +nightly fuzz build
 fi
 
-if [[ "${bench}" -eq 1 ]]; then
-  run scripts/benchmark-gauntlet.sh
-  run scripts/render-benchmark-report.sh
-  run scripts/benchmark-rust-peers.sh
-  run scripts/check-benchmark-snapshots.sh
-fi
+case "${bench_tier}" in
+  "")
+    ;;
+  synthetic | fastq)
+    run scripts/benchmark-gauntlet.sh
+    run scripts/render-benchmark-report.sh
+    run scripts/benchmark-rust-peers.sh
+    run scripts/check-benchmark-snapshots.sh
+    ;;
+  fasta)
+    run scripts/benchmark-fasta-peers.sh
+    run scripts/benchmark-fasta-peer-size-sweep.sh
+    run scripts/check-benchmark-snapshots.sh
+    ;;
+  all-local)
+    run scripts/benchmark-gauntlet.sh
+    run scripts/render-benchmark-report.sh
+    run scripts/benchmark-rust-peers.sh
+    run scripts/benchmark-fasta-peers.sh
+    run scripts/benchmark-fasta-peer-size-sweep.sh
+    run scripts/benchmark-fasta-gauntlet.sh
+    run scripts/check-benchmark-snapshots.sh
+    ;;
+  *)
+    printf 'unknown benchmark tier: %s\n' "${bench_tier}" >&2
+    exit 2
+    ;;
+esac
 
 run cargo package "${package_args[@]}"
