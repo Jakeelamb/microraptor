@@ -1,0 +1,19 @@
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+confidence-threshold = 0.8
+allow = [
+  "Apache-2.0",
+  "MIT",
+  "NCSA",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

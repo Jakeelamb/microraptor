@@ -126,11 +126,11 @@ pub use fasta::{BgzfFastaReferenceChunks, BgzfIndexedFastaReader, build_fasta_in
 pub use fasta::{
     FastaBatch, FastaConfig, FastaIndex, FastaIndexEntry, FastaPartition, FastaPartitionConfig,
     FastaReader, FastaRecord, FastaRecordRef, FastaRecordSink, FastaReferenceChunk,
-    FastaReferenceChunks, FastaShape, FastaStats, FastaVisitRecord, IndexedFastaReader,
-    OwnedFastaBatch, OwnedFastaRecord, build_fasta_index, count_fasta_bytes, count_fasta_read,
-    count_two_line_fasta_bytes, count_two_line_fasta_read, detect_fasta_shape,
-    plan_fasta_partitions, visit_fasta_bytes, visit_fasta_bytes_auto, visit_two_line_fasta_bytes,
-    visit_two_line_fasta_read,
+    FastaReferenceChunkRef, FastaReferenceChunkSink, FastaReferenceChunks, FastaShape, FastaStats,
+    FastaVisitRecord, IndexedFastaReader, OwnedFastaBatch, OwnedFastaRecord, build_fasta_index,
+    count_fasta_bytes, count_fasta_read, count_two_line_fasta_bytes, count_two_line_fasta_read,
+    detect_fasta_shape, plan_fasta_partitions, visit_fasta_bytes, visit_fasta_bytes_auto,
+    visit_two_line_fasta_bytes, visit_two_line_fasta_read,
 };
 pub use fastq::{
     FastqBatch, FastqConfig, FastqPair, FastqReader, FastqRecord, FastqVisitRecord,

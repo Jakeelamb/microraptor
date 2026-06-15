@@ -15,8 +15,15 @@ scientific users.
 - Single-pass FASTQ visitor APIs: `FastqReader::visit_records` for streaming
   readers and `visit_fastq_bytes` for complete resident FASTQ byte buffers.
 - Streaming multiline FASTA parsing via `FastaReader`, `FastaBatch`,
-  `FastaRecord`, `FastaReader::visit_records`, `open_fasta`, and
-  `open_fasta_with_config` over raw, gzip, and BGZF transport.
+  `FastaRecord`, `FastaReader::visit_records`, `FastaConfig::reference`,
+  `open_fasta`, `open_fasta_with_config`, and `open_fasta_for_reference` over
+  raw, gzip, and BGZF transport.
+- Owned FASTA batch and reference handoff APIs via `FastaBatchSource`,
+  `OwnedFastaBatch`, `OwnedFastaRecord`, `FastaPartition`,
+  `FastaPartitionConfig`, `plan_fasta_partitions`, `FastaReferenceChunk`,
+  `FastaReferenceChunkRef`, `FastaReferenceChunkSink`,
+  `FastaReferenceChunks`, `BgzfFastaReferenceChunks`, `reference_chunks`,
+  `reference_chunks_into`, and `fetch_partition`.
 - Resident FASTA visitors via `visit_fasta_bytes`, plus strict two-line FASTA
   fast paths via `visit_two_line_fasta_bytes` and `visit_two_line_fasta_read`.
 - FASTA shape detection, automatic resident fast-path dispatch, and strict
@@ -52,8 +59,8 @@ scientific users.
   benchmark review.
 - Rust parser-library peer benchmark script for `seq_io`, `noodles-fastq`, and
   `bio`.
-- FASTA parse-only benchmark mode in `microraptor-bench` via
-  `--format fasta --mode parse`.
+- FASTA parse-only and indexed-reference benchmark modes in `microraptor-bench`
+  via `--format fasta --mode parse` and `--format fasta --mode reference`.
 - FASTA Rust peer benchmark scripts and a checked raw/gzip size-sweep artifact
   under `docs/benchmarks/fasta-peer-size-sweep/`.
 - FASTA shape/transport gauntlet under `scripts/benchmark-fasta-gauntlet.sh`

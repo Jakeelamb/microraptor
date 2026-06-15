@@ -143,14 +143,7 @@ pub fn open_fasta_with_config(
 pub fn open_fasta_for_reference(
     path: impl AsRef<Path>,
 ) -> Result<FastaReader<Box<dyn Read + Send>>> {
-    open_fasta_with_config(
-        path,
-        FastaConfig {
-            batch_records: 16,
-            buffer_size: 256 * 1024,
-            expected_seq_len: 1024 * 1024,
-        },
-    )
+    open_fasta_with_config(path, FastaConfig::reference())
 }
 
 /// Open ordered R1/R2 FASTQ files with default configuration.

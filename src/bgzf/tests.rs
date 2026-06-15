@@ -359,6 +359,23 @@ fn strict_bgzf_index_accepts_canonical_eof_marker() {
 }
 
 #[test]
+fn strict_bgzf_index_rejects_trailing_bytes_after_eof_marker() {
+    let input = patterned_input(BGZF_MAX_PAYLOAD + 17);
+    let mut encoded = compress_bgzf_parallel(&input, 2).unwrap();
+    encoded.extend_from_slice(b"junk");
+
+    let lenient = build_bgzf_index(&encoded[..]).unwrap();
+    assert_eq!(lenient.uncompressed_len(), input.len() as u64);
+
+    let strict_err = build_bgzf_index_strict(&encoded[..]).unwrap_err();
+    assert!(
+        strict_err
+            .to_string()
+            .contains("trailing bytes after BGZF EOF marker")
+    );
+}
+
+#[test]
 fn seek_reader_seeks_to_block_start() {
     let input = patterned_input(BGZF_MAX_PAYLOAD * 2 + 123);
     let encoded = compress_bgzf_parallel(&input, 3).unwrap();

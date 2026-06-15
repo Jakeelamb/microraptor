@@ -1049,8 +1049,16 @@ fn build_bgzf_index_impl<R: Read>(reader: &mut R, require_eof: bool) -> Result<B
         uncompressed_offset += u64::from(uncompressed_size);
     }
 
-    if require_eof && !saw_eof {
-        return Err(FastqError::Bgzf("missing BGZF EOF marker".into()));
+    if require_eof {
+        if !saw_eof {
+            return Err(FastqError::Bgzf("missing BGZF EOF marker".into()));
+        }
+        let mut trailing = [0_u8; 1];
+        if reader.read(&mut trailing)? != 0 {
+            return Err(FastqError::Bgzf(
+                "trailing bytes after BGZF EOF marker".into(),
+            ));
+        }
     }
 
     Ok(BgzfIndex {

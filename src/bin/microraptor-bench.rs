@@ -6,14 +6,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use microraptor::benchutil::{
-    StreamStats, consume_fasta, consume_fastq, consume_trusted_fastq_read_direct_with_pack,
+    StreamStats, consume_fasta_stats, consume_fastq, consume_trusted_fastq_read_direct_with_pack,
     consume_trusted_fastq_read_with_pack, synthetic_fasta, synthetic_fastq,
 };
 use microraptor::pack::{TrustedPackedRecord, pack_bases_and_summarize_qualities_into};
-use microraptor::{
-    DetectedInputKind, FastaReader, FastqConfig, FastqReader, PairValidation, Result,
-};
+use microraptor::{DetectedInputKind, FastqConfig, FastqReader, PairValidation, Result};
 
+#[path = "microraptor_bench/reference.rs"]
+mod reference;
 #[path = "microraptor_bench/report.rs"]
 mod report;
 
@@ -100,6 +100,7 @@ enum Mode {
     All,
     Parse,
     Pack,
+    Reference,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +132,7 @@ impl Mode {
             Self::All => "all",
             Self::Parse => "parse",
             Self::Pack => "pack",
+            Self::Reference => "reference",
         }
     }
 }
@@ -244,6 +246,16 @@ fn run() -> Result<()> {
 
 fn run_synthetic_fasta(config: &Config) -> Result<()> {
     let raw = synthetic_fasta(config.records, config.read_len);
+    if config.mode == Mode::Reference {
+        let measurements = reference::measurements(&raw, config)?;
+        emit_report(
+            config,
+            "synthetic-fasta-reference",
+            raw.len(),
+            &measurements,
+        );
+        return Ok(());
+    }
     #[cfg_attr(not(any(feature = "gzip", feature = "bgzf")), allow(unused_mut))]
     let mut measurements = vec![measure_fasta("fasta-raw", &raw, config)?];
 
@@ -562,14 +574,8 @@ fn measure_fastq(name: &str, input: &[u8], config: &Config) -> Result<Measuremen
 fn measure_fasta(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
     measure(name, input.len(), config.iters, || {
         let source = std::io::Cursor::new(input);
-        let mut reader = FastaReader::with_config(
-            source,
-            microraptor::FastaConfig {
-                batch_records: fasta_batch_records(config),
-                ..microraptor::FastaConfig::default()
-            },
-        );
-        consume_fasta(&mut reader)
+        let _ = config;
+        consume_fasta_stats(source)
     })
 }
 
@@ -593,14 +599,8 @@ fn measure_gzip(name: &str, input: &[u8], config: &Config) -> Result<Measurement
 fn measure_gzip_fasta(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
     measure(name, input.len(), config.iters, || {
         let source = flate2::read::MultiGzDecoder::new(input);
-        let mut reader = FastaReader::with_config(
-            source,
-            microraptor::FastaConfig {
-                batch_records: fasta_batch_records(config),
-                ..microraptor::FastaConfig::default()
-            },
-        );
-        consume_fasta(&mut reader)
+        let _ = config;
+        consume_fasta_stats(source)
     })
 }
 
@@ -624,14 +624,8 @@ fn measure_bgzf_serial(name: &str, input: &[u8], config: &Config) -> Result<Meas
 fn measure_bgzf_fasta_serial(name: &str, input: &[u8], config: &Config) -> Result<Measurement> {
     measure(name, input.len(), config.iters, || {
         let source = microraptor::BgzfReader::new(input);
-        let mut reader = FastaReader::with_config(
-            source,
-            microraptor::FastaConfig {
-                batch_records: fasta_batch_records(config),
-                ..microraptor::FastaConfig::default()
-            },
-        );
-        consume_fasta(&mut reader)
+        let _ = config;
+        consume_fasta_stats(source)
     })
 }
 
@@ -663,14 +657,7 @@ fn measure_bgzf_fasta_parallel(name: &str, input: &[u8], config: &Config) -> Res
             std::io::Cursor::new(Arc::clone(&owned)),
             config.workers,
         )?;
-        let mut reader = FastaReader::with_config(
-            source,
-            microraptor::FastaConfig {
-                batch_records: fasta_batch_records(config),
-                ..microraptor::FastaConfig::default()
-            },
-        );
-        consume_fasta(&mut reader)
+        consume_fasta_stats(source)
     })
 }
 
@@ -858,14 +845,7 @@ fn measure_path_fasta(
     config: &Config,
 ) -> Result<Measurement> {
     measure(name, input_bytes, config.iters, || {
-        let mut reader = FastaReader::with_config(
-            open_bench_read(path, config)?,
-            microraptor::FastaConfig {
-                batch_records: fasta_batch_records(config),
-                ..microraptor::FastaConfig::default()
-            },
-        );
-        consume_fasta(&mut reader)
+        consume_fasta_stats(open_bench_read(path, config)?)
     })
 }
 
@@ -1175,10 +1155,6 @@ fn fastq_config(config: &Config) -> FastqConfig {
     }
 }
 
-fn fasta_batch_records(config: &Config) -> usize {
-    (config.slab_size / 256).max(1)
-}
-
 #[cfg(feature = "bgzf")]
 fn bgzf_config(config: &Config) -> microraptor::BgzfParallelConfig {
     microraptor::BgzfParallelConfig::new(config.workers)
@@ -1347,13 +1323,21 @@ fn parse_args() -> Config {
         eprintln!("--input and --paired-inputs are mutually exclusive");
         std::process::exit(2);
     }
+    if config.format == InputFormat::Fastq && config.mode == Mode::Reference {
+        eprintln!("--mode reference requires --format fasta");
+        std::process::exit(2);
+    }
+    if config.mode == Mode::Reference && config.input.is_some() {
+        eprintln!("--mode reference currently uses synthetic FASTA only");
+        std::process::exit(2);
+    }
     if config.format == InputFormat::Fasta {
         if config.paired_inputs.is_some() {
             eprintln!("--format fasta does not support --paired-inputs");
             std::process::exit(2);
         }
         if config.mode.includes_pack() {
-            eprintln!("--format fasta supports --mode parse only");
+            eprintln!("--format fasta supports --mode parse or reference only");
             std::process::exit(2);
         }
     }
@@ -1395,15 +1379,16 @@ fn parse_string(args: &mut impl Iterator<Item = String>, flag: &str) -> String {
 
 fn parse_mode(args: &mut impl Iterator<Item = String>, flag: &str) -> Mode {
     let Some(value) = args.next() else {
-        eprintln!("{flag} requires one of: all, parse, pack");
+        eprintln!("{flag} requires one of: all, parse, pack, reference");
         std::process::exit(2);
     };
     match value.as_str() {
         "all" => Mode::All,
         "parse" => Mode::Parse,
         "pack" => Mode::Pack,
+        "reference" => Mode::Reference,
         _ => {
-            eprintln!("{flag} requires one of: all, parse, pack; got {value}");
+            eprintln!("{flag} requires one of: all, parse, pack, reference; got {value}");
             std::process::exit(2);
         }
     }
@@ -1426,7 +1411,7 @@ fn parse_format(args: &mut impl Iterator<Item = String>, flag: &str) -> InputFor
 
 fn print_help() {
     eprintln!(
-        "microraptor-bench [--input PATH | --paired-inputs R1 R2] [--format fastq|fasta] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--bgzf-parallel-min-bytes N] [--json] [--mmap] [--check-bgzf-pack-regression] [--check-label NAME] [--min-input-bytes N] [--tolerance-pct N] [--skip-timing-checks] [--profile-bgzf-parallel]"
+        "microraptor-bench [--input PATH | --paired-inputs R1 R2] [--format fastq|fasta] [--mode all|parse|pack|reference] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--bgzf-parallel-min-bytes N] [--json] [--mmap] [--check-bgzf-pack-regression] [--check-label NAME] [--min-input-bytes N] [--tolerance-pct N] [--skip-timing-checks] [--profile-bgzf-parallel]"
     );
 }
 

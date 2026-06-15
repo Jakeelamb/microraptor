@@ -4,16 +4,19 @@ set -euo pipefail
 allow_dirty=0
 nightly=0
 bench_tier=""
+release_provenance=0
 
 usage() {
   cat <<'EOF'
-usage: scripts/release-gate.sh [--allow-dirty] [--nightly] [--bench[=synthetic|fastq|fasta|all-local]]
+usage: scripts/release-gate.sh [--allow-dirty] [--nightly] [--release-provenance] [--bench[=synthetic|fastq|fasta|all-local]]
 
 Runs the local pre-publish gate for microraptor.
 
 Options:
   --allow-dirty  allow a dirty git tree and pass --allow-dirty to cargo package
   --nightly      also run nightly all-feature/no-default-feature checks and fuzz build
+  --release-provenance
+                 require checked benchmark metadata to match HEAD and git_dirty=false
   --bench        alias for --bench=synthetic
   --bench=fastq  regenerate synthetic FASTQ gauntlet and Rust peer snapshots
   --bench=fasta  regenerate FASTA peer and FASTA size-sweep snapshots
@@ -30,6 +33,9 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --nightly)
       nightly=1
+      ;;
+    --release-provenance)
+      release_provenance=1
       ;;
     --bench)
       bench_tier="synthetic"
@@ -67,9 +73,17 @@ if [[ "${allow_dirty}" -eq 1 ]]; then
   package_args+=(--allow-dirty)
 fi
 
+snapshot_args=()
+if [[ "${release_provenance}" -eq 1 ]]; then
+  snapshot_args+=(--release-provenance)
+fi
+
 run cargo fmt --all -- --check
+run cargo +1.87.0 check --locked --lib --bins
 run env RUSTFLAGS=-D\ warnings cargo check --lib
 run cargo check --lib --bins --all-features
+run cargo check --no-default-features --features libdeflate --lib --bins
+run cargo check --no-default-features --features gzip,libdeflate --lib --bins
 run env RUSTDOCFLAGS=-D\ warnings cargo doc --no-deps
 run cargo test --all
 
@@ -111,11 +125,12 @@ fi
 
 if command -v cargo-deny >/dev/null 2>&1; then
   run cargo deny check
+  (cd fuzz && run cargo deny check)
 else
   printf 'cargo-deny not installed; CI enforces dependency policy\n' >&2
 fi
 
-run scripts/check-benchmark-snapshots.sh
+run scripts/check-benchmark-snapshots.sh "${snapshot_args[@]}"
 
 if [[ "${nightly}" -eq 1 ]]; then
   run cargo +nightly clippy --all-targets --all-features -- -D warnings
@@ -133,12 +148,12 @@ case "${bench_tier}" in
     run scripts/benchmark-gauntlet.sh
     run scripts/render-benchmark-report.sh
     run scripts/benchmark-rust-peers.sh
-    run scripts/check-benchmark-snapshots.sh
+    run scripts/check-benchmark-snapshots.sh "${snapshot_args[@]}"
     ;;
   fasta)
     run scripts/benchmark-fasta-peers.sh
     run scripts/benchmark-fasta-peer-size-sweep.sh
-    run scripts/check-benchmark-snapshots.sh
+    run scripts/check-benchmark-snapshots.sh "${snapshot_args[@]}"
     ;;
   all-local)
     run scripts/benchmark-gauntlet.sh
@@ -147,7 +162,7 @@ case "${bench_tier}" in
     run scripts/benchmark-fasta-peers.sh
     run scripts/benchmark-fasta-peer-size-sweep.sh
     run env MICRORAPTOR_FASTA_GAUNTLET_RESULT_DIR=docs/benchmarks/fasta-gauntlet scripts/benchmark-fasta-gauntlet.sh
-    run scripts/check-benchmark-snapshots.sh
+    run scripts/check-benchmark-snapshots.sh "${snapshot_args[@]}"
     ;;
   *)
     printf 'unknown benchmark tier: %s\n' "${bench_tier}" >&2

@@ -10,6 +10,7 @@ items below are true and backed by current artifacts.
 - `LICENSE-MIT` and `LICENSE-APACHE` are present for the dual-license manifest.
 - `CITATION.cff`, `CHANGELOG.md`, and `CONTRIBUTING.md` are present and current.
 - Default features build on stable Rust.
+- The declared `rust-version` is checked directly with the MSRV toolchain.
 - Nightly-only acceleration is behind explicit feature flags.
 - Public examples compile in doc tests or unit tests.
 - Public reader, opener, pairing, error, pack, and BGZF surfaces have rustdoc
@@ -22,6 +23,8 @@ items below are true and backed by current artifacts.
 ## GitHub Readiness
 
 - CI checks stable default library behavior.
+- CI checks the declared MSRV.
+- CI checks selected non-default feature combinations.
 - CI checks warning-denied library and rustdoc surfaces.
 - CI checks nightly all-feature behavior, including no-default-features.
 - Fuzz targets compile in CI.
@@ -61,18 +64,23 @@ scripts/release-gate.sh
 
 Use `scripts/release-gate.sh --allow-dirty` only for development verification
 before the release commit exists. Use `--nightly` to include the full nightly
-feature/fuzz surface and `--bench` to regenerate synthetic benchmark snapshots.
+feature/fuzz surface, `--bench` to regenerate synthetic benchmark snapshots,
+and `--release-provenance` for final release verification that checked
+benchmark metadata matches `HEAD` and `git_dirty=false`.
 
 Minimum release evidence, expanded:
 
 ```bash
 cargo +stable test --lib
+cargo +1.87.0 check --locked --lib --bins
 cargo +nightly test --all-features
 cargo +nightly test --no-default-features
 cargo +nightly clippy --all-targets --all-features -- -D warnings
 cargo +nightly clippy --all-targets --no-default-features -- -D warnings
 RUSTFLAGS="-D warnings" cargo check --lib
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+cargo check --no-default-features --features libdeflate --lib --bins
+cargo check --no-default-features --features gzip,libdeflate --lib --bins
 test -s CITATION.cff
 test -s CHANGELOG.md
 test -s CONTRIBUTING.md
@@ -86,12 +94,14 @@ test -s docs/REPLICATION.md
 test -s docs/RELEASE_AUDIT.md
 scripts/benchmark-gauntlet.sh
 scripts/render-benchmark-report.sh
-scripts/check-benchmark-snapshots.sh
+scripts/check-benchmark-snapshots.sh --release-provenance
 scripts/benchmark-rust-peers.sh
 scripts/check-replication-host.sh --strict
 PATH=~/miniconda3/envs/bench/bin:$PATH scripts/prepare-real-benchmark-inputs.sh
 PATH=~/miniconda3/envs/bench/bin:$PATH scripts/discover-local-benchmark-corpus.sh
 scripts/export-replication-kit.sh
+cargo deny check
+cargo deny --manifest-path fuzz/Cargo.toml check
 cargo package
 ```
 

@@ -20,7 +20,7 @@ the release commit.
 | Requirement | Evidence | Status |
 | --- | --- | --- |
 | Crate metadata is suitable for crates.io | `Cargo.toml` has license, readme, repository, homepage, documentation, keywords, categories, and `rust-version`; `LICENSE-MIT` and `LICENSE-APACHE` are present | Satisfied |
-| Default build is stable Rust | `rust-toolchain.toml` uses stable; default features are `bgzf` and `gzip`; `simd` uses stable `std::arch` with runtime AVX2 detection | Satisfied |
+| Default build is stable Rust | `rust-toolchain.toml` uses stable; default features are `bgzf` and `gzip`; CI also checks the declared `rust-version` MSRV with `cargo +1.87.0 check --locked --lib --bins`; `simd` uses stable `std::arch` with runtime AVX2 detection | Satisfied |
 | Public API is documented | `#![warn(missing_docs)]`; `RUSTFLAGS="-D warnings" cargo check --lib`; `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` | Satisfied |
 | Public API release surface is classified | `docs/API_SURFACE.md` tiers primary FASTQ readers/openers, advanced pack side channels, BGZF transport/indexing, and hidden bench helpers | Satisfied |
 | README explains capabilities and limitations | `README.md` states scope, features, benchmark snapshots, limitations, examples, and claim boundary | Satisfied |
@@ -36,7 +36,7 @@ the release commit.
 | Release notes exist | `CHANGELOG.md` | Satisfied |
 | Contribution expectations are explicit | `CONTRIBUTING.md` | Satisfied |
 | GitHub contribution workflow is structured | `.github/ISSUE_TEMPLATE/*`, `.github/pull_request_template.md`, and `SECURITY.md` request reproducible parser, benchmark, API, and vulnerability evidence | Satisfied |
-| CI covers release-facing documentation gates | `.github/workflows/ci.yml` checks warning-denied library/rustdoc surfaces, release docs, benchmark script syntax, shellcheck, dependency policy via `cargo deny check`, package dry-run, nightly feature modes, and fuzz target compilation | Satisfied |
+| CI covers release-facing documentation gates | `.github/workflows/ci.yml` checks warning-denied library/rustdoc surfaces, declared MSRV, release docs, benchmark script syntax, shellcheck, dependency policy for the root and fuzz manifests, selected feature combinations, package dry-run, nightly feature modes, and fuzz target compilation | Satisfied |
 | Final crates.io package verifies | `cargo package --allow-dirty` currently verifies; rerun on clean release tree before publishing | Partially satisfied |
 
 ## Historical Local Verification
@@ -77,13 +77,14 @@ Run this from the release commit:
 
 ```bash
 scripts/check-replication-host.sh --strict
-scripts/release-gate.sh --nightly --bench
+scripts/release-gate.sh --nightly --bench --release-provenance
 ```
 
 Expanded gate:
 
 ```bash
 cargo fmt --all -- --check
+cargo +1.87.0 check --locked --lib --bins
 cargo +stable test --lib
 cargo +nightly test --all-features
 cargo +nightly test --no-default-features
@@ -92,10 +93,11 @@ cargo +nightly clippy --all-targets --no-default-features -- -D warnings
 RUSTFLAGS="-D warnings" cargo check --lib
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 cargo deny check
+cargo deny --manifest-path fuzz/Cargo.toml check
 shellcheck scripts/*.sh
 scripts/benchmark-gauntlet.sh
 scripts/render-benchmark-report.sh
-scripts/check-benchmark-snapshots.sh
+scripts/check-benchmark-snapshots.sh --release-provenance
 scripts/benchmark-rust-peers.sh
 scripts/check-replication-host.sh --strict
 PATH=~/miniconda3/envs/bench/bin:$PATH scripts/prepare-real-benchmark-inputs.sh

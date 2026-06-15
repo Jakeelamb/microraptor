@@ -59,6 +59,8 @@ Current slice:
 - indexed FASTA reference chunk streaming via owned `FastaReferenceChunk`
   buffers, plus overlap-aware `plan_fasta_partitions` helpers for parallel
   reference ingest
+- `FastaConfig::reference` and `open_fasta_for_reference` for named
+  chromosome-scale reference FASTA reader tuning
 - owned transferable FASTA batches via `OwnedFastaBatch` and
   `FastaReader::next_owned_batch`
 - optional memory-mapped resident FASTQ/FASTA visitors behind `mmap`
@@ -142,8 +144,10 @@ CLI:
 `cargo run --release --bin microraptor -- stats --format fasta reference.fa`
 prints records, bases, and the lightweight stream checksum. `fasta-index`
 prints a five-column `.fai`, `fasta-fetch` fetches a zero-based half-open
-reference range from a `.fai` sidecar, and `verify-bgzf` validates BGZF block
-structure plus the canonical EOF marker.
+reference range from a `.fai` sidecar, `fasta-partitions` prints balanced
+overlap-aware reference partitions, `fasta-chunks` streams `(name, offset, seq)`
+TSV chunks, and `verify-bgzf` validates BGZF block structure plus the canonical
+EOF marker.
 
 Current limitations:
 
@@ -172,6 +176,7 @@ Benchmarking:
 
 - `cargo +nightly bench --all-features`
 - `cargo run --release --bin microraptor-bench -- --records 500000 --iters 7`
+- `cargo run --release --bin microraptor-bench -- --format fasta --mode reference --records 500000`
 - `scripts/bench.sh`
 - `scripts/benchmark-gauntlet.sh`
 - `scripts/benchmark-common.sh`
@@ -301,8 +306,8 @@ FASTA streams use a separate reader. Robust stats, owned batches, and
 
 ```rust
 use microraptor::{
-    build_fasta_index, count_fasta_bytes, plan_fasta_partitions, FastaPartitionConfig,
-    FastaReader,
+    build_fasta_index, count_fasta_bytes, plan_fasta_partitions, FastaConfig,
+    FastaPartitionConfig, FastaReader,
 };
 
 let data = b">seq1 description\nACG\nTN\n";
@@ -314,6 +319,8 @@ for record in batch.records() {
 }
 let owned = batch.to_owned_batch();
 assert_eq!(owned.records().next().unwrap().id_token(), b"seq1");
+let reference_config = FastaConfig::reference();
+assert_eq!(reference_config.batch_records, 16);
 assert_eq!(count_fasta_bytes(data)?.bases, 5);
 let index = build_fasta_index(&data[..])?;
 assert_eq!(index.get(b"seq1").unwrap().len, 5);

@@ -17,8 +17,14 @@ jobs:
       - name: Install stable components
         run: rustup component add rustfmt clippy
 
+      - name: Install MSRV toolchain
+        run: rustup toolchain install 1.87.0 --profile minimal
+
       - name: Check formatting
         run: cargo fmt --all -- --check
+
+      - name: Check declared MSRV
+        run: cargo +1.87.0 check --locked --lib --bins
 
       - name: Clippy default library
         run: cargo clippy --lib -- -D warnings
@@ -34,6 +40,11 @@ jobs:
 
       - name: Check stable all-feature lib and bins
         run: cargo check --lib --bins --all-features
+
+      - name: Check libdeflate feature composition
+        run: |
+          cargo check --no-default-features --features libdeflate --lib --bins
+          cargo check --no-default-features --features gzip,libdeflate --lib --bins
 
       - name: Check release documentation artifacts
         run: |
@@ -74,6 +85,7 @@ jobs:
         run: |
           cargo install cargo-deny --locked
           cargo deny check
+          (cd fuzz && cargo deny check)
 
       - name: Verify checked benchmark snapshots
         run: scripts/check-benchmark-snapshots.sh

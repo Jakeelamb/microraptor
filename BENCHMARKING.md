@@ -44,8 +44,15 @@ path goes through `open_fastq_with_config`, so raw FASTQ, gzip FASTQ, and BGZF
 FASTQ use the same auto-detection path as library callers.
 
 For FASTA parser benchmarks, pass `--format fasta --mode parse`. FASTA rows use
-`FastaReader` and the same raw/gzip/BGZF transport detection, but they are
-parse-only: paired FASTQ validation and FASTQ pack rows do not apply.
+the same raw/gzip/BGZF transport detection, but they are parse-only: paired
+FASTQ validation and FASTQ pack rows do not apply.
+
+For indexed FASTA reference-surface benchmarks, pass
+`--format fasta --mode reference`. This synthetic gate reports stable rows for
+`.fai` construction (`build_fasta_index`), repeated range fetch with a prebuilt
+index (`fetch_repeated_range`), overlap-aware partition planning
+(`plan_fasta_partitions`), and owned reference chunk streaming
+(`reference_chunks`).
 
 Compression rows must be read literally. `flate2` and `libdeflate` are
 third-party compression implementations; microraptor uses them as transport
@@ -95,6 +102,7 @@ cargo run --release --bin microraptor-bench -- --records 500000 --iters 7 --json
 cargo run --release --bin microraptor-bench -- --records 500000 --mode parse --json
 cargo run --release --bin microraptor-bench -- --records 500000 --mode pack --json
 cargo run --release --bin microraptor-bench -- --format fasta --mode parse --records 500000 --json
+cargo run --release --bin microraptor-bench -- --format fasta --mode reference --records 500000 --json
 ```
 
 Synthetic `--mode pack` uses the trusted streaming pack path for `pack-seq-qual`.

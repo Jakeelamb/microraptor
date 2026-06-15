@@ -2,7 +2,8 @@ use crate::pack::{
     TrustedPackSink, TrustedPackedRecord, pack_trusted_fastq, pack_trusted_fastq_read_direct_sink,
     pack_trusted_fastq_read_sink,
 };
-use crate::{FastaReader, FastqConfig, FastqReader, Result};
+use crate::{FastaReader, FastqConfig, FastqError, FastqReader, Result};
+use std::io::BufRead;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StreamStats {
@@ -55,6 +56,76 @@ pub fn consume_fasta<R: std::io::Read>(reader: &mut FastaReader<R>) -> Result<St
         Ok(())
     })?;
     Ok(stats)
+}
+
+pub fn consume_fasta_stats<R: std::io::Read>(reader: R) -> Result<StreamStats> {
+    let mut reader = std::io::BufReader::new(reader);
+    let mut line = Vec::new();
+    let mut stats = StreamStats::default();
+    let mut current_name_len = None;
+    let mut current_bases = 0_u64;
+    let mut current_first = 0_u8;
+    let mut saw_record = false;
+
+    loop {
+        line.clear();
+        let n = reader.read_until(b'\n', &mut line)?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = trim_fasta_line(&line);
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with(b">") {
+            if let Some(name_len) = current_name_len.replace(trimmed.len() as u64) {
+                observe_fasta_stream_record(&mut stats, name_len, current_bases, current_first);
+                current_bases = 0;
+                current_first = 0;
+            }
+            if trimmed.len() == 1
+                || trimmed[1..]
+                    .first()
+                    .is_some_and(|byte| byte.is_ascii_whitespace())
+            {
+                return Err(FastqError::Format("empty FASTA id".into()));
+            }
+            saw_record = true;
+            continue;
+        }
+        if current_name_len.is_none() {
+            return Err(FastqError::Format(
+                "FASTA record header must start with `>`".into(),
+            ));
+        }
+        if current_bases == 0 {
+            current_first = trimmed[0];
+        }
+        current_bases += trimmed.len() as u64;
+    }
+
+    if let Some(name_len) = current_name_len {
+        observe_fasta_stream_record(&mut stats, name_len, current_bases, current_first);
+    } else if saw_record {
+        return Err(FastqError::Format("empty FASTA id".into()));
+    }
+    Ok(stats)
+}
+
+fn observe_fasta_stream_record(stats: &mut StreamStats, name_len: u64, bases: u64, first_base: u8) {
+    stats.records += 1;
+    stats.bases += bases;
+    stats.name_bytes += name_len;
+    stats.checksum = stats
+        .checksum
+        .wrapping_add(first_base as u64)
+        .wrapping_mul(1_099_511_628_211)
+        .wrapping_add(bases);
+}
+
+fn trim_fasta_line(line: &[u8]) -> &[u8] {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    line.strip_suffix(b"\r").unwrap_or(line)
 }
 
 pub fn consume_trusted_fastq_with_pack(input: &[u8]) -> Result<StreamStats> {
@@ -337,6 +408,22 @@ mod tests {
         assert_eq!(stats.records, 3);
         assert_eq!(stats.bases, 12);
         assert_eq!(stats.qualities, 0);
+    }
+
+    #[test]
+    fn streaming_fasta_stats_match_reader_stream_stats() {
+        let input = synthetic_fasta_with_options(
+            7,
+            23,
+            SyntheticPattern::Entropy,
+            SyntheticFastaLayout::Wrapped { width: 5 },
+            SyntheticAlphabet::Dna,
+        );
+        let mut reader = FastaReader::new(&input[..]);
+        let reference = consume_fasta(&mut reader).unwrap();
+        let streamed = consume_fasta_stats(&input[..]).unwrap();
+
+        assert_eq!(streamed, reference);
     }
 
     #[test]
