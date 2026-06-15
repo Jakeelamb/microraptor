@@ -11,6 +11,18 @@ const DEFAULT_BATCH_RECORDS: usize = 1024;
 const DEFAULT_READER_BUFFER_SIZE: usize = 64 * 1024;
 const TWO_LINE_STREAM_BUFFER_SIZE: usize = 64 * 1024;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ByteRange {
+    start: u32,
+    end: u32,
+}
+
+impl ByteRange {
+    fn to_usize(self) -> Range<usize> {
+        self.start as usize..self.end as usize
+    }
+}
+
 /// Configuration for FASTA readers.
 #[derive(Debug, Clone)]
 pub struct FastaConfig {
@@ -64,6 +76,7 @@ pub struct FastaRecordRef {
 pub struct FastaRecord<'a> {
     bytes: &'a [u8],
     record: &'a FastaRecordRef,
+    id_token: ByteRange,
 }
 
 impl<'a> FastaRecord<'a> {
@@ -80,12 +93,7 @@ impl<'a> FastaRecord<'a> {
 
     /// Return the first whitespace-delimited identifier token.
     pub fn id_token(self) -> &'a [u8] {
-        let name = self.name_without_gt();
-        let end = name
-            .iter()
-            .position(u8::is_ascii_whitespace)
-            .unwrap_or(name.len());
-        &name[..end]
+        &self.bytes[self.id_token.to_usize()]
     }
 
     /// Return the concatenated sequence bytes.
@@ -251,6 +259,178 @@ impl FastaIndexEntry {
             ));
         }
         Ok(())
+    }
+}
+
+/// Configuration for planning balanced indexed-FASTA reference partitions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FastaPartitionConfig {
+    /// Target number of partitions to produce.
+    ///
+    /// Values below 1 are raised to 1. Empty references are skipped.
+    pub target_partitions: usize,
+    /// Number of neighboring bases each partition should include in its
+    /// fetch range on both sides of the core range.
+    ///
+    /// For k-mer or minimizer ingest, callers typically use the maximum
+    /// lookaround needed by their k/window shape.
+    pub overlap_bases: u64,
+}
+
+impl FastaPartitionConfig {
+    /// Create a partition planner configuration.
+    pub fn new(target_partitions: usize, overlap_bases: u64) -> Self {
+        Self {
+            target_partitions,
+            overlap_bases,
+        }
+    }
+}
+
+/// One planned reference partition over indexed FASTA sequence coordinates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FastaPartition {
+    /// Zero-based partition index in output order.
+    pub partition_index: usize,
+    /// Reference name from the FASTA index.
+    pub name: Vec<u8>,
+    /// Core half-open sequence range assigned to this partition.
+    pub core: Range<u64>,
+    /// Half-open sequence range to fetch, expanded by overlap and clamped to
+    /// the reference bounds.
+    pub fetch: Range<u64>,
+}
+
+impl FastaPartition {
+    /// Return the number of non-overlap bases assigned to this partition.
+    pub fn core_len(&self) -> u64 {
+        self.core.end - self.core.start
+    }
+
+    /// Return the zero-based offset of the first fetched base relative to the
+    /// first core base.
+    pub fn core_offset_in_fetch(&self) -> u64 {
+        self.core.start - self.fetch.start
+    }
+}
+
+/// Plan balanced reference partitions from a FASTA index.
+///
+/// The planner splits long references into approximately balanced chunks.
+/// `core` ranges are disjoint and cover every non-empty reference; `fetch`
+/// ranges include the requested overlap, clamped to each reference. The result
+/// may contain more partitions than `target_partitions` when the index contains
+/// many short references.
+pub fn plan_fasta_partitions(
+    index: &FastaIndex,
+    config: FastaPartitionConfig,
+) -> Result<Vec<FastaPartition>> {
+    let target_partitions = config.target_partitions.max(1);
+    let total_bases = index.entries().iter().try_fold(0_u64, |acc, entry| {
+        acc.checked_add(entry.len)
+            .ok_or_else(|| FastqError::Format("FASTA partition total length overflowed".into()))
+    })?;
+    if total_bases == 0 {
+        return Ok(Vec::new());
+    }
+    let target_partitions_u64 = u64::try_from(target_partitions)
+        .map_err(|_| FastqError::Format("FASTA partition count exceeds u64 range".into()))?;
+    let target_bases = total_bases.div_ceil(target_partitions_u64).max(1);
+    let mut partitions = Vec::new();
+
+    for entry in index.entries() {
+        let mut start = 0_u64;
+        while start < entry.len {
+            let remaining = entry.len - start;
+            let take = remaining.min(target_bases);
+            let core = start..start + take;
+            let fetch_start = core.start.saturating_sub(config.overlap_bases);
+            let fetch_end = core.end.saturating_add(config.overlap_bases).min(entry.len);
+            partitions.push(FastaPartition {
+                partition_index: partitions.len(),
+                name: entry.name.clone(),
+                core: core.clone(),
+                fetch: fetch_start..fetch_end,
+            });
+            start = core.end;
+        }
+    }
+
+    Ok(partitions)
+}
+
+/// Owned reference sequence chunk from an indexed FASTA source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FastaReferenceChunk {
+    /// Reference name from the FASTA index.
+    pub name: Vec<u8>,
+    /// Zero-based sequence offset of `seq[0]` within the reference.
+    pub global_offset: u64,
+    /// Sequence bytes for this chunk.
+    pub seq: Vec<u8>,
+}
+
+/// Iterator over owned chunks from an [`IndexedFastaReader`].
+pub struct FastaReferenceChunks<'a, R> {
+    reader: &'a mut IndexedFastaReader<R>,
+    name: Vec<u8>,
+    next_offset: u64,
+    end: u64,
+    chunk_bases: u64,
+}
+
+/// Iterator over owned chunks from a [`BgzfIndexedFastaReader`].
+#[cfg(feature = "bgzf")]
+pub struct BgzfFastaReferenceChunks<'a, R> {
+    reader: &'a mut BgzfIndexedFastaReader<R>,
+    name: Vec<u8>,
+    next_offset: u64,
+    end: u64,
+    chunk_bases: u64,
+}
+
+impl<R: Read + Seek> Iterator for FastaReferenceChunks<'_, R> {
+    type Item = Result<FastaReferenceChunk>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next_offset >= self.end {
+            return None;
+        }
+        let start = self.next_offset;
+        let end = start.saturating_add(self.chunk_bases).min(self.end);
+        self.next_offset = end;
+        Some(
+            self.reader
+                .fetch(&self.name, start..end)
+                .map(|seq| FastaReferenceChunk {
+                    name: self.name.clone(),
+                    global_offset: start,
+                    seq,
+                }),
+        )
+    }
+}
+
+#[cfg(feature = "bgzf")]
+impl<R: Read + Seek> Iterator for BgzfFastaReferenceChunks<'_, R> {
+    type Item = Result<FastaReferenceChunk>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next_offset >= self.end {
+            return None;
+        }
+        let start = self.next_offset;
+        let end = start.saturating_add(self.chunk_bases).min(self.end);
+        self.next_offset = end;
+        Some(
+            self.reader
+                .fetch(&self.name, start..end)
+                .map(|seq| FastaReferenceChunk {
+                    name: self.name.clone(),
+                    global_offset: start,
+                    seq,
+                }),
+        )
     }
 }
 
@@ -522,6 +702,43 @@ impl<R: Read + Seek> IndexedFastaReader<R> {
         Ok(out)
     }
 
+    /// Stream owned sequence chunks for one reference range.
+    ///
+    /// `chunk_bases` values below 1 are raised to 1. Chunks are yielded as
+    /// owned buffers so callers can move them to worker threads after each
+    /// iterator step.
+    pub fn reference_chunks(
+        &mut self,
+        name: &[u8],
+        range: Range<u64>,
+        chunk_bases: u64,
+    ) -> Result<FastaReferenceChunks<'_, R>> {
+        let entry = self.index.get(name).ok_or_else(|| {
+            FastqError::Format(format!(
+                "FASTA reference not found in index: {}",
+                String::from_utf8_lossy(name)
+            ))
+        })?;
+        entry.validate_range(range.clone())?;
+        Ok(FastaReferenceChunks {
+            reader: self,
+            name: name.to_vec(),
+            next_offset: range.start,
+            end: range.end,
+            chunk_bases: chunk_bases.max(1),
+        })
+    }
+
+    /// Fetch a planned partition into an owned reference chunk.
+    pub fn fetch_partition(&mut self, partition: &FastaPartition) -> Result<FastaReferenceChunk> {
+        self.fetch(&partition.name, partition.fetch.clone())
+            .map(|seq| FastaReferenceChunk {
+                name: partition.name.clone(),
+                global_offset: partition.fetch.start,
+                seq,
+            })
+    }
+
     /// Return the wrapped reader and index.
     pub fn into_inner(self) -> (R, FastaIndex) {
         (self.inner, self.index)
@@ -597,6 +814,43 @@ impl<R: Read + Seek> BgzfIndexedFastaReader<R> {
         self.fetch_into(name, range, &mut out)?;
         Ok(out)
     }
+
+    /// Stream owned sequence chunks for one reference range.
+    ///
+    /// `chunk_bases` values below 1 are raised to 1. Chunks are yielded as
+    /// owned buffers so callers can move them to worker threads after each
+    /// iterator step.
+    pub fn reference_chunks(
+        &mut self,
+        name: &[u8],
+        range: Range<u64>,
+        chunk_bases: u64,
+    ) -> Result<BgzfFastaReferenceChunks<'_, R>> {
+        let entry = self.fasta_index.get(name).ok_or_else(|| {
+            FastqError::Format(format!(
+                "FASTA reference not found in index: {}",
+                String::from_utf8_lossy(name)
+            ))
+        })?;
+        entry.validate_range(range.clone())?;
+        Ok(BgzfFastaReferenceChunks {
+            reader: self,
+            name: name.to_vec(),
+            next_offset: range.start,
+            end: range.end,
+            chunk_bases: chunk_bases.max(1),
+        })
+    }
+
+    /// Fetch a planned partition into an owned reference chunk.
+    pub fn fetch_partition(&mut self, partition: &FastaPartition) -> Result<FastaReferenceChunk> {
+        self.fetch(&partition.name, partition.fetch.clone())
+            .map(|seq| FastaReferenceChunk {
+                name: partition.name.clone(),
+                global_offset: partition.fetch.start,
+                seq,
+            })
+    }
 }
 
 impl Default for FastaStats {
@@ -652,6 +906,7 @@ where
 pub struct FastaBatch<'a> {
     bytes: &'a [u8],
     records: &'a [FastaRecordRef],
+    id_tokens: &'a [ByteRange],
     first_record_index: u64,
 }
 
@@ -683,10 +938,103 @@ impl<'a> FastaBatch<'a> {
 
     /// Iterate borrowed records in this batch.
     pub fn records(&self) -> impl Iterator<Item = FastaRecord<'_>> {
-        self.records.iter().map(|record| FastaRecord {
-            bytes: self.bytes,
-            record,
-        })
+        self.records
+            .iter()
+            .zip(self.id_tokens.iter().cloned())
+            .map(|(record, id_token)| FastaRecord {
+                bytes: self.bytes,
+                record,
+                id_token,
+            })
+    }
+
+    /// Copy this borrowed batch into an owned transferable batch.
+    pub fn to_owned_batch(&self) -> OwnedFastaBatch {
+        OwnedFastaBatch {
+            bytes: self.bytes.to_vec(),
+            records: self.records.to_vec(),
+            id_tokens: self.id_tokens.to_vec(),
+            first_record_index: self.first_record_index,
+        }
+    }
+}
+
+/// Owned FASTA batch that can be moved to worker threads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnedFastaBatch {
+    bytes: Vec<u8>,
+    records: Vec<FastaRecordRef>,
+    id_tokens: Vec<ByteRange>,
+    first_record_index: u64,
+}
+
+impl OwnedFastaBatch {
+    /// Number of records in the batch.
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    /// Whether the batch has no records.
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    /// Raw bytes backing this batch.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Record ranges within [`bytes`](Self::bytes).
+    pub fn record_refs(&self) -> &[FastaRecordRef] {
+        &self.records
+    }
+
+    /// Zero-based index of the first record in this batch.
+    pub fn first_record_index(&self) -> u64 {
+        self.first_record_index
+    }
+
+    /// Iterate borrowed records in this owned batch.
+    pub fn records(&self) -> impl Iterator<Item = OwnedFastaRecord<'_>> {
+        self.records
+            .iter()
+            .zip(self.id_tokens.iter().cloned())
+            .map(|(record, id_token)| OwnedFastaRecord {
+                bytes: &self.bytes,
+                record,
+                id_token,
+            })
+    }
+}
+
+/// Borrowed record view over an [`OwnedFastaBatch`].
+#[derive(Debug, Clone, Copy)]
+pub struct OwnedFastaRecord<'a> {
+    bytes: &'a [u8],
+    record: &'a FastaRecordRef,
+    id_token: ByteRange,
+}
+
+impl<'a> OwnedFastaRecord<'a> {
+    /// Return the header line including the leading `>`.
+    pub fn name(self) -> &'a [u8] {
+        &self.bytes[to_usize(self.record.name.clone())]
+    }
+
+    /// Return the header line without a leading `>`.
+    pub fn name_without_gt(self) -> &'a [u8] {
+        let name = self.name();
+        name.strip_prefix(b">").unwrap_or(name)
+    }
+
+    /// Return the first whitespace-delimited identifier token.
+    pub fn id_token(self) -> &'a [u8] {
+        &self.bytes[self.id_token.to_usize()]
+    }
+
+    /// Return the concatenated sequence bytes.
+    pub fn seq(self) -> &'a [u8] {
+        &self.bytes[to_usize(self.record.seq.clone())]
     }
 }
 
@@ -701,6 +1049,7 @@ pub struct FastaReader<R> {
     config: FastaConfig,
     bytes: Vec<u8>,
     records: Vec<FastaRecordRef>,
+    id_tokens: Vec<ByteRange>,
     line: Vec<u8>,
     pending_header: Option<PendingHeader>,
     byte_offset: u64,
@@ -735,6 +1084,7 @@ impl<R: Read> FastaReader<R> {
             reader: BufReader::with_capacity(config.buffer_size, reader),
             bytes: Vec::with_capacity(seq_capacity),
             records: Vec::with_capacity(config.batch_records),
+            id_tokens: Vec::with_capacity(config.batch_records),
             config,
             line: Vec::new(),
             pending_header: None,
@@ -756,6 +1106,7 @@ impl<R: Read> FastaReader<R> {
     pub fn next_batch(&mut self) -> Result<Option<FastaBatch<'_>>> {
         self.bytes.clear();
         self.records.clear();
+        self.id_tokens.clear();
         let first_record_index = self.record_index;
 
         while self.records.len() < self.config.batch_records {
@@ -773,8 +1124,15 @@ impl<R: Read> FastaReader<R> {
         Ok(Some(FastaBatch {
             bytes: &self.bytes,
             records: &self.records,
+            id_tokens: &self.id_tokens,
             first_record_index,
         }))
+    }
+
+    /// Read the next FASTA batch into an owned transferable buffer.
+    pub fn next_owned_batch(&mut self) -> Result<Option<OwnedFastaBatch>> {
+        self.next_batch()
+            .map(|batch| batch.map(|batch| batch.to_owned_batch()))
     }
 
     /// Visit every FASTA record in the stream.
@@ -897,6 +1255,7 @@ impl<R: Read> FastaReader<R> {
         let name_start = checked_u32(self.bytes.len())?;
         self.bytes.extend_from_slice(&header.bytes);
         let name_end = checked_u32(self.bytes.len())?;
+        let id_token = id_token_range(&self.bytes, name_start..name_end)?;
         let seq_start = checked_u32(self.bytes.len())?;
 
         loop {
@@ -926,6 +1285,7 @@ impl<R: Read> FastaReader<R> {
             name: name_start..name_end,
             seq: seq_start..seq_end,
         });
+        self.id_tokens.push(id_token);
         let _ = header.byte_offset;
         Ok(())
     }
@@ -1779,6 +2139,25 @@ fn validate_header(header: &[u8], byte_offset: u64, record_index: u64) -> Result
     Ok(())
 }
 
+fn id_token_range(bytes: &[u8], name: Range<u32>) -> Result<ByteRange> {
+    let name_range = to_usize(name.clone());
+    let header = bytes
+        .get(name_range)
+        .ok_or_else(|| FastqError::Format("FASTA header byte range exceeds batch buffer".into()))?;
+    let without_gt = header.strip_prefix(b">").unwrap_or(header);
+    let token_end = without_gt
+        .iter()
+        .position(u8::is_ascii_whitespace)
+        .unwrap_or(without_gt.len());
+    let start = name.start + u32::from(header.starts_with(b">"));
+    let token_end_u32 = u32::try_from(token_end)
+        .map_err(|_| FastqError::Format("FASTA id token range exceeds u32 range".into()))?;
+    let end = start
+        .checked_add(token_end_u32)
+        .ok_or_else(|| FastqError::Format("FASTA id token range overflowed".into()))?;
+    Ok(ByteRange { start, end })
+}
+
 fn checked_u32(value: usize) -> Result<u32> {
     u32::try_from(value)
         .map_err(|_| FastqError::Format("FASTA batch byte offsets exceed u32 range".into()))
@@ -1813,6 +2192,38 @@ mod tests {
         assert_eq!(records[1].name_without_gt(), b"seq2");
         assert_eq!(records[1].seq(), b"GG");
         assert!(reader.next_batch().unwrap().is_none());
+    }
+
+    #[test]
+    fn owned_fasta_batch_can_outlive_reader_batch() {
+        let input = b">seq1 description\nACG\nTN\n>seq2\nGG\n";
+        let mut reader = FastaReader::new(&input[..]);
+        let owned = reader.next_owned_batch().unwrap().unwrap();
+        drop(reader);
+
+        let records: Vec<_> = owned
+            .records()
+            .map(|record| (record.id_token().to_vec(), record.seq().to_vec()))
+            .collect();
+
+        assert_eq!(owned.first_record_index(), 0);
+        assert_eq!(
+            records,
+            vec![
+                (b"seq1".to_vec(), b"ACGTN".to_vec()),
+                (b"seq2".to_vec(), b"GG".to_vec())
+            ]
+        );
+    }
+
+    #[test]
+    fn fasta_reader_implements_batch_source_trait() {
+        use crate::FastaBatchSource;
+
+        let input = b">seq1\nAC\n";
+        let mut reader = FastaReader::new(&input[..]);
+        let batch = reader.next_fasta_batch().unwrap().unwrap();
+        assert_eq!(batch.records().next().unwrap().seq(), b"AC");
     }
 
     #[test]
@@ -2206,6 +2617,71 @@ mod tests {
     }
 
     #[test]
+    fn streams_indexed_reference_chunks() {
+        let input = b">chr1\nACGT\nTGCA\nAA\n";
+        let index = build_fasta_index(&input[..]).unwrap();
+        let mut reader = IndexedFastaReader::new(std::io::Cursor::new(input), index);
+        let chunks = reader
+            .reference_chunks(b"chr1", 2..10, 3)
+            .unwrap()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+
+        assert_eq!(
+            chunks,
+            vec![
+                FastaReferenceChunk {
+                    name: b"chr1".to_vec(),
+                    global_offset: 2,
+                    seq: b"GTT".to_vec(),
+                },
+                FastaReferenceChunk {
+                    name: b"chr1".to_vec(),
+                    global_offset: 5,
+                    seq: b"GCA".to_vec(),
+                },
+                FastaReferenceChunk {
+                    name: b"chr1".to_vec(),
+                    global_offset: 8,
+                    seq: b"AA".to_vec(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn plans_balanced_fasta_partitions_with_overlap() {
+        let input = b">chr1\nACGTACGTAC\n>chr2\nTTTTTT\n";
+        let index = build_fasta_index(&input[..]).unwrap();
+        let partitions = plan_fasta_partitions(&index, FastaPartitionConfig::new(3, 2)).unwrap();
+
+        assert_eq!(
+            partitions,
+            vec![
+                FastaPartition {
+                    partition_index: 0,
+                    name: b"chr1".to_vec(),
+                    core: 0..6,
+                    fetch: 0..8,
+                },
+                FastaPartition {
+                    partition_index: 1,
+                    name: b"chr1".to_vec(),
+                    core: 6..10,
+                    fetch: 4..10,
+                },
+                FastaPartition {
+                    partition_index: 2,
+                    name: b"chr2".to_vec(),
+                    core: 0..6,
+                    fetch: 0..6,
+                },
+            ]
+        );
+        assert_eq!(partitions[1].core_offset_in_fetch(), 2);
+    }
+
+    #[test]
     fn indexed_fetch_handles_line_boundary_and_missing_final_newline() {
         let input = b">chr1\nACGT\nTGCA";
         let index = build_fasta_index(&input[..]).unwrap();
@@ -2258,5 +2734,32 @@ mod tests {
 
         let fetched = reader.fetch(b"chr1", 69_998..70_006).unwrap();
         assert_eq!(fetched, &seq[69_998..70_006]);
+    }
+
+    #[cfg(feature = "bgzf")]
+    #[test]
+    fn streams_bgzf_indexed_reference_chunks() {
+        let mut input = b">chr1\n".to_vec();
+        let seq = (0..70_010).map(|i| b"ACGT"[i % 4]).collect::<Vec<_>>();
+        for chunk in seq.chunks(80) {
+            input.extend_from_slice(chunk);
+            input.push(b'\n');
+        }
+        let encoded = crate::compress_bgzf_parallel(&input, 2).unwrap();
+        let fasta_index = build_fasta_index_bgzf(&encoded[..]).unwrap();
+        let bgzf_index = crate::build_bgzf_index_strict(&encoded[..]).unwrap();
+        let mut reader =
+            BgzfIndexedFastaReader::new(std::io::Cursor::new(encoded), fasta_index, bgzf_index);
+        let chunks = reader
+            .reference_chunks(b"chr1", 69_998..70_006, 5)
+            .unwrap()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].global_offset, 69_998);
+        assert_eq!(chunks[0].seq, &seq[69_998..70_003]);
+        assert_eq!(chunks[1].global_offset, 70_003);
+        assert_eq!(chunks[1].seq, &seq[70_003..70_006]);
     }
 }

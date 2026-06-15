@@ -56,6 +56,11 @@ Current slice:
   BGZF virtual-offset annotation via `build_fasta_index_bgzf`
 - `.fai` parsing plus `IndexedFastaReader` and `BgzfIndexedFastaReader` for
   zero-based half-open reference range fetches
+- indexed FASTA reference chunk streaming via owned `FastaReferenceChunk`
+  buffers, plus overlap-aware `plan_fasta_partitions` helpers for parallel
+  reference ingest
+- owned transferable FASTA batches via `OwnedFastaBatch` and
+  `FastaReader::next_owned_batch`
 - optional memory-mapped resident FASTQ/FASTA visitors behind `mmap`
 - serial BGZF streaming reader and writer
 - parallel BGZF decompression/compression entry points for independent blocks
@@ -86,7 +91,8 @@ Current slice:
   normalized-id validation
 - configurable `PairValidation` modes for full ID checks, fast `/1` `/2`
   ordered-mate checks, or trusted ordered inputs
-- minimal `FastqBatchSource` and `FastqPairBatchSource` traits for downstream modules
+- minimal `FastaBatchSource`, `FastqBatchSource`, and `FastqPairBatchSource`
+  traits for downstream modules
 
 Backend boundary:
 
@@ -156,6 +162,9 @@ Current limitations:
 - `build_fasta_index` validates `.fai`-compatible wrapping: non-final sequence
   lines must keep a consistent base count and byte width, and only the final
   sequence line may be shorter.
+- `plan_fasta_partitions` plans sequence-coordinate partitions from an existing
+  `.fai`-style index; callers still choose the overlap needed by their k/window
+  workload.
 - Paired R1/R2 support validates ordered mates; it does not synchronize files
   with reordered records.
 
@@ -287,11 +296,14 @@ for pair in batch.interleaved_pairs()? {
 # Ok::<(), microraptor::FastqError>(())
 ```
 
-FASTA streams use a separate reader. Robust stats and `.fai`-style indexing use
-the same ordinary multiline FASTA semantics:
+FASTA streams use a separate reader. Robust stats, owned batches, and
+`.fai`-style indexing use the same ordinary multiline FASTA semantics:
 
 ```rust
-use microraptor::{build_fasta_index, count_fasta_bytes, FastaReader};
+use microraptor::{
+    build_fasta_index, count_fasta_bytes, plan_fasta_partitions, FastaPartitionConfig,
+    FastaReader,
+};
 
 let data = b">seq1 description\nACG\nTN\n";
 let mut reader = FastaReader::new(&data[..]);
@@ -300,8 +312,15 @@ for record in batch.records() {
     assert_eq!(record.id_token(), b"seq1");
     assert_eq!(record.seq(), b"ACGTN");
 }
+let owned = batch.to_owned_batch();
+assert_eq!(owned.records().next().unwrap().id_token(), b"seq1");
 assert_eq!(count_fasta_bytes(data)?.bases, 5);
-assert_eq!(build_fasta_index(&data[..])?.get(b"seq1").unwrap().len, 5);
+let index = build_fasta_index(&data[..])?;
+assert_eq!(index.get(b"seq1").unwrap().len, 5);
+assert_eq!(
+    plan_fasta_partitions(&index, FastaPartitionConfig::new(1, 2))?[0].fetch,
+    0..5
+);
 # Ok::<(), microraptor::FastqError>(())
 ```
 

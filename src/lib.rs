@@ -122,13 +122,15 @@ pub use bgzf::{
 };
 pub use error::{FastqError, FastqPosition, Result};
 #[cfg(feature = "bgzf")]
-pub use fasta::{BgzfIndexedFastaReader, build_fasta_index_bgzf};
+pub use fasta::{BgzfFastaReferenceChunks, BgzfIndexedFastaReader, build_fasta_index_bgzf};
 pub use fasta::{
-    FastaBatch, FastaConfig, FastaIndex, FastaIndexEntry, FastaReader, FastaRecord, FastaRecordRef,
-    FastaRecordSink, FastaShape, FastaStats, FastaVisitRecord, IndexedFastaReader,
-    build_fasta_index, count_fasta_bytes, count_fasta_read, count_two_line_fasta_bytes,
-    count_two_line_fasta_read, detect_fasta_shape, visit_fasta_bytes, visit_fasta_bytes_auto,
-    visit_two_line_fasta_bytes, visit_two_line_fasta_read,
+    FastaBatch, FastaConfig, FastaIndex, FastaIndexEntry, FastaPartition, FastaPartitionConfig,
+    FastaReader, FastaRecord, FastaRecordRef, FastaRecordSink, FastaReferenceChunk,
+    FastaReferenceChunks, FastaShape, FastaStats, FastaVisitRecord, IndexedFastaReader,
+    OwnedFastaBatch, OwnedFastaRecord, build_fasta_index, count_fasta_bytes, count_fasta_read,
+    count_two_line_fasta_bytes, count_two_line_fasta_read, detect_fasta_shape,
+    plan_fasta_partitions, visit_fasta_bytes, visit_fasta_bytes_auto, visit_two_line_fasta_bytes,
+    visit_two_line_fasta_read,
 };
 pub use fastq::{
     FastqBatch, FastqConfig, FastqPair, FastqReader, FastqRecord, FastqVisitRecord,
@@ -138,9 +140,9 @@ pub use fastq::{
 #[cfg(feature = "mmap")]
 pub use mmap::{count_fasta_mmap, visit_fasta_mmap, visit_fastq_mmap};
 pub use source::{
-    DetectedInputKind, detect_file_input_kind, open_fasta, open_fasta_with_config, open_fastq,
-    open_fastq_with_config, open_paired_fastq, open_paired_fastq_with_config,
-    open_paired_fastq_with_configs,
+    DetectedInputKind, detect_file_input_kind, open_fasta, open_fasta_for_reference,
+    open_fasta_with_config, open_fastq, open_fastq_with_config, open_paired_fastq,
+    open_paired_fastq_with_config, open_paired_fastq_with_configs,
 };
 #[cfg(all(feature = "gzip", feature = "libdeflate"))]
 pub use source::{
@@ -154,4 +156,4 @@ pub use source::{
     open_fastq_bgzf_parallel_with_backend, open_fastq_bgzf_parallel_with_config,
     open_fastq_bgzf_parallel_with_options, open_fastq_bgzf_with_backend,
 };
-pub use stream::{FastqBatchSource, FastqPairBatchSource};
+pub use stream::{FastaBatchSource, FastqBatchSource, FastqPairBatchSource};

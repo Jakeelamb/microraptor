@@ -1,7 +1,23 @@
 use std::io::Read;
 
 use crate::error::Result;
+use crate::fasta::{FastaBatch, FastaReader};
 use crate::fastq::{FastqBatch, FastqReader, PairedFastqBatch, PairedFastqReader};
+
+/// Minimal abstraction over a source of FASTA batches.
+///
+/// Downstream pipeline stages can depend on this trait instead of the concrete
+/// [`FastaReader`] type when they only need batch iteration.
+pub trait FastaBatchSource {
+    /// Read the next FASTA batch.
+    fn next_fasta_batch(&mut self) -> Result<Option<FastaBatch<'_>>>;
+}
+
+impl<R: Read> FastaBatchSource for FastaReader<R> {
+    fn next_fasta_batch(&mut self) -> Result<Option<FastaBatch<'_>>> {
+        self.next_batch()
+    }
+}
 
 /// Minimal abstraction over a source of single-end FASTQ batches.
 ///

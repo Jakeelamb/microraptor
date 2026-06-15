@@ -135,6 +135,24 @@ pub fn open_fasta_with_config(
     Ok(FastaReader::with_config(reader, config))
 }
 
+/// Open a FASTA reference genome with parser settings tuned for long records.
+///
+/// This uses the same raw/gzip/BGZF transport detection as [`open_fasta`], but
+/// lowers records per batch and increases I/O buffering and sequence
+/// preallocation hints for chromosome-scale records.
+pub fn open_fasta_for_reference(
+    path: impl AsRef<Path>,
+) -> Result<FastaReader<Box<dyn Read + Send>>> {
+    open_fasta_with_config(
+        path,
+        FastaConfig {
+            batch_records: 16,
+            buffer_size: 256 * 1024,
+            expected_seq_len: 1024 * 1024,
+        },
+    )
+}
+
 /// Open ordered R1/R2 FASTQ files with default configuration.
 pub fn open_paired_fastq(
     first_path: impl AsRef<Path>,
