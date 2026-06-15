@@ -1,10 +1,12 @@
 # Rust Library Peer Benchmark Metadata
 
-- generated_at_utc: 2026-06-13T05:54:11Z
+- generated_at_utc: 2026-06-15T00:02:40Z
 - rustc: rustc 1.92.0 (ded5c06cf 2025-12-08)
 - cargo: cargo 1.92.0 (344c4567c 2025-10-21)
-- iterations: 11
+- iterations: 5
 - consumer: light
+- compression: raw
+- thread_cap: 8
 - microraptor_features: default
 - microraptor_slab_size: FastqConfig::default
 - input: synthetic:100000x150

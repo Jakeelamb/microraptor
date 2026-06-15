@@ -9,17 +9,17 @@ Rows may include deterministic synthetic fixtures and optional local corpus inpu
 
 | input | row | records | bases | best ms | records/s | bases/s | checksum |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `single.fastq` | `file-auto` | 100000 | 15000000 | 9.142 | 10938359 | 1640753876 | `12945858864820177352` |
-| `single.fastq.gz` | `file-auto` | 100000 | 15000000 | 20.485 | 4881566 | 732234919 | `12945858864820177352` |
-| `single.fastq.bgz` | `file-auto` | 100000 | 15000000 | 16.011 | 6245575 | 936836310 | `12945858864820177352` |
-| `interleaved.fastq` | `file-auto` | 200000 | 30000000 | 15.582 | 12835465 | 1925319797 | `2108355523955936992` |
-| `interleaved.fastq.gz` | `file-auto` | 200000 | 30000000 | 42.947 | 4656919 | 698537990 | `2108355523955936992` |
-| `interleaved.fastq.bgz` | `file-auto` | 200000 | 30000000 | 33.515 | 5967501 | 895125273 | `2108355523955936992` |
-| `r1.fastq` | `file-auto` | 100000 | 15000000 | 7.493 | 13345548 | 2001832343 | `12945858864820177352` |
-| `r2.fastq` | `file-auto` | 100000 | 15000000 | 10.806 | 9254100 | 1388115014 | `12725525685719183448` |
-| `r1.fastq+r2.fastq` | `file-paired-auto` | 200000 | 30000000 | 25.731 | 7772623 | 1165893465 | `2108355523955936992` |
-| `r1.fastq.gz+r2.fastq.gz` | `file-paired-auto` | 200000 | 30000000 | 47.707 | 4192287 | 628843069 | `2108355523955936992` |
-| `r1.fastq.bgz+r2.fastq.bgz` | `file-paired-auto` | 200000 | 30000000 | 40.744 | 4908722 | 736308400 | `2108355523955936992` |
+| `single.fastq` | `file-auto` | 100000 | 15000000 | 10.285 | 9723003 | 1458450495 | `12945858864820177352` |
+| `single.fastq.gz` | `file-auto` | 100000 | 15000000 | 14.505 | 6893978 | 1034096790 | `12945858864820177352` |
+| `single.fastq.bgz` | `file-auto` | 100000 | 15000000 | 9.548 | 10473729 | 1571059492 | `12945858864820177352` |
+| `interleaved.fastq` | `file-auto` | 200000 | 30000000 | 22.915 | 8727956 | 1309193492 | `2108355523955936992` |
+| `interleaved.fastq.gz` | `file-auto` | 200000 | 30000000 | 30.066 | 6652068 | 997810205 | `2108355523955936992` |
+| `interleaved.fastq.bgz` | `file-auto` | 200000 | 30000000 | 19.169 | 10433774 | 1565066137 | `2108355523955936992` |
+| `r1.fastq` | `file-auto` | 100000 | 15000000 | 11.718 | 8533803 | 1280070455 | `12945858864820177352` |
+| `r2.fastq` | `file-auto` | 100000 | 15000000 | 11.652 | 8582370 | 1287355627 | `12725525685719183448` |
+| `r1.fastq+r2.fastq` | `file-paired-auto` | 200000 | 30000000 | 23.488 | 8514976 | 1277246488 | `2108355523955936992` |
+| `r1.fastq.gz+r2.fastq.gz` | `file-paired-auto` | 200000 | 30000000 | 30.161 | 6631067 | 994660166 | `2108355523955936992` |
+| `r1.fastq.bgz+r2.fastq.bgz` | `file-paired-auto` | 200000 | 30000000 | 19.775 | 10113602 | 1517040306 | `2108355523955936992` |
 
 ## Pack And Side-Channel Rows
 
@@ -27,71 +27,73 @@ These rows include base packing and quality summary work. They should not be com
 
 | input | row | records | bases | best ms | records/s | bases/s | checksum |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `single.fastq` | `file-pack-seq-qual` | 100000 | 15000000 | 50.855 | 1966381 | 294957193 | `17356533327231788360` |
-| `single.fastq` | `file-direct-pack-seq-qual` | 100000 | 15000000 | 79.279 | 1261372 | 189205882 | `17356533327231788360` |
-| `single.fastq` | `file-reader-pack-seq-qual` | 100000 | 15000000 | 49.883 | 2004703 | 300705454 | `17356533327231788360` |
-| `single.fastq.gz` | `file-pack-seq-qual` | 100000 | 15000000 | 63.615 | 1571961 | 235794264 | `17356533327231788360` |
-| `single.fastq.gz` | `file-direct-pack-seq-qual` | 100000 | 15000000 | 92.180 | 1084829 | 162724352 | `17356533327231788360` |
-| `single.fastq.gz` | `file-reader-pack-seq-qual` | 100000 | 15000000 | 61.408 | 1628439 | 244265982 | `17356533327231788360` |
-| `single.fastq.bgz` | `file-pack-seq-qual` | 100000 | 15000000 | 59.025 | 1694207 | 254131160 | `17356533327231788360` |
-| `single.fastq.bgz` | `file-direct-pack-seq-qual` | 100000 | 15000000 | 86.043 | 1162205 | 174330810 | `17356533327231788360` |
-| `single.fastq.bgz` | `file-reader-pack-seq-qual` | 100000 | 15000000 | 56.503 | 1769815 | 265472282 | `17356533327231788360` |
-| `single.fastq.bgz` | `file-bgzf-adaptive-pack-seq-qual` | 100000 | 15000000 | 57.970 | 1725040 | 258756050 | `17356533327231788360` |
-| `single.fastq.bgz` | `file-bgzf-libdeflate-serial-pack-seq-qual` | 100000 | 15000000 | 58.225 | 1717483 | 257622478 | `17356533327231788360` |
-| `single.fastq.bgz` | `file-bgzf-libdeflate-adaptive-pack-seq-qual` | 100000 | 15000000 | 58.800 | 1700688 | 255103207 | `17356533327231788360` |
-| `interleaved.fastq` | `file-pack-seq-qual` | 200000 | 30000000 | 103.275 | 1936582 | 290487403 | `13240362323036980704` |
-| `interleaved.fastq` | `file-direct-pack-seq-qual` | 200000 | 30000000 | 157.558 | 1269374 | 190406157 | `13240362323036980704` |
-| `interleaved.fastq` | `file-reader-pack-seq-qual` | 200000 | 30000000 | 106.360 | 1880409 | 282061468 | `13240362323036980704` |
-| `interleaved.fastq.gz` | `file-pack-seq-qual` | 200000 | 30000000 | 141.431 | 1414112 | 212116921 | `13240362323036980704` |
-| `interleaved.fastq.gz` | `file-direct-pack-seq-qual` | 200000 | 30000000 | 188.393 | 1061610 | 159241616 | `13240362323036980704` |
-| `interleaved.fastq.gz` | `file-reader-pack-seq-qual` | 200000 | 30000000 | 130.268 | 1535294 | 230294176 | `13240362323036980704` |
-| `interleaved.fastq.bgz` | `file-pack-seq-qual` | 200000 | 30000000 | 125.856 | 1589119 | 238367987 | `13240362323036980704` |
-| `interleaved.fastq.bgz` | `file-direct-pack-seq-qual` | 200000 | 30000000 | 176.181 | 1135194 | 170279178 | `13240362323036980704` |
-| `interleaved.fastq.bgz` | `file-reader-pack-seq-qual` | 200000 | 30000000 | 128.745 | 1553461 | 233019291 | `13240362323036980704` |
-| `interleaved.fastq.bgz` | `file-bgzf-adaptive-pack-seq-qual` | 200000 | 30000000 | 122.861 | 1627857 | 244178579 | `13240362323036980704` |
-| `interleaved.fastq.bgz` | `file-bgzf-libdeflate-serial-pack-seq-qual` | 200000 | 30000000 | 124.915 | 1601092 | 240163816 | `13240362323036980704` |
-| `interleaved.fastq.bgz` | `file-bgzf-libdeflate-adaptive-pack-seq-qual` | 200000 | 30000000 | 124.946 | 1600685 | 240102810 | `13240362323036980704` |
-| `r1.fastq` | `file-pack-seq-qual` | 100000 | 15000000 | 52.508 | 1904484 | 285672724 | `17356533327231788360` |
-| `r1.fastq` | `file-direct-pack-seq-qual` | 100000 | 15000000 | 80.080 | 1248750 | 187312551 | `17356533327231788360` |
-| `r1.fastq` | `file-reader-pack-seq-qual` | 100000 | 15000000 | 50.114 | 1995439 | 299315877 | `17356533327231788360` |
-| `r2.fastq` | `file-pack-seq-qual` | 100000 | 15000000 | 53.066 | 1884428 | 282664220 | `17136200148130794456` |
-| `r2.fastq` | `file-direct-pack-seq-qual` | 100000 | 15000000 | 77.481 | 1290643 | 193596528 | `17136200148130794456` |
-| `r2.fastq` | `file-reader-pack-seq-qual` | 100000 | 15000000 | 50.512 | 1979742 | 296961437 | `17136200148130794456` |
-| `r1.fastq+r2.fastq` | `file-paired-pack-seq-qual` | 200000 | 30000000 | 108.558 | 1842339 | 276350936 | `13240362323036980704` |
-| `r1.fastq+r2.fastq` | `file-paired-trusted-pack-seq-qual` | 200000 | 30000000 | 101.764 | 1965329 | 294799486 | `13240362323036980704` |
-| `r1.fastq.gz+r2.fastq.gz` | `file-paired-pack-seq-qual` | 200000 | 30000000 | 132.128 | 1513680 | 227052137 | `13240362323036980704` |
-| `r1.fastq.gz+r2.fastq.gz` | `file-paired-trusted-pack-seq-qual` | 200000 | 30000000 | 124.209 | 1610191 | 241528671 | `13240362323036980704` |
-| `r1.fastq.bgz+r2.fastq.bgz` | `file-paired-pack-seq-qual` | 200000 | 30000000 | 129.099 | 1549202 | 232380408 | `13240362323036980704` |
-| `r1.fastq.bgz+r2.fastq.bgz` | `file-paired-trusted-pack-seq-qual` | 200000 | 30000000 | 118.552 | 1687016 | 253052479 | `13240362323036980704` |
+| `single.fastq` | `file-pack-seq-qual` | 100000 | 15000000 | 27.510 | 3635086 | 545262989 | `17356533327231788360` |
+| `single.fastq` | `file-direct-pack-seq-qual` | 100000 | 15000000 | 32.162 | 3109256 | 466388485 | `17356533327231788360` |
+| `single.fastq` | `file-reader-pack-seq-qual` | 100000 | 15000000 | 29.589 | 3379587 | 506938107 | `17356533327231788360` |
+| `single.fastq.gz` | `file-pack-seq-qual` | 100000 | 15000000 | 31.463 | 3178306 | 476745953 | `17356533327231788360` |
+| `single.fastq.gz` | `file-direct-pack-seq-qual` | 100000 | 15000000 | 35.429 | 2822546 | 423381999 | `17356533327231788360` |
+| `single.fastq.gz` | `file-reader-pack-seq-qual` | 100000 | 15000000 | 31.249 | 3200150 | 480022595 | `17356533327231788360` |
+| `single.fastq.bgz` | `file-pack-seq-qual` | 100000 | 15000000 | 26.586 | 3761333 | 564200082 | `17356533327231788360` |
+| `single.fastq.bgz` | `file-direct-pack-seq-qual` | 100000 | 15000000 | 30.699 | 3257421 | 488613258 | `17356533327231788360` |
+| `single.fastq.bgz` | `file-reader-pack-seq-qual` | 100000 | 15000000 | 27.044 | 3697625 | 554643782 | `17356533327231788360` |
+| `single.fastq.bgz` | `file-bgzf-adaptive-pack-seq-qual` | 100000 | 15000000 | 26.861 | 3722873 | 558430978 | `17356533327231788360` |
+| `single.fastq.bgz` | `file-bgzf-libdeflate-serial-pack-seq-qual` | 100000 | 15000000 | 29.993 | 3334117 | 500117661 | `17356533327231788360` |
+| `single.fastq.bgz` | `file-bgzf-libdeflate-adaptive-pack-seq-qual` | 100000 | 15000000 | 26.830 | 3727110 | 559066555 | `17356533327231788360` |
+| `interleaved.fastq` | `file-pack-seq-qual` | 200000 | 30000000 | 57.125 | 3501122 | 525168342 | `13240362323036980704` |
+| `interleaved.fastq` | `file-direct-pack-seq-qual` | 200000 | 30000000 | 64.812 | 3085847 | 462877066 | `13240362323036980704` |
+| `interleaved.fastq` | `file-reader-pack-seq-qual` | 200000 | 30000000 | 57.465 | 3480388 | 522058330 | `13240362323036980704` |
+| `interleaved.fastq.gz` | `file-pack-seq-qual` | 200000 | 30000000 | 65.746 | 3042018 | 456302752 | `13240362323036980704` |
+| `interleaved.fastq.gz` | `file-direct-pack-seq-qual` | 200000 | 30000000 | 72.922 | 2742667 | 411400195 | `13240362323036980704` |
+| `interleaved.fastq.gz` | `file-reader-pack-seq-qual` | 200000 | 30000000 | 64.915 | 3080967 | 462145179 | `13240362323036980704` |
+| `interleaved.fastq.bgz` | `file-pack-seq-qual` | 200000 | 30000000 | 54.719 | 3655037 | 548255593 | `13240362323036980704` |
+| `interleaved.fastq.bgz` | `file-direct-pack-seq-qual` | 200000 | 30000000 | 59.936 | 3336883 | 500532549 | `13240362323036980704` |
+| `interleaved.fastq.bgz` | `file-reader-pack-seq-qual` | 200000 | 30000000 | 53.532 | 3736081 | 560412212 | `13240362323036980704` |
+| `interleaved.fastq.bgz` | `file-bgzf-adaptive-pack-seq-qual` | 200000 | 30000000 | 54.371 | 3678411 | 551761723 | `13240362323036980704` |
+| `interleaved.fastq.bgz` | `file-bgzf-libdeflate-serial-pack-seq-qual` | 200000 | 30000000 | 61.879 | 3232107 | 484816148 | `13240362323036980704` |
+| `interleaved.fastq.bgz` | `file-bgzf-libdeflate-adaptive-pack-seq-qual` | 200000 | 30000000 | 53.762 | 3720132 | 558019812 | `13240362323036980704` |
+| `r1.fastq` | `file-pack-seq-qual` | 100000 | 15000000 | 28.712 | 3482823 | 522423477 | `17356533327231788360` |
+| `r1.fastq` | `file-direct-pack-seq-qual` | 100000 | 15000000 | 32.093 | 3115917 | 467387565 | `17356533327231788360` |
+| `r1.fastq` | `file-reader-pack-seq-qual` | 100000 | 15000000 | 28.699 | 3484468 | 522670228 | `17356533327231788360` |
+| `r2.fastq` | `file-pack-seq-qual` | 100000 | 15000000 | 27.459 | 3641756 | 546263452 | `17136200148130794456` |
+| `r2.fastq` | `file-direct-pack-seq-qual` | 100000 | 15000000 | 31.699 | 3154664 | 473199614 | `17136200148130794456` |
+| `r2.fastq` | `file-reader-pack-seq-qual` | 100000 | 15000000 | 27.840 | 3592010 | 538801541 | `17136200148130794456` |
+| `r1.fastq+r2.fastq` | `file-paired-pack-seq-qual` | 200000 | 30000000 | 56.879 | 3516233 | 527435043 | `13240362323036980704` |
+| `r1.fastq+r2.fastq` | `file-paired-trusted-pack-seq-qual` | 200000 | 30000000 | 54.835 | 3647300 | 547095144 | `13240362323036980704` |
+| `r1.fastq.gz+r2.fastq.gz` | `file-paired-pack-seq-qual` | 200000 | 30000000 | 64.455 | 3102917 | 465437676 | `13240362323036980704` |
+| `r1.fastq.gz+r2.fastq.gz` | `file-paired-trusted-pack-seq-qual` | 200000 | 30000000 | 62.758 | 3186846 | 478026995 | `13240362323036980704` |
+| `r1.fastq.bgz+r2.fastq.bgz` | `file-paired-pack-seq-qual` | 200000 | 30000000 | 55.466 | 3605783 | 540867458 | `13240362323036980704` |
+| `r1.fastq.bgz+r2.fastq.bgz` | `file-paired-trusted-pack-seq-qual` | 200000 | 30000000 | 52.904 | 3780421 | 567063200 | `13240362323036980704` |
 
 ## External Tool Timings
 
 External rows are wall-clock timings for comparable command-line work where the tool is installed locally.
 
+Parity sidecar: [`external-parity.tsv`](external-parity.tsv)
+
 | label | tool | status | elapsed s |
 | --- | --- | ---: | ---: |
-| `seqkit stats single/raw` | `seqkit` | `0` | `0.04` |
-| `seqkit stats single/gzip` | `seqkit` | `0` | `0.05` |
-| `seqkit stats single/bgzf` | `seqkit` | `0` | `0.08` |
-| `seqkit stats paired/r1/raw` | `seqkit` | `0` | `0.04` |
-| `seqkit stats paired/r2/raw` | `seqkit` | `0` | `0.04` |
-| `seqkit stats paired/r1/gzip` | `seqkit` | `0` | `0.05` |
-| `seqkit stats paired/r2/gzip` | `seqkit` | `0` | `0.05` |
-| `seqkit stats paired/r1/bgzf` | `seqkit` | `0` | `0.09` |
-| `seqkit stats paired/r2/bgzf` | `seqkit` | `0` | `0.08` |
-| `seqtk comp single/raw` | `seqtk` | `0` | `0.16` |
-| `seqtk comp single/gzip` | `seqtk` | `0` | `0.19` |
-| `seqtk comp single/bgzf` | `seqtk` | `0` | `0.23` |
-| `seqtk fqchk single/raw` | `seqtk` | `0` | `0.04` |
-| `bgzip test single/bgzf` | `bgzip` | `0` | `0.01` |
-| `bgzip decompress single/bgzf` | `bgzip` | `0` | `0.01` |
-| `samtools import single/raw` | `samtools` | `0` | `0.07` |
-| `samtools import paired/raw` | `samtools` | `0` | `0.11` |
-| `samtools import paired/gzip` | `samtools` | `0` | `0.16` |
-| `samtools import paired/bgzf` | `samtools` | `0` | `0.11` |
-| `fastp paired/raw` | `fastp` | `0` | `0.57` |
-| `fastp paired/gzip` | `fastp` | `0` | `0.58` |
-| `fastp paired/bgzf` | `fastp` | `0` | `0.47` |
+| `seqkit stats single/raw` | `seqkit` | `0` | `0.02` |
+| `seqkit stats single/gzip` | `seqkit` | `0` | `0.02` |
+| `seqkit stats single/bgzf` | `seqkit` | `0` | `0.03` |
+| `seqkit stats paired/r1/raw` | `seqkit` | `0` | `0.02` |
+| `seqkit stats paired/r2/raw` | `seqkit` | `0` | `0.02` |
+| `seqkit stats paired/r1/gzip` | `seqkit` | `0` | `0.02` |
+| `seqkit stats paired/r2/gzip` | `seqkit` | `0` | `0.02` |
+| `seqkit stats paired/r1/bgzf` | `seqkit` | `0` | `0.04` |
+| `seqkit stats paired/r2/bgzf` | `seqkit` | `0` | `0.04` |
+| `seqtk comp single/raw` | `seqtk` | `0` | `0.07` |
+| `seqtk comp single/gzip` | `seqtk` | `0` | `0.07` |
+| `seqtk comp single/bgzf` | `seqtk` | `0` | `0.07` |
+| `seqtk fqchk single/raw` | `seqtk` | `0` | `0.02` |
+| `bgzip test single/bgzf` | `bgzip` | `0` | `0.00` |
+| `bgzip decompress single/bgzf` | `bgzip` | `0` | `0.00` |
+| `samtools import single/raw` | `samtools` | `0` | `0.05` |
+| `samtools import paired/raw` | `samtools` | `0` | `0.07` |
+| `samtools import paired/gzip` | `samtools` | `0` | `0.09` |
+| `samtools import paired/bgzf` | `samtools` | `0` | `0.06` |
+| `fastp paired/raw` | `fastp` | `0` | `0.23` |
+| `fastp paired/gzip` | `fastp` | `0` | `0.25` |
+| `fastp paired/bgzf` | `fastp` | `0` | `0.14` |
 
 Metadata: [`metadata.md`](metadata.md)
 

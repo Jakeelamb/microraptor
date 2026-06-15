@@ -3,21 +3,21 @@
 <text x="24" y="28" font-family="Arial, sans-serif" font-size="18" font-weight="700">Rust FASTQ parser peer throughput</text>
 <text x="24" y="46" font-family="Arial, sans-serif" font-size="12" fill="#555">bases/s over the same in-memory raw FASTQ byte buffer</text>
 <text x="24" y="76" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-stream</text>
-<rect x="170" y="61" width="319" height="20" fill="#315f8c"/>
-<text x="497" y="76" font-family="Arial, sans-serif" font-size="12" fill="#222">2.03 Gbases/s</text>
+<rect x="170" y="61" width="308" height="20" fill="#315f8c"/>
+<text x="486" y="76" font-family="Arial, sans-serif" font-size="12" fill="#222">2.96 Gbases/s</text>
 <text x="24" y="110" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-slice-visitor</text>
 <rect x="170" y="95" width="520" height="20" fill="#315f8c"/>
-<text x="698" y="110" font-family="Arial, sans-serif" font-size="12" fill="#222">3.31 Gbases/s</text>
+<text x="698" y="110" font-family="Arial, sans-serif" font-size="12" fill="#222">4.99 Gbases/s</text>
 <text x="24" y="144" font-family="Arial, sans-serif" font-size="12" fill="#222">microraptor-stream-visitor</text>
-<rect x="170" y="129" width="416" height="20" fill="#315f8c"/>
-<text x="594" y="144" font-family="Arial, sans-serif" font-size="12" fill="#222">2.65 Gbases/s</text>
+<rect x="170" y="129" width="380" height="20" fill="#315f8c"/>
+<text x="558" y="144" font-family="Arial, sans-serif" font-size="12" fill="#222">3.65 Gbases/s</text>
 <text x="24" y="178" font-family="Arial, sans-serif" font-size="12" fill="#222">seq_io</text>
-<rect x="170" y="163" width="381" height="20" fill="#315f8c"/>
-<text x="559" y="178" font-family="Arial, sans-serif" font-size="12" fill="#222">2.43 Gbases/s</text>
+<rect x="170" y="163" width="406" height="20" fill="#315f8c"/>
+<text x="584" y="178" font-family="Arial, sans-serif" font-size="12" fill="#222">3.90 Gbases/s</text>
 <text x="24" y="212" font-family="Arial, sans-serif" font-size="12" fill="#222">noodles-fastq</text>
-<rect x="170" y="197" width="256" height="20" fill="#315f8c"/>
-<text x="434" y="212" font-family="Arial, sans-serif" font-size="12" fill="#222">1.63 Gbases/s</text>
+<rect x="170" y="197" width="258" height="20" fill="#315f8c"/>
+<text x="436" y="212" font-family="Arial, sans-serif" font-size="12" fill="#222">2.48 Gbases/s</text>
 <text x="24" y="246" font-family="Arial, sans-serif" font-size="12" fill="#222">bio</text>
-<rect x="170" y="231" width="87" height="20" fill="#315f8c"/>
-<text x="265" y="246" font-family="Arial, sans-serif" font-size="12" fill="#222">0.56 Gbases/s</text>
+<rect x="170" y="231" width="135" height="20" fill="#315f8c"/>
+<text x="313" y="246" font-family="Arial, sans-serif" font-size="12" fill="#222">1.30 Gbases/s</text>
 </svg>

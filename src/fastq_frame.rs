@@ -150,7 +150,9 @@ pub(crate) fn validate_record(
             0,
         ));
     }
-    if validation.require_nonempty_id && record.name.len() == 1 {
+    if validation.require_nonempty_id
+        && (record.name.len() == 1 || fastq_id_token(record.name.bytes).is_empty())
+    {
         return Err(format_at(
             "empty FASTQ id",
             base_offset,
@@ -180,6 +182,15 @@ pub(crate) fn validate_record(
         ));
     }
     Ok(())
+}
+
+fn fastq_id_token(name: &[u8]) -> &[u8] {
+    let name = name.strip_prefix(b"@").unwrap_or(name);
+    let end = name
+        .iter()
+        .position(u8::is_ascii_whitespace)
+        .unwrap_or(name.len());
+    &name[..end]
 }
 
 pub(crate) fn fast_slash_pair_ids_match(first_name: &[u8], second_name: &[u8]) -> Option<bool> {

@@ -57,6 +57,7 @@ jobs:
           bash -n scripts/benchmark-fasta-peer-size-sweep.sh
           bash -n scripts/benchmark-fasta-gauntlet.sh
           bash -n scripts/check-replication-host.sh
+          bash -n scripts/check-fuzz-corpus.sh
           bash -n scripts/check-benchmark-snapshots.sh
           bash -n scripts/discover-local-benchmark-corpus.sh
           bash -n scripts/export-replication-kit.sh
@@ -106,3 +107,6 @@ jobs:
 
       - name: Compile fuzz targets
         run: cargo +nightly fuzz build
+
+      - name: Run fuzz corpus smoke tests
+        run: scripts/check-fuzz-corpus.sh

@@ -1,39 +1,39 @@
 label	tool	status	elapsed_s	command
-seqkit stats single/raw	seqkit	0	0.03	seqkit stats target/bench-inputs/single.fastq
-seqkit stats single/gzip	seqkit	0	0.05	seqkit stats target/bench-inputs/single.fastq.gz
-seqkit stats single/bgzf	seqkit	0	0.10	seqkit stats target/bench-inputs/single.fastq.bgz
-seqkit stats paired/r1/raw	seqkit	0	0.05	seqkit stats target/bench-inputs/r1.fastq
-seqkit stats paired/r2/raw	seqkit	0	0.04	seqkit stats target/bench-inputs/r2.fastq
-seqkit stats paired/r1/gzip	seqkit	0	0.04	seqkit stats target/bench-inputs/r1.fastq.gz
-seqkit stats paired/r2/gzip	seqkit	0	0.05	seqkit stats target/bench-inputs/r2.fastq.gz
-seqkit stats paired/r1/bgzf	seqkit	0	0.08	seqkit stats target/bench-inputs/r1.fastq.bgz
-seqkit stats paired/r2/bgzf	seqkit	0	0.08	seqkit stats target/bench-inputs/r2.fastq.bgz
-seqtk comp single/raw	seqtk	0	0.14	seqtk comp target/bench-inputs/single.fastq
-seqtk comp single/gzip	seqtk	0	0.20	seqtk comp target/bench-inputs/single.fastq.gz
-seqtk comp single/bgzf	seqtk	0	0.19	seqtk comp target/bench-inputs/single.fastq.bgz
-seqtk fqchk single/raw	seqtk	0	0.06	seqtk fqchk target/bench-inputs/single.fastq
-bgzip test single/bgzf	bgzip	0	0.01	bgzip -t target/bench-inputs/single.fastq.bgz
-bgzip decompress single/bgzf	bgzip	0	0.01	bgzip -dc target/bench-inputs/single.fastq.bgz
-samtools import single/raw	samtools	0	0.07	samtools import -0 target/bench-inputs/single.fastq -o /dev/null -O BAM -@ 24
-samtools import paired/raw	samtools	0	0.13	samtools import -1 target/bench-inputs/r1.fastq -2 target/bench-inputs/r2.fastq -o /dev/null -O BAM -@ 24
-samtools import paired/gzip	samtools	0	0.16	samtools import -1 target/bench-inputs/r1.fastq.gz -2 target/bench-inputs/r2.fastq.gz -o /dev/null -O BAM -@ 24
-samtools import paired/bgzf	samtools	0	0.13	samtools import -1 target/bench-inputs/r1.fastq.bgz -2 target/bench-inputs/r2.fastq.bgz -o /dev/null -O BAM -@ 24
-fastp paired/raw	fastp	0	0.62	fastp --in1 target/bench-inputs/r1.fastq --in2 target/bench-inputs/r2.fastq --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 24 --json target/bench-results-drosophila-read-types/fastp.json --html target/bench-results-drosophila-read-types/fastp.html
-fastp paired/gzip	fastp	0	0.63	fastp --in1 target/bench-inputs/r1.fastq.gz --in2 target/bench-inputs/r2.fastq.gz --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 24 --json target/bench-results-drosophila-read-types/fastp-gzip.json --html target/bench-results-drosophila-read-types/fastp-gzip.html
-fastp paired/bgzf	fastp	0	0.46	fastp --in1 target/bench-inputs/r1.fastq.bgz --in2 target/bench-inputs/r2.fastq.bgz --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 24 --json target/bench-results-drosophila-read-types/fastp-bgzf.json --html target/bench-results-drosophila-read-types/fastp-bgzf.html
-seqkit stats corpus-paired/drosophila_illumina_1m_raw/r1	seqkit	0	0.17	seqkit stats ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-seqkit stats corpus-paired/drosophila_illumina_1m_raw/r2	seqkit	0	0.17	seqkit stats ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r2.1m.fq
-seqtk fqchk corpus-paired/drosophila_illumina_1m_raw/r1	seqtk	0	0.16	seqtk fqchk ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-seqtk fqchk corpus-paired/drosophila_illumina_1m_raw/r2	seqtk	0	0.17	seqtk fqchk ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r2.1m.fq
-samtools import corpus-paired/drosophila_illumina_1m_raw	samtools	0	0.58	samtools import -1 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq -2 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r2.1m.fq -o /dev/null -O BAM -@ 24
-fastp corpus-paired/drosophila_illumina_1m_raw	fastp	0	1.24	fastp --in1 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq --in2 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r2.1m.fq --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 24 --json target/bench-results-drosophila-read-types/fastp-drosophila_illumina_1m_raw.json --html target/bench-results-drosophila-read-types/fastp-drosophila_illumina_1m_raw.html
-seqkit stats corpus/pacbio_clr_subreads.50k.fq	seqkit	0	0.06	seqkit stats ~/Projects/Benchmarks/datasets/drosophila_melanogaster/pacbio_clr_subreads.50k.fq
-seqtk comp corpus/pacbio_clr_subreads.50k.fq	seqtk	0	0.77	seqtk comp ~/Projects/Benchmarks/datasets/drosophila_melanogaster/pacbio_clr_subreads.50k.fq
-seqtk fqchk corpus/pacbio_clr_subreads.50k.fq	seqtk	0	0.47	seqtk fqchk ~/Projects/Benchmarks/datasets/drosophila_melanogaster/pacbio_clr_subreads.50k.fq
-samtools import corpus/pacbio_clr_subreads.50k.fq	samtools	0	0.46	samtools import -0 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/pacbio_clr_subreads.50k.fq -o /dev/null -O BAM -@ 24
-fastp corpus/pacbio_clr_subreads.50k.fq	fastp	0	1.78	fastp --in1 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/pacbio_clr_subreads.50k.fq --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 24 --json target/bench-results-drosophila-read-types/fastp-corpus_pacbio_clr_subreads.50k.fq.json --html target/bench-results-drosophila-read-types/fastp-corpus_pacbio_clr_subreads.50k.fq.html
-seqkit stats corpus/ont.50k.fq	seqkit	0	0.38	seqkit stats ~/Projects/Benchmarks/datasets/drosophila_melanogaster/ont.50k.fq
-seqtk comp corpus/ont.50k.fq	seqtk	0	1.59	seqtk comp ~/Projects/Benchmarks/datasets/drosophila_melanogaster/ont.50k.fq
-seqtk fqchk corpus/ont.50k.fq	seqtk	0	0.92	seqtk fqchk ~/Projects/Benchmarks/datasets/drosophila_melanogaster/ont.50k.fq
-samtools import corpus/ont.50k.fq	samtools	0	0.57	samtools import -0 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/ont.50k.fq -o /dev/null -O BAM -@ 24
-fastp corpus/ont.50k.fq	fastp	0	2.34	fastp --in1 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/ont.50k.fq --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 24 --json target/bench-results-drosophila-read-types/fastp-corpus_ont.50k.fq.json --html target/bench-results-drosophila-read-types/fastp-corpus_ont.50k.fq.html
+seqkit stats single/raw	seqkit	0	0.02	seqkit stats target/bench-inputs/single.fastq
+seqkit stats single/gzip	seqkit	0	0.02	seqkit stats target/bench-inputs/single.fastq.gz
+seqkit stats single/bgzf	seqkit	0	0.03	seqkit stats target/bench-inputs/single.fastq.bgz
+seqkit stats paired/r1/raw	seqkit	0	0.01	seqkit stats target/bench-inputs/r1.fastq
+seqkit stats paired/r2/raw	seqkit	0	0.02	seqkit stats target/bench-inputs/r2.fastq
+seqkit stats paired/r1/gzip	seqkit	0	0.02	seqkit stats target/bench-inputs/r1.fastq.gz
+seqkit stats paired/r2/gzip	seqkit	0	0.02	seqkit stats target/bench-inputs/r2.fastq.gz
+seqkit stats paired/r1/bgzf	seqkit	0	0.03	seqkit stats target/bench-inputs/r1.fastq.bgz
+seqkit stats paired/r2/bgzf	seqkit	0	0.03	seqkit stats target/bench-inputs/r2.fastq.bgz
+seqtk comp single/raw	seqtk	0	0.06	seqtk comp target/bench-inputs/single.fastq
+seqtk comp single/gzip	seqtk	0	0.07	seqtk comp target/bench-inputs/single.fastq.gz
+seqtk comp single/bgzf	seqtk	0	0.08	seqtk comp target/bench-inputs/single.fastq.bgz
+seqtk fqchk single/raw	seqtk	0	0.02	seqtk fqchk target/bench-inputs/single.fastq
+bgzip test single/bgzf	bgzip	0	0.00	bgzip -t target/bench-inputs/single.fastq.bgz
+bgzip decompress single/bgzf	bgzip	0	0.00	bgzip -dc target/bench-inputs/single.fastq.bgz
+samtools import single/raw	samtools	0	0.04	samtools import -0 target/bench-inputs/single.fastq -o /dev/null -O BAM -@ 8
+samtools import paired/raw	samtools	0	0.06	samtools import -1 target/bench-inputs/r1.fastq -2 target/bench-inputs/r2.fastq -o /dev/null -O BAM -@ 8
+samtools import paired/gzip	samtools	0	0.09	samtools import -1 target/bench-inputs/r1.fastq.gz -2 target/bench-inputs/r2.fastq.gz -o /dev/null -O BAM -@ 8
+samtools import paired/bgzf	samtools	0	0.07	samtools import -1 target/bench-inputs/r1.fastq.bgz -2 target/bench-inputs/r2.fastq.bgz -o /dev/null -O BAM -@ 8
+fastp paired/raw	fastp	0	0.21	fastp --in1 target/bench-inputs/r1.fastq --in2 target/bench-inputs/r2.fastq --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 8 --json target/bench-results-drosophila-read-types/fastp.json --html target/bench-results-drosophila-read-types/fastp.html
+fastp paired/gzip	fastp	0	0.23	fastp --in1 target/bench-inputs/r1.fastq.gz --in2 target/bench-inputs/r2.fastq.gz --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 8 --json target/bench-results-drosophila-read-types/fastp-gzip.json --html target/bench-results-drosophila-read-types/fastp-gzip.html
+fastp paired/bgzf	fastp	0	0.13	fastp --in1 target/bench-inputs/r1.fastq.bgz --in2 target/bench-inputs/r2.fastq.bgz --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 8 --json target/bench-results-drosophila-read-types/fastp-bgzf.json --html target/bench-results-drosophila-read-types/fastp-bgzf.html
+seqkit stats corpus-paired/drosophila_illumina_1m_raw/r1	seqkit	0	0.07	seqkit stats ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+seqkit stats corpus-paired/drosophila_illumina_1m_raw/r2	seqkit	0	0.08	seqkit stats ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r2.1m.fq
+seqtk fqchk corpus-paired/drosophila_illumina_1m_raw/r1	seqtk	0	0.08	seqtk fqchk ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+seqtk fqchk corpus-paired/drosophila_illumina_1m_raw/r2	seqtk	0	0.08	seqtk fqchk ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r2.1m.fq
+samtools import corpus-paired/drosophila_illumina_1m_raw	samtools	0	0.29	samtools import -1 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq -2 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r2.1m.fq -o /dev/null -O BAM -@ 8
+fastp corpus-paired/drosophila_illumina_1m_raw	fastp	0	0.59	fastp --in1 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq --in2 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r2.1m.fq --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 8 --json target/bench-results-drosophila-read-types/fastp-drosophila_illumina_1m_raw.json --html target/bench-results-drosophila-read-types/fastp-drosophila_illumina_1m_raw.html
+seqkit stats corpus/pacbio_clr_subreads.50k.fq	seqkit	0	0.02	seqkit stats ~/Projects/Benchmarks/datasets/drosophila_melanogaster/pacbio_clr_subreads.50k.fq
+seqtk comp corpus/pacbio_clr_subreads.50k.fq	seqtk	0	0.31	seqtk comp ~/Projects/Benchmarks/datasets/drosophila_melanogaster/pacbio_clr_subreads.50k.fq
+seqtk fqchk corpus/pacbio_clr_subreads.50k.fq	seqtk	0	0.19	seqtk fqchk ~/Projects/Benchmarks/datasets/drosophila_melanogaster/pacbio_clr_subreads.50k.fq
+samtools import corpus/pacbio_clr_subreads.50k.fq	samtools	0	0.32	samtools import -0 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/pacbio_clr_subreads.50k.fq -o /dev/null -O BAM -@ 8
+fastp corpus/pacbio_clr_subreads.50k.fq	fastp	0	0.60	fastp --in1 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/pacbio_clr_subreads.50k.fq --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 8 --json target/bench-results-drosophila-read-types/fastp-corpus_pacbio_clr_subreads.50k.fq.json --html target/bench-results-drosophila-read-types/fastp-corpus_pacbio_clr_subreads.50k.fq.html
+seqkit stats corpus/ont.50k.fq	seqkit	0	0.17	seqkit stats ~/Projects/Benchmarks/datasets/drosophila_melanogaster/ont.50k.fq
+seqtk comp corpus/ont.50k.fq	seqtk	0	0.60	seqtk comp ~/Projects/Benchmarks/datasets/drosophila_melanogaster/ont.50k.fq
+seqtk fqchk corpus/ont.50k.fq	seqtk	0	0.38	seqtk fqchk ~/Projects/Benchmarks/datasets/drosophila_melanogaster/ont.50k.fq
+samtools import corpus/ont.50k.fq	samtools	0	0.44	samtools import -0 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/ont.50k.fq -o /dev/null -O BAM -@ 8
+fastp corpus/ont.50k.fq	fastp	0	0.94	fastp --in1 ~/Projects/Benchmarks/datasets/drosophila_melanogaster/ont.50k.fq --stdout --disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --thread 8 --json target/bench-results-drosophila-read-types/fastp-corpus_ont.50k.fq.json --html target/bench-results-drosophila-read-types/fastp-corpus_ont.50k.fq.html

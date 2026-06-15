@@ -3,123 +3,123 @@
 <text x="24" y="28" font-family="Arial, sans-serif" font-size="18" font-weight="700">Microraptor pack and side-channel throughput</text>
 <text x="24" y="46" font-family="Arial, sans-serif" font-size="12" fill="#555">bases/s; rows include base packing and quality summary work</text>
 <text x="24" y="71" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq / file-pack-seq-qual</text>
-<rect x="310" y="58" width="499" height="18" fill="#1f766f"/>
-<text x="817" y="71" font-family="Arial, sans-serif" font-size="12" fill="#222">0.23 Gbases/s</text>
+<rect x="310" y="58" width="504" height="18" fill="#1f766f"/>
+<text x="822" y="71" font-family="Arial, sans-serif" font-size="12" fill="#222">0.44 Gbases/s</text>
 <text x="24" y="101" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq / file-direct-pack-seq-qual</text>
-<rect x="310" y="88" width="403" height="18" fill="#1f766f"/>
-<text x="721" y="101" font-family="Arial, sans-serif" font-size="12" fill="#222">0.19 Gbases/s</text>
+<rect x="310" y="88" width="493" height="18" fill="#1f766f"/>
+<text x="811" y="101" font-family="Arial, sans-serif" font-size="12" fill="#222">0.43 Gbases/s</text>
 <text x="24" y="131" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq / file-reader-pack-seq-qual</text>
-<rect x="310" y="118" width="648" height="18" fill="#1f766f"/>
-<text x="966" y="131" font-family="Arial, sans-serif" font-size="12" fill="#222">0.30 Gbases/s</text>
+<rect x="310" y="118" width="569" height="18" fill="#1f766f"/>
+<text x="887" y="131" font-family="Arial, sans-serif" font-size="12" fill="#222">0.50 Gbases/s</text>
 <text x="24" y="161" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.gz / file-pack-seq-qual</text>
-<rect x="310" y="148" width="508" height="18" fill="#1f766f"/>
-<text x="826" y="161" font-family="Arial, sans-serif" font-size="12" fill="#222">0.24 Gbases/s</text>
+<rect x="310" y="148" width="522" height="18" fill="#1f766f"/>
+<text x="840" y="161" font-family="Arial, sans-serif" font-size="12" fill="#222">0.46 Gbases/s</text>
 <text x="24" y="191" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.gz / file-direct-pack-seq-qual</text>
-<rect x="310" y="178" width="346" height="18" fill="#1f766f"/>
-<text x="664" y="191" font-family="Arial, sans-serif" font-size="12" fill="#222">0.16 Gbases/s</text>
+<rect x="310" y="178" width="469" height="18" fill="#1f766f"/>
+<text x="787" y="191" font-family="Arial, sans-serif" font-size="12" fill="#222">0.41 Gbases/s</text>
 <text x="24" y="221" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.gz / file-reader-pack-seq-qual</text>
-<rect x="310" y="208" width="522" height="18" fill="#1f766f"/>
-<text x="840" y="221" font-family="Arial, sans-serif" font-size="12" fill="#222">0.24 Gbases/s</text>
+<rect x="310" y="208" width="531" height="18" fill="#1f766f"/>
+<text x="849" y="221" font-family="Arial, sans-serif" font-size="12" fill="#222">0.46 Gbases/s</text>
 <text x="24" y="251" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.bgz / file-pack-seq-qual</text>
-<rect x="310" y="238" width="647" height="18" fill="#1f766f"/>
-<text x="965" y="251" font-family="Arial, sans-serif" font-size="12" fill="#222">0.30 Gbases/s</text>
+<rect x="310" y="238" width="425" height="18" fill="#1f766f"/>
+<text x="743" y="251" font-family="Arial, sans-serif" font-size="12" fill="#222">0.37 Gbases/s</text>
 <text x="24" y="281" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.bgz / file-direct-pack-seq-qual</text>
-<rect x="310" y="268" width="406" height="18" fill="#1f766f"/>
-<text x="724" y="281" font-family="Arial, sans-serif" font-size="12" fill="#222">0.19 Gbases/s</text>
+<rect x="310" y="268" width="520" height="18" fill="#1f766f"/>
+<text x="838" y="281" font-family="Arial, sans-serif" font-size="12" fill="#222">0.45 Gbases/s</text>
 <text x="24" y="311" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.bgz / file-reader-pack-seq-qual</text>
-<rect x="310" y="298" width="650" height="18" fill="#1f766f"/>
-<text x="968" y="311" font-family="Arial, sans-serif" font-size="12" fill="#222">0.30 Gbases/s</text>
+<rect x="310" y="298" width="606" height="18" fill="#1f766f"/>
+<text x="924" y="311" font-family="Arial, sans-serif" font-size="12" fill="#222">0.53 Gbases/s</text>
 <text x="24" y="341" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.bgz / file-bgzf-adaptive-pack-seq-qual</text>
-<rect x="310" y="328" width="637" height="18" fill="#1f766f"/>
-<text x="955" y="341" font-family="Arial, sans-serif" font-size="12" fill="#222">0.30 Gbases/s</text>
+<rect x="310" y="328" width="560" height="18" fill="#1f766f"/>
+<text x="878" y="341" font-family="Arial, sans-serif" font-size="12" fill="#222">0.49 Gbases/s</text>
 <text x="24" y="371" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.bgz / file-bgzf-libdeflate-serial-pack-seq-qual</text>
-<rect x="310" y="358" width="540" height="18" fill="#1f766f"/>
-<text x="858" y="371" font-family="Arial, sans-serif" font-size="12" fill="#222">0.25 Gbases/s</text>
+<rect x="310" y="358" width="513" height="18" fill="#1f766f"/>
+<text x="831" y="371" font-family="Arial, sans-serif" font-size="12" fill="#222">0.45 Gbases/s</text>
 <text x="24" y="401" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.bgz / file-bgzf-libdeflate-adaptive-pack-seq-qual</text>
-<rect x="310" y="388" width="524" height="18" fill="#1f766f"/>
-<text x="842" y="401" font-family="Arial, sans-serif" font-size="12" fill="#222">0.24 Gbases/s</text>
+<rect x="310" y="388" width="468" height="18" fill="#1f766f"/>
+<text x="786" y="401" font-family="Arial, sans-serif" font-size="12" fill="#222">0.41 Gbases/s</text>
 <text x="24" y="431" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq / file-pack-seq-qual</text>
-<rect x="310" y="418" width="612" height="18" fill="#1f766f"/>
-<text x="930" y="431" font-family="Arial, sans-serif" font-size="12" fill="#222">0.29 Gbases/s</text>
+<rect x="310" y="418" width="590" height="18" fill="#1f766f"/>
+<text x="908" y="431" font-family="Arial, sans-serif" font-size="12" fill="#222">0.52 Gbases/s</text>
 <text x="24" y="461" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq / file-direct-pack-seq-qual</text>
-<rect x="310" y="448" width="406" height="18" fill="#1f766f"/>
-<text x="724" y="461" font-family="Arial, sans-serif" font-size="12" fill="#222">0.19 Gbases/s</text>
+<rect x="310" y="448" width="536" height="18" fill="#1f766f"/>
+<text x="854" y="461" font-family="Arial, sans-serif" font-size="12" fill="#222">0.47 Gbases/s</text>
 <text x="24" y="491" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq / file-reader-pack-seq-qual</text>
-<rect x="310" y="478" width="628" height="18" fill="#1f766f"/>
-<text x="946" y="491" font-family="Arial, sans-serif" font-size="12" fill="#222">0.29 Gbases/s</text>
+<rect x="310" y="478" width="516" height="18" fill="#1f766f"/>
+<text x="834" y="491" font-family="Arial, sans-serif" font-size="12" fill="#222">0.45 Gbases/s</text>
 <text x="24" y="521" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.gz / file-pack-seq-qual</text>
-<rect x="310" y="508" width="470" height="18" fill="#1f766f"/>
-<text x="788" y="521" font-family="Arial, sans-serif" font-size="12" fill="#222">0.22 Gbases/s</text>
+<rect x="310" y="508" width="504" height="18" fill="#1f766f"/>
+<text x="822" y="521" font-family="Arial, sans-serif" font-size="12" fill="#222">0.44 Gbases/s</text>
 <text x="24" y="551" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.gz / file-direct-pack-seq-qual</text>
-<rect x="310" y="538" width="353" height="18" fill="#1f766f"/>
-<text x="671" y="551" font-family="Arial, sans-serif" font-size="12" fill="#222">0.16 Gbases/s</text>
+<rect x="310" y="538" width="466" height="18" fill="#1f766f"/>
+<text x="784" y="551" font-family="Arial, sans-serif" font-size="12" fill="#222">0.41 Gbases/s</text>
 <text x="24" y="581" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.gz / file-reader-pack-seq-qual</text>
-<rect x="310" y="568" width="489" height="18" fill="#1f766f"/>
-<text x="807" y="581" font-family="Arial, sans-serif" font-size="12" fill="#222">0.23 Gbases/s</text>
+<rect x="310" y="568" width="501" height="18" fill="#1f766f"/>
+<text x="819" y="581" font-family="Arial, sans-serif" font-size="12" fill="#222">0.44 Gbases/s</text>
 <text x="24" y="611" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.bgz / file-pack-seq-qual</text>
-<rect x="310" y="598" width="603" height="18" fill="#1f766f"/>
-<text x="921" y="611" font-family="Arial, sans-serif" font-size="12" fill="#222">0.28 Gbases/s</text>
+<rect x="310" y="598" width="466" height="18" fill="#1f766f"/>
+<text x="784" y="611" font-family="Arial, sans-serif" font-size="12" fill="#222">0.41 Gbases/s</text>
 <text x="24" y="641" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.bgz / file-direct-pack-seq-qual</text>
-<rect x="310" y="628" width="410" height="18" fill="#1f766f"/>
-<text x="728" y="641" font-family="Arial, sans-serif" font-size="12" fill="#222">0.19 Gbases/s</text>
+<rect x="310" y="628" width="485" height="18" fill="#1f766f"/>
+<text x="803" y="641" font-family="Arial, sans-serif" font-size="12" fill="#222">0.42 Gbases/s</text>
 <text x="24" y="671" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.bgz / file-reader-pack-seq-qual</text>
-<rect x="310" y="658" width="630" height="18" fill="#1f766f"/>
-<text x="948" y="671" font-family="Arial, sans-serif" font-size="12" fill="#222">0.29 Gbases/s</text>
+<rect x="310" y="658" width="549" height="18" fill="#1f766f"/>
+<text x="867" y="671" font-family="Arial, sans-serif" font-size="12" fill="#222">0.48 Gbases/s</text>
 <text x="24" y="701" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.bgz / file-bgzf-adaptive-pack-seq-qual</text>
-<rect x="310" y="688" width="614" height="18" fill="#1f766f"/>
-<text x="932" y="701" font-family="Arial, sans-serif" font-size="12" fill="#222">0.29 Gbases/s</text>
+<rect x="310" y="688" width="550" height="18" fill="#1f766f"/>
+<text x="868" y="701" font-family="Arial, sans-serif" font-size="12" fill="#222">0.48 Gbases/s</text>
 <text x="24" y="731" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.bgz / file-bgzf-libdeflate-serial-pack-seq-qual</text>
-<rect x="310" y="718" width="505" height="18" fill="#1f766f"/>
-<text x="823" y="731" font-family="Arial, sans-serif" font-size="12" fill="#222">0.24 Gbases/s</text>
+<rect x="310" y="718" width="532" height="18" fill="#1f766f"/>
+<text x="850" y="731" font-family="Arial, sans-serif" font-size="12" fill="#222">0.47 Gbases/s</text>
 <text x="24" y="761" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.bgz / file-bgzf-libdeflate-adaptive-pack-seq-qual</text>
-<rect x="310" y="748" width="600" height="18" fill="#1f766f"/>
-<text x="918" y="761" font-family="Arial, sans-serif" font-size="12" fill="#222">0.28 Gbases/s</text>
+<rect x="310" y="748" width="576" height="18" fill="#1f766f"/>
+<text x="894" y="761" font-family="Arial, sans-serif" font-size="12" fill="#222">0.50 Gbases/s</text>
 <text x="24" y="791" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq / file-pack-seq-qual</text>
-<rect x="310" y="778" width="623" height="18" fill="#1f766f"/>
-<text x="941" y="791" font-family="Arial, sans-serif" font-size="12" fill="#222">0.29 Gbases/s</text>
+<rect x="310" y="778" width="406" height="18" fill="#1f766f"/>
+<text x="724" y="791" font-family="Arial, sans-serif" font-size="12" fill="#222">0.36 Gbases/s</text>
 <text x="24" y="821" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq / file-direct-pack-seq-qual</text>
-<rect x="310" y="808" width="398" height="18" fill="#1f766f"/>
-<text x="716" y="821" font-family="Arial, sans-serif" font-size="12" fill="#222">0.19 Gbases/s</text>
+<rect x="310" y="808" width="498" height="18" fill="#1f766f"/>
+<text x="816" y="821" font-family="Arial, sans-serif" font-size="12" fill="#222">0.44 Gbases/s</text>
 <text x="24" y="851" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq / file-reader-pack-seq-qual</text>
-<rect x="310" y="838" width="625" height="18" fill="#1f766f"/>
-<text x="943" y="851" font-family="Arial, sans-serif" font-size="12" fill="#222">0.29 Gbases/s</text>
+<rect x="310" y="838" width="610" height="18" fill="#1f766f"/>
+<text x="928" y="851" font-family="Arial, sans-serif" font-size="12" fill="#222">0.53 Gbases/s</text>
 <text x="24" y="881" font-family="Arial, sans-serif" font-size="12" fill="#222">r2.fastq / file-pack-seq-qual</text>
-<rect x="310" y="868" width="612" height="18" fill="#1f766f"/>
-<text x="930" y="881" font-family="Arial, sans-serif" font-size="12" fill="#222">0.29 Gbases/s</text>
+<rect x="310" y="868" width="610" height="18" fill="#1f766f"/>
+<text x="928" y="881" font-family="Arial, sans-serif" font-size="12" fill="#222">0.53 Gbases/s</text>
 <text x="24" y="911" font-family="Arial, sans-serif" font-size="12" fill="#222">r2.fastq / file-direct-pack-seq-qual</text>
-<rect x="310" y="898" width="404" height="18" fill="#1f766f"/>
-<text x="722" y="911" font-family="Arial, sans-serif" font-size="12" fill="#222">0.19 Gbases/s</text>
+<rect x="310" y="898" width="534" height="18" fill="#1f766f"/>
+<text x="852" y="911" font-family="Arial, sans-serif" font-size="12" fill="#222">0.47 Gbases/s</text>
 <text x="24" y="941" font-family="Arial, sans-serif" font-size="12" fill="#222">r2.fastq / file-reader-pack-seq-qual</text>
-<rect x="310" y="928" width="625" height="18" fill="#1f766f"/>
-<text x="943" y="941" font-family="Arial, sans-serif" font-size="12" fill="#222">0.29 Gbases/s</text>
+<rect x="310" y="928" width="633" height="18" fill="#1f766f"/>
+<text x="951" y="941" font-family="Arial, sans-serif" font-size="12" fill="#222">0.55 Gbases/s</text>
 <text x="24" y="971" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq+r2.fastq / file-paired-pack-seq-qual</text>
-<rect x="310" y="958" width="600" height="18" fill="#1f766f"/>
-<text x="918" y="971" font-family="Arial, sans-serif" font-size="12" fill="#222">0.28 Gbases/s</text>
+<rect x="310" y="958" width="632" height="18" fill="#1f766f"/>
+<text x="950" y="971" font-family="Arial, sans-serif" font-size="12" fill="#222">0.55 Gbases/s</text>
 <text x="24" y="1001" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq+r2.fastq / file-paired-trusted-pack-seq-qual</text>
-<rect x="310" y="988" width="636" height="18" fill="#1f766f"/>
-<text x="954" y="1001" font-family="Arial, sans-serif" font-size="12" fill="#222">0.30 Gbases/s</text>
+<rect x="310" y="988" width="650" height="18" fill="#1f766f"/>
+<text x="968" y="1001" font-family="Arial, sans-serif" font-size="12" fill="#222">0.57 Gbases/s</text>
 <text x="24" y="1031" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq.gz+r2.fastq.gz / file-paired-pack-seq-qual</text>
-<rect x="310" y="1018" width="479" height="18" fill="#1f766f"/>
-<text x="797" y="1031" font-family="Arial, sans-serif" font-size="12" fill="#222">0.22 Gbases/s</text>
+<rect x="310" y="1018" width="534" height="18" fill="#1f766f"/>
+<text x="852" y="1031" font-family="Arial, sans-serif" font-size="12" fill="#222">0.47 Gbases/s</text>
 <text x="24" y="1061" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq.gz+r2.fastq.gz / file-paired-trusted-pack-seq-qual</text>
-<rect x="310" y="1048" width="506" height="18" fill="#1f766f"/>
-<text x="824" y="1061" font-family="Arial, sans-serif" font-size="12" fill="#222">0.24 Gbases/s</text>
+<rect x="310" y="1048" width="544" height="18" fill="#1f766f"/>
+<text x="862" y="1061" font-family="Arial, sans-serif" font-size="12" fill="#222">0.48 Gbases/s</text>
 <text x="24" y="1091" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq.bgz+r2.fastq.bgz / file-paired-pack-seq-qual</text>
-<rect x="310" y="1078" width="584" height="18" fill="#1f766f"/>
-<text x="902" y="1091" font-family="Arial, sans-serif" font-size="12" fill="#222">0.27 Gbases/s</text>
+<rect x="310" y="1078" width="427" height="18" fill="#1f766f"/>
+<text x="745" y="1091" font-family="Arial, sans-serif" font-size="12" fill="#222">0.37 Gbases/s</text>
 <text x="24" y="1121" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq.bgz+r2.fastq.bgz / file-paired-trusted-pack-seq-qual</text>
-<rect x="310" y="1108" width="605" height="18" fill="#1f766f"/>
-<text x="923" y="1121" font-family="Arial, sans-serif" font-size="12" fill="#222">0.28 Gbases/s</text>
+<rect x="310" y="1108" width="637" height="18" fill="#1f766f"/>
+<text x="955" y="1121" font-family="Arial, sans-serif" font-size="12" fill="#222">0.56 Gbases/s</text>
 <text x="24" y="1151" font-family="Arial, sans-serif" font-size="12" fill="#222">illumina_pe_r1.1m.fq.gz+illumina_pe_r2.1m.fq.gz / file-paired-pack-seq-qual</text>
-<rect x="310" y="1138" width="75" height="18" fill="#1f766f"/>
-<text x="393" y="1151" font-family="Arial, sans-serif" font-size="12" fill="#222">0.04 Gbases/s</text>
+<rect x="310" y="1138" width="93" height="18" fill="#1f766f"/>
+<text x="411" y="1151" font-family="Arial, sans-serif" font-size="12" fill="#222">0.08 Gbases/s</text>
 <text x="24" y="1181" font-family="Arial, sans-serif" font-size="12" fill="#222">illumina_pe_r1.1m.fq.gz+illumina_pe_r2.1m.fq.gz / file-paired-trusted-pack-seq-qual</text>
-<rect x="310" y="1168" width="76" height="18" fill="#1f766f"/>
-<text x="394" y="1181" font-family="Arial, sans-serif" font-size="12" fill="#222">0.04 Gbases/s</text>
+<rect x="310" y="1168" width="97" height="18" fill="#1f766f"/>
+<text x="415" y="1181" font-family="Arial, sans-serif" font-size="12" fill="#222">0.09 Gbases/s</text>
 <text x="24" y="1211" font-family="Arial, sans-serif" font-size="12" fill="#222">illumina_pe_r1.1m.fq.bgz+illumina_pe_r2.1m.fq.bgz / file-paired-pack-seq-qual</text>
-<rect x="310" y="1198" width="123" height="18" fill="#1f766f"/>
-<text x="441" y="1211" font-family="Arial, sans-serif" font-size="12" fill="#222">0.06 Gbases/s</text>
+<rect x="310" y="1198" width="147" height="18" fill="#1f766f"/>
+<text x="465" y="1211" font-family="Arial, sans-serif" font-size="12" fill="#222">0.13 Gbases/s</text>
 <text x="24" y="1241" font-family="Arial, sans-serif" font-size="12" fill="#222">illumina_pe_r1.1m.fq.bgz+illumina_pe_r2.1m.fq.bgz / file-paired-trusted-pack-seq-qual</text>
-<rect x="310" y="1228" width="125" height="18" fill="#1f766f"/>
-<text x="443" y="1241" font-family="Arial, sans-serif" font-size="12" fill="#222">0.06 Gbases/s</text>
+<rect x="310" y="1228" width="153" height="18" fill="#1f766f"/>
+<text x="471" y="1241" font-family="Arial, sans-serif" font-size="12" fill="#222">0.13 Gbases/s</text>
 </svg>

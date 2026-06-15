@@ -348,7 +348,7 @@ struct CompressedBlock {
 
 impl CompressedBlock {
     fn is_eof(&self) -> bool {
-        self.bytes == BGZF_EOF_BLOCK
+        is_eof_block(&self.bytes)
     }
 }
 
@@ -390,6 +390,7 @@ impl BgzfDecodedBlock {
 pub struct BgzfDecodedBlockReader<R> {
     inner: R,
     backend: BgzfInflateBackend,
+    compressed: Vec<u8>,
     compressed_offset: u64,
     uncompressed_offset: u64,
     eof: bool,
@@ -406,6 +407,7 @@ impl<R: Read> BgzfDecodedBlockReader<R> {
         Self {
             inner,
             backend,
+            compressed: Vec::new(),
             compressed_offset: 0,
             uncompressed_offset: 0,
             eof: false,
@@ -417,19 +419,19 @@ impl<R: Read> BgzfDecodedBlockReader<R> {
         if self.eof {
             return Ok(None);
         }
-        let Some(block) = read_block(&mut self.inner)? else {
+        if !read_block_bytes_into(&mut self.inner, &mut self.compressed)? {
             self.eof = true;
             return Ok(None);
-        };
-        let compressed_size = u32::try_from(block.bytes.len())
+        }
+        let compressed_size = u32::try_from(self.compressed.len())
             .map_err(|_| FastqError::Bgzf("BGZF block size exceeds u32 range".into()))?;
-        if block.is_eof() {
+        if is_eof_block(&self.compressed) {
             self.compressed_offset += u64::from(compressed_size);
             self.eof = true;
             return Ok(None);
         }
 
-        let bytes = decode_block_with_backend(&block, self.backend)?;
+        let bytes = decode_block_bytes_with_backend(&self.compressed, self.backend)?;
         let decoded = BgzfDecodedBlock {
             compressed_offset: self.compressed_offset,
             uncompressed_offset: self.uncompressed_offset,
@@ -459,6 +461,7 @@ pub fn is_bgzf_header(prefix: &[u8]) -> bool {
 pub struct BgzfReader<R> {
     inner: R,
     backend: BgzfInflateBackend,
+    compressed: Vec<u8>,
     decoded: Vec<u8>,
     pos: usize,
     eof: bool,
@@ -468,6 +471,7 @@ pub struct BgzfReader<R> {
 pub struct BgzfSeekReader<R> {
     inner: R,
     backend: BgzfInflateBackend,
+    compressed: Vec<u8>,
     decoded: Vec<u8>,
     pos: usize,
     eof: bool,
@@ -516,6 +520,7 @@ impl<R: Read> BgzfReader<R> {
         Self {
             inner,
             backend,
+            compressed: Vec::new(),
             decoded: Vec::new(),
             pos: 0,
             eof: false,
@@ -526,15 +531,15 @@ impl<R: Read> BgzfReader<R> {
         self.decoded.clear();
         self.pos = 0;
         loop {
-            let Some(block) = read_block(&mut self.inner)? else {
-                self.eof = true;
-                return Ok(());
-            };
-            if block.is_eof() {
+            if !read_block_bytes_into(&mut self.inner, &mut self.compressed)? {
                 self.eof = true;
                 return Ok(());
             }
-            decode_block_into_with_backend(&block, self.backend, &mut self.decoded)
+            if is_eof_block(&self.compressed) {
+                self.eof = true;
+                return Ok(());
+            }
+            decode_block_bytes_into_with_backend(&self.compressed, self.backend, &mut self.decoded)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             if !self.decoded.is_empty() {
                 return Ok(());
@@ -575,6 +580,7 @@ impl<R: Read + Seek> BgzfSeekReader<R> {
         Self {
             inner,
             backend,
+            compressed: Vec::new(),
             decoded: Vec::new(),
             pos: 0,
             eof: false,
@@ -589,14 +595,14 @@ impl<R: Read + Seek> BgzfSeekReader<R> {
         self.pos = 0;
         self.eof = false;
 
-        let Some(block) = read_block(&mut self.inner)? else {
+        if !read_block_bytes_into(&mut self.inner, &mut self.compressed)? {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "BGZF virtual offset points past end of stream",
             ));
-        };
+        }
 
-        if block.is_eof() {
+        if is_eof_block(&self.compressed) {
             if offset.in_block_offset() == 0 {
                 self.eof = true;
                 return Ok(());
@@ -607,7 +613,7 @@ impl<R: Read + Seek> BgzfSeekReader<R> {
             ));
         }
 
-        decode_block_into_with_backend(&block, self.backend, &mut self.decoded)
+        decode_block_bytes_into_with_backend(&self.compressed, self.backend, &mut self.decoded)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         let pos = usize::from(offset.in_block_offset());
         if pos > self.decoded.len() {
@@ -626,15 +632,15 @@ impl<R: Read + Seek> BgzfSeekReader<R> {
         self.decoded.clear();
         self.pos = 0;
         loop {
-            let Some(block) = read_block(&mut self.inner)? else {
-                self.eof = true;
-                return Ok(());
-            };
-            if block.is_eof() {
+            if !read_block_bytes_into(&mut self.inner, &mut self.compressed)? {
                 self.eof = true;
                 return Ok(());
             }
-            decode_block_into_with_backend(&block, self.backend, &mut self.decoded)
+            if is_eof_block(&self.compressed) {
+                self.eof = true;
+                return Ok(());
+            }
+            decode_block_bytes_into_with_backend(&self.compressed, self.backend, &mut self.decoded)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             if !self.decoded.is_empty() {
                 return Ok(());
@@ -1007,17 +1013,23 @@ fn build_bgzf_index_impl<R: Read>(reader: &mut R, require_eof: bool) -> Result<B
     let mut compressed_offset = 0_u64;
     let mut uncompressed_offset = 0_u64;
     let mut saw_eof = false;
+    let mut compressed = Vec::new();
+    let mut decoded = Vec::new();
 
-    while let Some(block) = read_block(reader)? {
-        let compressed_size = u32::try_from(block.bytes.len())
+    while read_block_bytes_into(reader, &mut compressed)? {
+        let compressed_size = u32::try_from(compressed.len())
             .map_err(|_| FastqError::Bgzf("BGZF block size exceeds u32 range".into()))?;
-        if block.is_eof() {
+        if is_eof_block(&compressed) {
             compressed_offset += u64::from(compressed_size);
             saw_eof = true;
             break;
         }
 
-        let decoded = decode_block(&block)?;
+        decode_block_bytes_into_with_backend(
+            &compressed,
+            BgzfInflateBackend::default(),
+            &mut decoded,
+        )?;
         let uncompressed_size = u32::try_from(decoded.len()).map_err(|_| {
             FastqError::Bgzf("BGZF uncompressed block size exceeds u32 range".into())
         })?;
@@ -1221,9 +1233,18 @@ where
 }
 
 fn read_block<R: Read>(reader: &mut R) -> std::io::Result<Option<CompressedBlock>> {
+    let mut bytes = Vec::new();
+    if !read_block_bytes_into(reader, &mut bytes)? {
+        return Ok(None);
+    }
+    Ok(Some(CompressedBlock { bytes }))
+}
+
+fn read_block_bytes_into<R: Read>(reader: &mut R, bytes: &mut Vec<u8>) -> std::io::Result<bool> {
     let mut header = [0_u8; BGZF_HEADER_LEN];
+    bytes.clear();
     match reader.read(&mut header[..1]) {
-        Ok(0) => return Ok(None),
+        Ok(0) => return Ok(false),
         Ok(_) => {}
         Err(e) => return Err(e),
     }
@@ -1241,15 +1262,14 @@ fn read_block<R: Read>(reader: &mut R) -> std::io::Result<Option<CompressedBlock
             "invalid BGZF block size",
         ));
     }
-    let mut bytes = Vec::with_capacity(bsize);
     bytes.extend_from_slice(&header);
     bytes.resize(bsize, 0);
     reader.read_exact(&mut bytes[BGZF_HEADER_LEN..])?;
-    Ok(Some(CompressedBlock { bytes }))
+    Ok(true)
 }
 
-fn decode_block(block: &CompressedBlock) -> Result<Vec<u8>> {
-    decode_block_with_backend(block, BgzfInflateBackend::default())
+fn is_eof_block(bytes: &[u8]) -> bool {
+    bytes == BGZF_EOF_BLOCK
 }
 
 fn decode_block_with_backend(
@@ -1266,7 +1286,20 @@ fn decode_block_into_with_backend(
     backend: BgzfInflateBackend,
     out: &mut Vec<u8>,
 ) -> Result<()> {
-    let bytes = &block.bytes;
+    decode_block_bytes_into_with_backend(&block.bytes, backend, out)
+}
+
+fn decode_block_bytes_with_backend(bytes: &[u8], backend: BgzfInflateBackend) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    decode_block_bytes_into_with_backend(bytes, backend, &mut out)?;
+    Ok(out)
+}
+
+fn decode_block_bytes_into_with_backend(
+    bytes: &[u8],
+    backend: BgzfInflateBackend,
+    out: &mut Vec<u8>,
+) -> Result<()> {
     if bytes.len() < BGZF_HEADER_LEN + GZIP_TRAILER_LEN {
         return Err(FastqError::Bgzf("short block".into()));
     }
@@ -1315,7 +1348,15 @@ fn inflate_block_flate2_into(deflate: &[u8], expected_len: usize, out: &mut Vec<
         out.reserve(expected_len.saturating_sub(out.capacity()));
     }
     let mut decoder = DeflateDecoder::new(deflate);
-    decoder.read_to_end(out)?;
+    let limit = u64::try_from(expected_len)
+        .map_err(|_| FastqError::Bgzf("BGZF expected block size exceeds u64 range".into()))?
+        + 1;
+    decoder.by_ref().take(limit).read_to_end(out)?;
+    if out.len() > expected_len {
+        return Err(FastqError::Bgzf(
+            "BGZF uncompressed block exceeds advertised size".into(),
+        ));
+    }
     Ok(())
 }
 

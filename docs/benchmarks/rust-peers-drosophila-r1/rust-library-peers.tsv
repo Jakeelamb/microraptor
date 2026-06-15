@@ -1,7 +1,7 @@
-tool	records	bases	best_ms	records_s	bases_s	checksum	input_bytes	iters	source
-microraptor-stream	1000000	36000000	72.075	13874448	499480159	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-microraptor-slice-visitor	1000000	36000000	51.235	19518053	702649942	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-microraptor-stream-visitor	1000000	36000000	56.446	17716149	637781371	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-seq_io	1000000	36000000	58.753	17020522	612738809	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-noodles-fastq	1000000	36000000	104.188	9598004	345528157	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
-bio	1000000	36000000	281.455	3552966	127906796	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq
+tool	records	bases	best_ms	records_s	bases_s	checksum	input_bytes	iters	source	compression
+microraptor-stream	1000000	36000000	33.027	30278254	1090017159	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq	raw
+microraptor-slice-visitor	1000000	36000000	22.642	44166632	1589998766	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq	raw
+microraptor-stream-visitor	1000000	36000000	25.331	39477864	1421203110	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq	raw
+seq_io	1000000	36000000	24.541	40747534	1466911249	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq	raw
+noodles-fastq	1000000	36000000	58.050	17226468	620152880	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq	raw
+bio	1000000	36000000	116.951	8550558	307820097	3183102030297224004	130328422	11	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq	raw

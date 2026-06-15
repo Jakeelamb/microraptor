@@ -1183,7 +1183,12 @@ fn validate_visit_record_bounds(
             0,
         ));
     }
-    if name.1 == name.0 + 1 {
+    let id = &bytes[name.0 + 1..name.1];
+    let id_end = id
+        .iter()
+        .position(u8::is_ascii_whitespace)
+        .unwrap_or(id.len());
+    if id_end == 0 {
         return Err(fastq_frame::format_at(
             "empty FASTQ id",
             base_offset,

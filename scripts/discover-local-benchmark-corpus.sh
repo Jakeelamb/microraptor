@@ -22,6 +22,14 @@ display_path() {
   fi
 }
 
+sha256_file() {
+  if [[ -n "$1" && -f "$1" ]]; then
+    sha256sum "$1" | awk '{ print $1 }'
+  else
+    printf '\n'
+  fi
+}
+
 prepared_field() {
   local prepared_id="$1"
   local field="$2"
@@ -92,7 +100,7 @@ write_exported_list() {
   printf 'export %s=%q\n' "${name}" "${value}"
 }
 
-printf 'label\tread_type\tlayout\trole\trecords\tbases\tpath_a\tpath_b\tsource_manifest\tnotes\n' > "${out_tsv}"
+printf 'label\tread_type\tlayout\trole\trecords\tbases\tpath_a\tsha256_a\tpath_b\tsha256_b\tsource_manifest\tnotes\n' > "${out_tsv}"
 
 if [[ ! -d "${bench_dir}" ]]; then
   printf 'missing benchmark workspace: %s\n' "${bench_dir}" >&2
@@ -110,12 +118,13 @@ if [[ -d "${dros_dir}" ]]; then
         ont_50k) read_type='Oxford Nanopore' ;;
         *) read_type='single-end FASTQ' ;;
       esac
-      printf '%s\t%s\tsingle-end\tread-type-coverage\t%s\t%s\t%s\t\t%s\t%s\n' \
+      printf '%s\t%s\tsingle-end\tread-type-coverage\t%s\t%s\t%s\t%s\t\t\t%s\t%s\n' \
         "drosophila_${id}" \
         "${read_type}" \
         "${records:-unknown}" \
         "${bases:-unknown}" \
         "$(display_path "${bench_dir}/${rel_path}")" \
+        "$(sha256_file "${bench_dir}/${rel_path}")" \
         "$(display_path "${prepared}")" \
         'real Drosophila long-read FASTQ; parser evidence only, not assembly quality evidence' >> "${out_tsv}"
     fi
@@ -161,56 +170,55 @@ if [[ -d "${dros_dir}" ]]; then
       notes='large paired Illumina rung; run deliberately because wall time and disk pressure are higher'
     fi
 
-    printf '%s\tIllumina paired-end\tpaired\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\tIllumina paired-end\tpaired\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "drosophila_illumina_${scale}_paired_raw" \
       "${role}" \
       "${records}" \
       "${bases}" \
       "$(display_path "${r1}")" \
+      "$(sha256_file "${r1}")" \
       "$(display_path "${r2}")" \
+      "$(sha256_file "${r2}")" \
       "$(display_path "${prepared}")" \
       "${notes}" >> "${out_tsv}"
   done
 fi
 
 if [[ -f "${local_manifest}" ]]; then
-  awk -F '\t' -v bench_dir="${bench_dir}" -v home="${HOME:-}" '
-    NR == 1 { next }
-    {
-      split($5, paths, ";")
-      if (length(paths[1]) == 0 || length(paths[2]) == 0) {
-        next
-      }
-      first = bench_dir "/" paths[1]
-      second = bench_dir "/" paths[2]
-      if (index(first, bench_dir "/datasets/drosophila_melanogaster/") == 1) {
-        next
-      }
-      if (system("[ -f \"" first "\" ]") == 0 && system("[ -f \"" second "\" ]") == 0) {
-        records = "unknown"
-        if ($4 ~ /100000 read pairs/) {
-          records = 200000
-        } else if ($4 ~ /10000 read pairs/) {
-          records = 20000
-        } else if ($4 ~ /1000 read pairs/) {
-          records = 2000
-        }
-        display_first = first
-        display_second = second
-        manifest = bench_dir "/manifests/local_datasets.tsv"
-        if (home != "") {
-          sub("^" home, "~", display_first)
-          sub("^" home, "~", display_second)
-          sub("^" home, "~", manifest)
-        }
-        role = "smoke-corpus"
-        if ($1 == "ecoli_mg1655_srr001666_100k_pairs" || $1 == "yeast_btt_err1308583_10k_pairs") {
-          role = "independent-release-corpus"
-        }
-        printf "%s\t%s\tpaired\t%s\t%s\tunknown\t%s\t%s\t%s\t%s\n", $1, $3, role, records, display_first, display_second, manifest, $7
-      }
-    }
-  ' "${local_manifest}" >> "${out_tsv}"
+  while IFS=$'\t' read -r dataset_id _organism read_type scale local_path _reference notes; do
+    [[ "${dataset_id}" != "dataset_id" ]] || continue
+    IFS=';' read -r first_rel second_rel <<< "${local_path}"
+    [[ -n "${first_rel}" && -n "${second_rel}" ]] || continue
+    first="${bench_dir}/${first_rel}"
+    second="${bench_dir}/${second_rel}"
+    [[ "${first}" != "${bench_dir}/datasets/drosophila_melanogaster/"* ]] || continue
+    [[ -f "${first}" && -f "${second}" ]] || continue
+
+    records="unknown"
+    case "${scale}" in
+      *"100000 read pairs"*) records=200000 ;;
+      *"10000 read pairs"*) records=20000 ;;
+      *"1000 read pairs"*) records=2000 ;;
+    esac
+    role="smoke-corpus"
+    case "${dataset_id}" in
+      ecoli_mg1655_srr001666_100k_pairs|yeast_btt_err1308583_10k_pairs)
+        role="independent-release-corpus"
+        ;;
+    esac
+    manifest="${bench_dir}/manifests/local_datasets.tsv"
+    printf '%s\t%s\tpaired\t%s\t%s\tunknown\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${dataset_id}" \
+      "${read_type}" \
+      "${role}" \
+      "${records}" \
+      "$(display_path "${first}")" \
+      "$(sha256_file "${first}")" \
+      "$(display_path "${second}")" \
+      "$(sha256_file "${second}")" \
+      "$(display_path "${manifest}")" \
+      "${notes}" >> "${out_tsv}"
+  done < "${local_manifest}"
 fi
 
 recommended_inputs=()

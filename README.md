@@ -193,9 +193,14 @@ Current local benchmark snapshots:
 - [docs/benchmarks/drosophila-read-types/summary.md](docs/benchmarks/drosophila-read-types/summary.md):
   real Drosophila Illumina PE, PacBio CLR, and ONT FASTQ rows from the local
   benchmark corpus with installed command-line comparator timings.
+- [docs/benchmarks/fasta-peers/summary.md](docs/benchmarks/fasta-peers/summary.md):
+  synthetic raw FASTA parser-library comparison against `seq_io` and `bio`,
+  including robust, strict two-line, stream, resident, and counter Microraptor
+  paths.
 - [docs/benchmarks/fasta-peer-size-sweep/summary.md](docs/benchmarks/fasta-peer-size-sweep/summary.md):
   synthetic two-line FASTA raw/gzip parser-framework size sweep with Rust
-  parser peers, an 8-thread cap, and a required microraptor-winner guard.
+  parser peers and an 8-thread cap. Rows are evidence, not a blanket winner
+  assertion; current gzip rows include `seq_io` wins at larger synthetic sizes.
 - [docs/benchmarks/fasta-gauntlet/summary.md](docs/benchmarks/fasta-gauntlet/summary.md):
   FASTA shape/transport gauntlet covering two-line DNA, wrapped DNA, many tiny
   records, long contigs, protein FASTA, raw/gzip/BGZF transport, memory smoke

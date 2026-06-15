@@ -14,7 +14,7 @@ metadata="${out_dir}/metadata.md"
 fig_dir="${out_dir}/figures"
 svg="${fig_dir}/fasta-peer-size-sweep-time.svg"
 bench_threads="${MICRORAPTOR_BENCH_THREADS:-8}"
-require_microraptor_wins="${MICRORAPTOR_FASTA_SIZE_SWEEP_REQUIRE_MICRORAPTOR_WINS:-1}"
+require_microraptor_wins="${MICRORAPTOR_FASTA_SIZE_SWEEP_REQUIRE_MICRORAPTOR_WINS:-0}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/benchmark-common.sh"

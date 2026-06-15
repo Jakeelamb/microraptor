@@ -19,6 +19,10 @@ display_path() {
   fi
 }
 
+sha256_file() {
+  sha256sum "$1" | awk '{ print $1 }'
+}
+
 if [[ ! -f "${r1}" || ! -f "${r2}" ]]; then
   printf 'missing Drosophila FASTQ inputs under %s\n' "${source_dir}" >&2
   exit 1
@@ -60,7 +64,7 @@ fi
 make_bgzip "${combined}" "${combined}.bgz"
 
 {
-  printf 'label\tpath\tbytes\tsource\n'
+  printf 'label\tpath\tbytes\tsha256\tsource\n'
   for path in \
     "${r1}" \
     "${r2}" \
@@ -72,10 +76,11 @@ make_bgzip "${combined}" "${combined}.bgz"
     "${combined}.bgz"
   do
     label="$(basename "${path}")"
-    printf '%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\n' \
       "${label}" \
       "$(display_path "${path}")" \
       "$(stat -c '%s' "${path}")" \
+      "$(sha256_file "${path}")" \
       "$(display_path "${source_dir}")"
   done
 } > "${manifest}"

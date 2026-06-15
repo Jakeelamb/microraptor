@@ -1,7 +1,7 @@
 # FASTA Rust Peer Size Sweep Metadata
 
-- generated_at_utc: 2026-06-14T18:21:03Z
-- git_commit: 758be30
+- generated_at_utc: 2026-06-14T23:58:44Z
+- git_commit: ca37784
 - git_dirty: true
 - rustc: rustc 1.92.0 (ded5c06cf 2025-12-08)
 - cargo: cargo 1.92.0 (344c4567c 2025-10-21)
@@ -15,4 +15,4 @@
 - consumer: light
 - compressions: raw gzip
 - thread_cap: 8
-- require_microraptor_wins: 1
+- require_microraptor_wins: 0

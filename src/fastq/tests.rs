@@ -129,6 +129,21 @@ fn rejects_bad_plus_line() {
 }
 
 #[test]
+fn rejects_empty_first_token_ids() {
+    let err = collect_records(b"@ comment only\nACGT\n+\nIIII\n", 1024).unwrap_err();
+    assert!(err.to_string().contains("empty FASTQ id"));
+    assert_eq!(error_position(&err), Some(FastqPosition::new(0, 0, 0)));
+
+    let err = visit_fastq_bytes(
+        b"@ comment only\nACGT\n+\nIIII\n",
+        FastqConfig::default(),
+        |_| Ok(()),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("empty FASTQ id"));
+}
+
+#[test]
 fn rejects_quality_length_mismatch() {
     let err = collect_records(b"@r1\nACGT\n+\nIII\n", 1024).unwrap_err();
     assert!(

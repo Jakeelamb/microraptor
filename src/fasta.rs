@@ -194,7 +194,15 @@ impl FastaIndexEntry {
                 "FASTA index entry has zero line_bases for non-empty sequence".into(),
             ));
         }
-        Ok(self.offset + (pos / self.line_bases) * self.line_width + (pos % self.line_bases))
+        let line = pos / self.line_bases;
+        let in_line = pos % self.line_bases;
+        let line_offset = line.checked_mul(self.line_width).ok_or_else(|| {
+            FastqError::Format("FASTA index offset calculation overflowed".into())
+        })?;
+        self.offset
+            .checked_add(line_offset)
+            .and_then(|offset| offset.checked_add(in_line))
+            .ok_or_else(|| FastqError::Format("FASTA index offset calculation overflowed".into()))
     }
 
     /// Return physical FASTA byte spans covering a zero-based half-open
@@ -215,7 +223,10 @@ impl FastaIndexEntry {
             let in_line = pos % self.line_bases;
             let take = (range.end - pos).min(self.line_bases - in_line);
             let start = self.sequence_offset(pos)?;
-            spans.push(start..start + take);
+            let end = start.checked_add(take).ok_or_else(|| {
+                FastqError::Format("FASTA index span calculation overflowed".into())
+            })?;
+            spans.push(start..end);
             pos += take;
         }
         Ok(spans)
@@ -386,19 +397,71 @@ fn parse_fai_u64(value: &[u8], line: usize, field: &str) -> Result<u64> {
     })
 }
 
-#[cfg(feature = "bgzf")]
-fn copy_exact_into<R: Read>(
+fn indexed_physical_window(entry: &FastaIndexEntry, range: Range<u64>) -> Result<Range<u64>> {
+    entry.validate_range(range.clone())?;
+    let start = entry.sequence_offset(range.start)?;
+    let end = if range.start == range.end {
+        start
+    } else {
+        entry
+            .sequence_offset(range.end - 1)?
+            .checked_add(1)
+            .ok_or_else(|| FastqError::Format("FASTA index span calculation overflowed".into()))?
+    };
+    if end < start {
+        return Err(FastqError::Format(
+            "FASTA index physical range is invalid".into(),
+        ));
+    }
+    Ok(start..end)
+}
+
+fn copy_indexed_sequence_window<R: Read>(
     reader: &mut R,
+    entry: &FastaIndexEntry,
+    mut physical_offset: u64,
     mut len: u64,
+    expected_bases: usize,
     out: &mut Vec<u8>,
-    scratch: &mut [u8],
+    scratch: &mut Vec<u8>,
 ) -> Result<()> {
+    if len == 0 {
+        return Ok(());
+    }
+    if entry.line_width == 0 {
+        return Err(FastqError::Format(
+            "FASTA index entry has zero line_width for non-empty range".into(),
+        ));
+    }
+    if scratch.is_empty() {
+        scratch.resize(8192, 0);
+    }
     while len > 0 {
         let take = usize::try_from(len.min(scratch.len() as u64))
             .map_err(|_| FastqError::Format("FASTA fetch span exceeds usize range".into()))?;
         reader.read_exact(&mut scratch[..take])?;
-        out.extend_from_slice(&scratch[..take]);
+        for &byte in &scratch[..take] {
+            let rel = physical_offset.checked_sub(entry.offset).ok_or_else(|| {
+                FastqError::Format("FASTA index physical offset precedes sequence offset".into())
+            })?;
+            if rel % entry.line_width < entry.line_bases {
+                out.push(byte);
+                if out.len() > expected_bases {
+                    return Err(FastqError::Format(
+                        "FASTA fetch produced more bases than expected".into(),
+                    ));
+                }
+            }
+            physical_offset = physical_offset.checked_add(1).ok_or_else(|| {
+                FastqError::Format("FASTA fetch physical offset overflowed".into())
+            })?;
+        }
         len -= take as u64;
+    }
+    if out.len() != expected_bases {
+        return Err(FastqError::Format(
+            "FASTA fetch produced fewer bases than expected".into(),
+        ));
     }
     Ok(())
 }
@@ -407,12 +470,17 @@ fn copy_exact_into<R: Read>(
 pub struct IndexedFastaReader<R> {
     inner: R,
     index: FastaIndex,
+    scratch: Vec<u8>,
 }
 
 impl<R: Read + Seek> IndexedFastaReader<R> {
     /// Create a seekable FASTA reader from an input stream and index.
     pub fn new(inner: R, index: FastaIndex) -> Self {
-        Self { inner, index }
+        Self {
+            inner,
+            index,
+            scratch: Vec::new(),
+        }
     }
 
     /// Return the loaded FASTA index.
@@ -428,20 +496,22 @@ impl<R: Read + Seek> IndexedFastaReader<R> {
                 String::from_utf8_lossy(name)
             ))
         })?;
-        entry.validate_range(range.clone())?;
+        let window = indexed_physical_window(entry, range.clone())?;
         out.clear();
-        out.reserve(usize::try_from(range.end - range.start).map_err(|_| {
+        let expected_bases = usize::try_from(range.end - range.start).map_err(|_| {
             FastqError::Format("FASTA fetch range length exceeds usize range".into())
-        })?);
-        for span in entry.sequence_spans(range)? {
-            self.inner.seek(SeekFrom::Start(span.start))?;
-            let len = usize::try_from(span.end - span.start).map_err(|_| {
-                FastqError::Format("FASTA physical span length exceeds usize range".into())
-            })?;
-            let start = out.len();
-            out.resize(start + len, 0);
-            self.inner.read_exact(&mut out[start..])?;
-        }
+        })?;
+        out.reserve(expected_bases);
+        self.inner.seek(SeekFrom::Start(window.start))?;
+        copy_indexed_sequence_window(
+            &mut self.inner,
+            entry,
+            window.start,
+            window.end - window.start,
+            expected_bases,
+            out,
+            &mut self.scratch,
+        )?;
         Ok(())
     }
 
@@ -465,6 +535,7 @@ pub struct BgzfIndexedFastaReader<R> {
     inner: BgzfSeekReader<R>,
     fasta_index: FastaIndex,
     bgzf_index: BgzfIndex,
+    scratch: Vec<u8>,
 }
 
 #[cfg(feature = "bgzf")]
@@ -475,6 +546,7 @@ impl<R: Read + Seek> BgzfIndexedFastaReader<R> {
             inner: BgzfSeekReader::new(inner),
             fasta_index,
             bgzf_index,
+            scratch: Vec::new(),
         }
     }
 
@@ -496,20 +568,26 @@ impl<R: Read + Seek> BgzfIndexedFastaReader<R> {
                 String::from_utf8_lossy(name)
             ))
         })?;
-        entry.validate_range(range.clone())?;
+        let window = indexed_physical_window(entry, range.clone())?;
         out.clear();
-        out.reserve(usize::try_from(range.end - range.start).map_err(|_| {
+        let expected_bases = usize::try_from(range.end - range.start).map_err(|_| {
             FastqError::Format("FASTA fetch range length exceeds usize range".into())
-        })?);
-        let mut scratch = vec![0_u8; 8192];
-        for span in entry.sequence_spans(range)? {
-            let virtual_offset = self
-                .bgzf_index
-                .virtual_offset_for_uncompressed_offset(span.start)?
-                .ok_or_else(|| FastqError::Bgzf("BGZF span offset is not indexed".into()))?;
-            self.inner.seek_virtual_offset(virtual_offset)?;
-            copy_exact_into(&mut self.inner, span.end - span.start, out, &mut scratch)?;
-        }
+        })?;
+        out.reserve(expected_bases);
+        let virtual_offset = self
+            .bgzf_index
+            .virtual_offset_for_uncompressed_offset(window.start)?
+            .ok_or_else(|| FastqError::Bgzf("BGZF span offset is not indexed".into()))?;
+        self.inner.seek_virtual_offset(virtual_offset)?;
+        copy_indexed_sequence_window(
+            &mut self.inner,
+            entry,
+            window.start,
+            window.end - window.start,
+            expected_bases,
+            out,
+            &mut self.scratch,
+        )?;
         Ok(())
     }
 
@@ -1479,10 +1557,48 @@ where
 
 fn count_two_line_fasta_bufread<R: BufRead>(reader: &mut R) -> Result<FastaStats> {
     let mut stats = FastaStats::default();
-    visit_two_line_fasta_bufread(reader, |record| {
-        stats.observe_sequence(record.seq());
-        Ok(())
-    })?;
+    let mut state = TwoLineStreamState::Header;
+    let mut record_index = 0;
+    let mut carry = Vec::new();
+
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            break;
+        }
+
+        let mut consumed = 0;
+        while consumed < available.len() {
+            let Some(relative_newline) = memchr(b'\n', &available[consumed..]) else {
+                carry.extend_from_slice(&available[consumed..]);
+                consumed = available.len();
+                break;
+            };
+            let line_end = consumed + relative_newline;
+            let line = &available[consumed..line_end];
+            process_two_line_count_line(
+                line,
+                &mut carry,
+                &mut state,
+                &mut record_index,
+                &mut stats,
+            )?;
+            consumed = line_end + 1;
+        }
+        reader.consume(consumed);
+    }
+
+    if !carry.is_empty() {
+        process_two_line_count_line(b"", &mut carry, &mut state, &mut record_index, &mut stats)?;
+    }
+
+    if state == TwoLineStreamState::Seq {
+        return Err(format_at(
+            "two-line FASTA record is missing a sequence line",
+            0,
+            record_index,
+        ));
+    }
     Ok(stats)
 }
 
@@ -1556,6 +1672,57 @@ where
     Ok(())
 }
 
+fn process_two_line_count_line(
+    line: &[u8],
+    carry: &mut Vec<u8>,
+    state: &mut TwoLineStreamState,
+    record_index: &mut u64,
+    stats: &mut FastaStats,
+) -> Result<()> {
+    if carry.is_empty() {
+        process_complete_two_line_count_line(line, state, record_index, stats)
+    } else {
+        carry.extend_from_slice(line);
+        let owned_line = trim_line(carry);
+        process_complete_two_line_count_line(owned_line, state, record_index, stats)?;
+        carry.clear();
+        Ok(())
+    }
+}
+
+fn process_complete_two_line_count_line(
+    line: &[u8],
+    state: &mut TwoLineStreamState,
+    record_index: &mut u64,
+    stats: &mut FastaStats,
+) -> Result<()> {
+    let line = trim_line(line);
+    if *state == TwoLineStreamState::Header {
+        if !line.starts_with(b">") {
+            return Err(format_at(
+                "two-line FASTA record header must start with `>`",
+                0,
+                *record_index,
+            ));
+        }
+        validate_header(line, 0, *record_index)?;
+        *state = TwoLineStreamState::Seq;
+        return Ok(());
+    }
+
+    if line.is_empty() || line.starts_with(b">") {
+        return Err(format_at(
+            "two-line FASTA record is missing a sequence line",
+            0,
+            *record_index,
+        ));
+    }
+    stats.observe_sequence(line);
+    *record_index += 1;
+    *state = TwoLineStreamState::Header;
+    Ok(())
+}
+
 fn take_next_header<'a>(
     bytes: &'a [u8],
     cursor: &mut usize,
@@ -1606,7 +1773,7 @@ fn trim_line(line: &[u8]) -> &[u8] {
 }
 
 fn validate_header(header: &[u8], byte_offset: u64, record_index: u64) -> Result<()> {
-    if header.len() == 1 {
+    if header.len() == 1 || fasta_index_name(header).is_empty() {
         return Err(format_at("empty FASTA id", byte_offset, record_index));
     }
     Ok(())
@@ -1868,6 +2035,20 @@ mod tests {
     }
 
     #[test]
+    fn fasta_readers_reject_empty_first_token_ids() {
+        let input = b"> description only\nACGT\n";
+        let mut reader = FastaReader::new(&input[..]);
+        let err = reader.next_batch().unwrap_err();
+        assert!(err.to_string().contains("empty FASTA id"));
+
+        let err = visit_fasta_bytes(input, |_| Ok(())).unwrap_err();
+        assert!(err.to_string().contains("empty FASTA id"));
+
+        let err = build_fasta_index(&input[..]).unwrap_err();
+        assert!(err.to_string().contains("empty FASTA id"));
+    }
+
+    #[test]
     #[cfg(feature = "bgzf")]
     fn builds_bgzf_aware_fasta_index() {
         let input = b">chr1\nACGT\nAC\n>chr2\nTTTT\n";
@@ -2025,6 +2206,17 @@ mod tests {
     }
 
     #[test]
+    fn indexed_fetch_handles_line_boundary_and_missing_final_newline() {
+        let input = b">chr1\nACGT\nTGCA";
+        let index = build_fasta_index(&input[..]).unwrap();
+        let mut reader = IndexedFastaReader::new(std::io::Cursor::new(input), index);
+
+        assert_eq!(reader.fetch(b"chr1", 0..4).unwrap(), b"ACGT");
+        assert_eq!(reader.fetch(b"chr1", 0..8).unwrap(), b"ACGTTGCA");
+        assert_eq!(reader.fetch(b"chr1", 4..8).unwrap(), b"TGCA");
+    }
+
+    #[test]
     fn rejects_bad_fai_and_bad_fetch_ranges() {
         assert!(FastaIndex::from_fai_str("chr1\t1\t2\t3\n").is_err());
         assert!(FastaIndex::from_fai_str("chr1\t1\t2\t0\t1\n").is_err());
@@ -2036,6 +2228,17 @@ mod tests {
         assert!(reader.fetch(b"missing", 0..1).is_err());
         assert!(reader.fetch(b"chr1", Range { start: 3, end: 2 }).is_err());
         assert!(reader.fetch(b"chr1", 0..5).is_err());
+    }
+
+    #[test]
+    fn rejects_overflowing_fai_offset_math() {
+        let index =
+            FastaIndex::from_fai_str(&format!("chr1\t10\t{}\t3\t{}\n", u64::MAX - 1, u64::MAX))
+                .unwrap();
+        let entry = index.get(b"chr1").unwrap();
+
+        assert!(entry.sequence_offset(3).is_err());
+        assert!(entry.sequence_spans(0..4).is_err());
     }
 
     #[cfg(feature = "bgzf")]

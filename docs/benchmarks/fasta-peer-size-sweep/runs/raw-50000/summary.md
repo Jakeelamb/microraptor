@@ -8,15 +8,15 @@ The benchmark reads one in-memory raw FASTA byte buffer through each Rust parser
 
 | tool | records | bases | best ms | records/s | bases/s | checksum |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `microraptor-resident-visitor` | 50000 | 7500000 | 1.291 | 38724117 | 5808617665 | `6634244326581941964` |
-| `microraptor-two-line-resident-visitor` | 50000 | 7500000 | 1.031 | 48495664 | 7274349673 | `6634244326581941964` |
-| `microraptor-two-line-resident-counter` | 50000 | 7500000 | 0.751 | 66583304 | 9987495655 | `6634244326581941964` |
-| `microraptor-two-line-stream-visitor` | 50000 | 7500000 | 1.601 | 31234558 | 4685183762 | `6634244326581941964` |
-| `microraptor-two-line-stream-counter` | 50000 | 7500000 | 1.408 | 35520647 | 5328097116 | `6634244326581941964` |
-| `microraptor-stream` | 50000 | 7500000 | 3.755 | 13316132 | 1997419866 | `6634244326581941964` |
-| `microraptor-stream-visitor` | 50000 | 7500000 | 3.407 | 14674909 | 2201236449 | `6634244326581941964` |
-| `seq_io` | 50000 | 7500000 | 1.152 | 43389369 | 6508405388 | `6634244326581941964` |
-| `bio` | 50000 | 7500000 | 4.756 | 10513924 | 1577088727 | `6634244326581941964` |
+| `microraptor-resident-visitor` | 50000 | 7500000 | 0.856 | 58380933 | 8757139988 | `6634244326581941964` |
+| `microraptor-two-line-resident-visitor` | 50000 | 7500000 | 0.774 | 64637898 | 9695684773 | `6634244326581941964` |
+| `microraptor-two-line-resident-counter` | 50000 | 7500000 | 0.643 | 77735351 | 11660302732 | `6634244326581941964` |
+| `microraptor-two-line-stream-visitor` | 50000 | 7500000 | 0.990 | 50483939 | 7572590855 | `6634244326581941964` |
+| `microraptor-two-line-stream-counter` | 50000 | 7500000 | 0.844 | 59215606 | 8882340958 | `6634244326581941964` |
+| `microraptor-stream` | 50000 | 7500000 | 2.280 | 21931132 | 3289669910 | `6634244326581941964` |
+| `microraptor-stream-visitor` | 50000 | 7500000 | 2.304 | 21699608 | 3254941326 | `6634244326581941964` |
+| `seq_io` | 50000 | 7500000 | 0.743 | 67253656 | 10088048487 | `6634244326581941964` |
+| `bio` | 50000 | 7500000 | 3.003 | 16651519 | 2497727900 | `6634244326581941964` |
 
 Figure: [`figures/fasta-library-peer-bases-throughput.svg`](figures/fasta-library-peer-bases-throughput.svg)
 

@@ -1,0 +1,81 @@
+label	tool	parity_status	expected_records	expected_bases	expected_checksum	observed_records	observed_bases	observed_checksum	notes
+seqkit stats long-contigs/raw	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats long-contigs/raw	seqkit	match	100	10000000	8174938815350755632	100	10000000	8174938815350755632	seqkit seq -w 0 normalized FASTA stream
+seqtk comp long-contigs/raw	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp long-contigs/raw	seqtk	match	100	10000000	8174938815350755632	100	10000000	8174938815350755632	seqtk seq -A normalized FASTA stream
+samtools faidx long-contigs/raw	samtools	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats long-contigs/gzip	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats long-contigs/gzip	seqkit	match	100	10000000	8174938815350755632	100	10000000	8174938815350755632	seqkit seq -w 0 normalized FASTA stream
+seqtk comp long-contigs/gzip	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp long-contigs/gzip	seqtk	match	100	10000000	8174938815350755632	100	10000000	8174938815350755632	seqtk seq -A normalized FASTA stream
+bgzip decompress long-contigs/gzip	bgzip	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats long-contigs/bgzf	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats long-contigs/bgzf	seqkit	match	100	10000000	8174938815350755632	100	10000000	8174938815350755632	seqkit seq -w 0 normalized FASTA stream
+seqtk comp long-contigs/bgzf	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp long-contigs/bgzf	seqtk	match	100	10000000	8174938815350755632	100	10000000	8174938815350755632	seqtk seq -A normalized FASTA stream
+bgzip decompress long-contigs/bgzf	bgzip	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+samtools faidx long-contigs/bgzf	samtools	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats many-tiny/raw	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats many-tiny/raw	seqkit	match	100000	3100000	5556694858700789857	100000	3100000	5556694858700789857	seqkit seq -w 0 normalized FASTA stream
+seqtk comp many-tiny/raw	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp many-tiny/raw	seqtk	match	100000	3100000	5556694858700789857	100000	3100000	5556694858700789857	seqtk seq -A normalized FASTA stream
+samtools faidx many-tiny/raw	samtools	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats many-tiny/gzip	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats many-tiny/gzip	seqkit	match	100000	3100000	5556694858700789857	100000	3100000	5556694858700789857	seqkit seq -w 0 normalized FASTA stream
+seqtk comp many-tiny/gzip	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp many-tiny/gzip	seqtk	match	100000	3100000	5556694858700789857	100000	3100000	5556694858700789857	seqtk seq -A normalized FASTA stream
+bgzip decompress many-tiny/gzip	bgzip	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats many-tiny/bgzf	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats many-tiny/bgzf	seqkit	match	100000	3100000	5556694858700789857	100000	3100000	5556694858700789857	seqkit seq -w 0 normalized FASTA stream
+seqtk comp many-tiny/bgzf	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp many-tiny/bgzf	seqtk	match	100000	3100000	5556694858700789857	100000	3100000	5556694858700789857	seqtk seq -A normalized FASTA stream
+bgzip decompress many-tiny/bgzf	bgzip	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+samtools faidx many-tiny/bgzf	samtools	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats protein/raw	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats protein/raw	seqkit	match	50000	15000000	14627641143505395720	50000	15000000	14627641143505395720	seqkit seq -w 0 normalized FASTA stream
+seqtk comp protein/raw	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp protein/raw	seqtk	match	50000	15000000	14627641143505395720	50000	15000000	14627641143505395720	seqtk seq -A normalized FASTA stream
+samtools faidx protein/raw	samtools	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats protein/gzip	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats protein/gzip	seqkit	match	50000	15000000	14627641143505395720	50000	15000000	14627641143505395720	seqkit seq -w 0 normalized FASTA stream
+seqtk comp protein/gzip	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp protein/gzip	seqtk	match	50000	15000000	14627641143505395720	50000	15000000	14627641143505395720	seqtk seq -A normalized FASTA stream
+bgzip decompress protein/gzip	bgzip	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats protein/bgzf	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats protein/bgzf	seqkit	match	50000	15000000	14627641143505395720	50000	15000000	14627641143505395720	seqkit seq -w 0 normalized FASTA stream
+seqtk comp protein/bgzf	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp protein/bgzf	seqtk	match	50000	15000000	14627641143505395720	50000	15000000	14627641143505395720	seqtk seq -A normalized FASTA stream
+bgzip decompress protein/bgzf	bgzip	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+samtools faidx protein/bgzf	samtools	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats two-line-dna/raw	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats two-line-dna/raw	seqkit	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqkit seq -w 0 normalized FASTA stream
+seqtk comp two-line-dna/raw	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp two-line-dna/raw	seqtk	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqtk seq -A normalized FASTA stream
+samtools faidx two-line-dna/raw	samtools	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats two-line-dna/gzip	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats two-line-dna/gzip	seqkit	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqkit seq -w 0 normalized FASTA stream
+seqtk comp two-line-dna/gzip	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp two-line-dna/gzip	seqtk	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqtk seq -A normalized FASTA stream
+bgzip decompress two-line-dna/gzip	bgzip	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats two-line-dna/bgzf	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats two-line-dna/bgzf	seqkit	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqkit seq -w 0 normalized FASTA stream
+seqtk comp two-line-dna/bgzf	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp two-line-dna/bgzf	seqtk	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqtk seq -A normalized FASTA stream
+bgzip decompress two-line-dna/bgzf	bgzip	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+samtools faidx two-line-dna/bgzf	samtools	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats wrapped-dna/raw	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats wrapped-dna/raw	seqkit	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqkit seq -w 0 normalized FASTA stream
+seqtk comp wrapped-dna/raw	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp wrapped-dna/raw	seqtk	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqtk seq -A normalized FASTA stream
+samtools faidx wrapped-dna/raw	samtools	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats wrapped-dna/gzip	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats wrapped-dna/gzip	seqkit	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqkit seq -w 0 normalized FASTA stream
+seqtk comp wrapped-dna/gzip	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp wrapped-dna/gzip	seqtk	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqtk seq -A normalized FASTA stream
+bgzip decompress wrapped-dna/gzip	bgzip	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats wrapped-dna/bgzf	seqkit	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqkit stats wrapped-dna/bgzf	seqkit	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqkit seq -w 0 normalized FASTA stream
+seqtk comp wrapped-dna/bgzf	seqtk	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+seqtk comp wrapped-dna/bgzf	seqtk	match	100000	15000000	1376792450279976737	100000	15000000	1376792450279976737	seqtk seq -A normalized FASTA stream
+bgzip decompress wrapped-dna/bgzf	bgzip	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured
+samtools faidx wrapped-dna/bgzf	samtools	timing_only	NA	NA	NA	NA	NA	NA	no normalized FASTA comparator parser configured

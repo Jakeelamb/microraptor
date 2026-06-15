@@ -3,45 +3,45 @@
 <text x="24" y="28" font-family="Arial, sans-serif" font-size="18" font-weight="700">Microraptor auto parse throughput</text>
 <text x="24" y="46" font-family="Arial, sans-serif" font-size="12" fill="#555">bases/s; parse-only auto opener rows generated from benchmark JSONL</text>
 <text x="24" y="71" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq / file-auto</text>
-<rect x="310" y="58" width="268" height="18" fill="#1f766f"/>
-<text x="586" y="71" font-family="Arial, sans-serif" font-size="12" fill="#222">1.82 Gbases/s</text>
+<rect x="310" y="58" width="331" height="18" fill="#1f766f"/>
+<text x="649" y="71" font-family="Arial, sans-serif" font-size="12" fill="#222">0.90 Gbases/s</text>
 <text x="24" y="101" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.gz / file-auto</text>
-<rect x="310" y="88" width="113" height="18" fill="#1f766f"/>
-<text x="431" y="101" font-family="Arial, sans-serif" font-size="12" fill="#222">0.77 Gbases/s</text>
+<rect x="310" y="88" width="371" height="18" fill="#1f766f"/>
+<text x="689" y="101" font-family="Arial, sans-serif" font-size="12" fill="#222">1.01 Gbases/s</text>
 <text x="24" y="131" font-family="Arial, sans-serif" font-size="12" fill="#222">single.fastq.bgz / file-auto</text>
-<rect x="310" y="118" width="140" height="18" fill="#1f766f"/>
-<text x="458" y="131" font-family="Arial, sans-serif" font-size="12" fill="#222">0.95 Gbases/s</text>
+<rect x="310" y="118" width="508" height="18" fill="#1f766f"/>
+<text x="826" y="131" font-family="Arial, sans-serif" font-size="12" fill="#222">1.39 Gbases/s</text>
 <text x="24" y="161" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq / file-auto</text>
-<rect x="310" y="148" width="163" height="18" fill="#1f766f"/>
-<text x="481" y="161" font-family="Arial, sans-serif" font-size="12" fill="#222">1.11 Gbases/s</text>
+<rect x="310" y="148" width="528" height="18" fill="#1f766f"/>
+<text x="846" y="161" font-family="Arial, sans-serif" font-size="12" fill="#222">1.44 Gbases/s</text>
 <text x="24" y="191" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.gz / file-auto</text>
-<rect x="310" y="178" width="105" height="18" fill="#1f766f"/>
-<text x="423" y="191" font-family="Arial, sans-serif" font-size="12" fill="#222">0.71 Gbases/s</text>
+<rect x="310" y="178" width="360" height="18" fill="#1f766f"/>
+<text x="678" y="191" font-family="Arial, sans-serif" font-size="12" fill="#222">0.98 Gbases/s</text>
 <text x="24" y="221" font-family="Arial, sans-serif" font-size="12" fill="#222">interleaved.fastq.bgz / file-auto</text>
-<rect x="310" y="208" width="133" height="18" fill="#1f766f"/>
-<text x="451" y="221" font-family="Arial, sans-serif" font-size="12" fill="#222">0.90 Gbases/s</text>
+<rect x="310" y="208" width="575" height="18" fill="#1f766f"/>
+<text x="893" y="221" font-family="Arial, sans-serif" font-size="12" fill="#222">1.57 Gbases/s</text>
 <text x="24" y="251" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq / file-auto</text>
-<rect x="310" y="238" width="232" height="18" fill="#1f766f"/>
-<text x="550" y="251" font-family="Arial, sans-serif" font-size="12" fill="#222">1.58 Gbases/s</text>
+<rect x="310" y="238" width="362" height="18" fill="#1f766f"/>
+<text x="680" y="251" font-family="Arial, sans-serif" font-size="12" fill="#222">0.99 Gbases/s</text>
 <text x="24" y="281" font-family="Arial, sans-serif" font-size="12" fill="#222">r2.fastq / file-auto</text>
-<rect x="310" y="268" width="238" height="18" fill="#1f766f"/>
-<text x="556" y="281" font-family="Arial, sans-serif" font-size="12" fill="#222">1.62 Gbases/s</text>
+<rect x="310" y="268" width="512" height="18" fill="#1f766f"/>
+<text x="830" y="281" font-family="Arial, sans-serif" font-size="12" fill="#222">1.40 Gbases/s</text>
 <text x="24" y="311" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq+r2.fastq / file-paired-auto</text>
-<rect x="310" y="298" width="190" height="18" fill="#1f766f"/>
-<text x="508" y="311" font-family="Arial, sans-serif" font-size="12" fill="#222">1.29 Gbases/s</text>
+<rect x="310" y="298" width="534" height="18" fill="#1f766f"/>
+<text x="852" y="311" font-family="Arial, sans-serif" font-size="12" fill="#222">1.46 Gbases/s</text>
 <text x="24" y="341" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq.gz+r2.fastq.gz / file-paired-auto</text>
-<rect x="310" y="328" width="93" height="18" fill="#1f766f"/>
-<text x="411" y="341" font-family="Arial, sans-serif" font-size="12" fill="#222">0.64 Gbases/s</text>
+<rect x="310" y="328" width="364" height="18" fill="#1f766f"/>
+<text x="682" y="341" font-family="Arial, sans-serif" font-size="12" fill="#222">1.00 Gbases/s</text>
 <text x="24" y="371" font-family="Arial, sans-serif" font-size="12" fill="#222">r1.fastq.bgz+r2.fastq.bgz / file-paired-auto</text>
-<rect x="310" y="358" width="102" height="18" fill="#1f766f"/>
-<text x="420" y="371" font-family="Arial, sans-serif" font-size="12" fill="#222">0.70 Gbases/s</text>
+<rect x="310" y="358" width="384" height="18" fill="#1f766f"/>
+<text x="702" y="371" font-family="Arial, sans-serif" font-size="12" fill="#222">1.05 Gbases/s</text>
 <text x="24" y="401" font-family="Arial, sans-serif" font-size="12" fill="#222">pacbio_clr_subreads.50k.fq / file-auto</text>
-<rect x="310" y="388" width="454" height="18" fill="#1f766f"/>
-<text x="772" y="401" font-family="Arial, sans-serif" font-size="12" fill="#222">3.08 Gbases/s</text>
+<rect x="310" y="388" width="650" height="18" fill="#1f766f"/>
+<text x="968" y="401" font-family="Arial, sans-serif" font-size="12" fill="#222">1.77 Gbases/s</text>
 <text x="24" y="431" font-family="Arial, sans-serif" font-size="12" fill="#222">ont.50k.fq / file-auto</text>
-<rect x="310" y="418" width="650" height="18" fill="#1f766f"/>
-<text x="968" y="431" font-family="Arial, sans-serif" font-size="12" fill="#222">4.41 Gbases/s</text>
+<rect x="310" y="418" width="643" height="18" fill="#1f766f"/>
+<text x="961" y="431" font-family="Arial, sans-serif" font-size="12" fill="#222">1.75 Gbases/s</text>
 <text x="24" y="461" font-family="Arial, sans-serif" font-size="12" fill="#222">illumina_pe_r1.1m.fq+illumina_pe_r2.1m.fq / file-paired-auto</text>
-<rect x="310" y="448" width="75" height="18" fill="#1f766f"/>
-<text x="393" y="461" font-family="Arial, sans-serif" font-size="12" fill="#222">0.51 Gbases/s</text>
+<rect x="310" y="448" width="238" height="18" fill="#1f766f"/>
+<text x="556" y="461" font-family="Arial, sans-serif" font-size="12" fill="#222">0.65 Gbases/s</text>
 </svg>

@@ -220,6 +220,7 @@ run_external() {
 
   local start end status elapsed rss command_text
   command_text="$(printf '%q ' "$@")"
+  command_text="${command_text% }"
   start="$(date +%s%N)"
   set +e
   /usr/bin/time -f '%e\t%M' -o "${result_dir}/.time.tmp" "$@" >/dev/null 2>"${result_dir}/.stderr.tmp"
@@ -319,6 +320,7 @@ done < <(parse_corpus_inputs "${corpus_inputs}")
   printf 'Microraptor JSONL: [`microraptor-fasta-gauntlet.jsonl`](microraptor-fasta-gauntlet.jsonl)\n\n'
   printf 'Microraptor memory/RSS smoke rows: [`microraptor-memory.tsv`](microraptor-memory.tsv)\n\n'
   printf 'External tools: [`external-tools.tsv`](external-tools.tsv)\n\n'
+  printf 'External parity: [`external-parity.tsv`](external-parity.tsv)\n\n'
   printf 'Metadata: [`metadata.md`](metadata.md)\n'
 } > "${summary}"
 

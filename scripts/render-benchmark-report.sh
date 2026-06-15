@@ -137,6 +137,9 @@ external_svg="${fig_dir}/external-tool-wallclock.svg"
   if [[ -f "${external_tsv_out}" ]]; then
     printf '## External Tool Timings\n\n'
     printf 'External rows are wall-clock timings for comparable command-line work where the tool is installed locally.\n\n'
+    if [[ -f "${external_parity_tsv_out}" ]]; then
+      printf 'Parity sidecar: [`external-parity.tsv`](external-parity.tsv)\n\n'
+    fi
     printf '| label | tool | status | elapsed s |\n'
     printf '| --- | --- | ---: | ---: |\n'
     awk -F '\t' 'NR > 1 {

@@ -1,9 +1,9 @@
-label	path	bytes	source
-illumina_pe_r1.1m.fq	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq	130328422	~/Projects/Benchmarks/datasets/drosophila_melanogaster
-illumina_pe_r2.1m.fq	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r2.1m.fq	130328422	~/Projects/Benchmarks/datasets/drosophila_melanogaster
-illumina_pe_r1.1m.fq.gz	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r1.1m.fq.gz	26708500	~/Projects/Benchmarks/datasets/drosophila_melanogaster
-illumina_pe_r2.1m.fq.gz	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r2.1m.fq.gz	27450560	~/Projects/Benchmarks/datasets/drosophila_melanogaster
-illumina_pe_r1.1m.fq.bgz	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r1.1m.fq.bgz	26901630	~/Projects/Benchmarks/datasets/drosophila_melanogaster
-illumina_pe_r2.1m.fq.bgz	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r2.1m.fq.bgz	27693950	~/Projects/Benchmarks/datasets/drosophila_melanogaster
-illumina_pe_r1_r2.1m-combined.fq	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r1_r2.1m-combined.fq	260656844	~/Projects/Benchmarks/datasets/drosophila_melanogaster
-illumina_pe_r1_r2.1m-combined.fq.bgz	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r1_r2.1m-combined.fq.bgz	54594251	~/Projects/Benchmarks/datasets/drosophila_melanogaster
+label	path	bytes	sha256	source
+illumina_pe_r1.1m.fq	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r1.1m.fq	130328422	0daad6c8cc22ad9f54bcc533617cdc07aa5dacd7c8898bb195b4dbdac786d67c	~/Projects/Benchmarks/datasets/drosophila_melanogaster
+illumina_pe_r2.1m.fq	~/Projects/Benchmarks/datasets/drosophila_melanogaster/illumina_pe_r2.1m.fq	130328422	9b44693fa26b620bcbb0ca84216f3d53c5b245e4b04cda09277cb1c6d448b3c6	~/Projects/Benchmarks/datasets/drosophila_melanogaster
+illumina_pe_r1.1m.fq.gz	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r1.1m.fq.gz	26708500	3403253e07693e79b4e7a4a2d6794b1d2244a59d4c64aa645039b161f4dea9d3	~/Projects/Benchmarks/datasets/drosophila_melanogaster
+illumina_pe_r2.1m.fq.gz	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r2.1m.fq.gz	27450560	62617ddc87b45a80c06c4a9784e0b5f8123880968453b690b655d9e0113d65ff	~/Projects/Benchmarks/datasets/drosophila_melanogaster
+illumina_pe_r1.1m.fq.bgz	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r1.1m.fq.bgz	26901630	e8c9c9b44ec0cdea5bc493c824d77ad42df62e117d0e236be6358d18b4ae1c3f	~/Projects/Benchmarks/datasets/drosophila_melanogaster
+illumina_pe_r2.1m.fq.bgz	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r2.1m.fq.bgz	27693950	264ba28ab40a7de452686a0a119e949bbd1956ed5fd3e364e9ad55682672ed6d	~/Projects/Benchmarks/datasets/drosophila_melanogaster
+illumina_pe_r1_r2.1m-combined.fq	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r1_r2.1m-combined.fq	260656844	50d819e7c398057d37f3485b8aa697333f4c1529455ac32cdcb84f92abbb2e3f	~/Projects/Benchmarks/datasets/drosophila_melanogaster
+illumina_pe_r1_r2.1m-combined.fq.bgz	target/bench-real-inputs/drosophila_melanogaster/illumina_pe_r1_r2.1m-combined.fq.bgz	54594251	397dd3c3ac716bf3e21714d5f0e98951510dd072dd6b7d3f4b7dd3fc8e3cbf12	~/Projects/Benchmarks/datasets/drosophila_melanogaster

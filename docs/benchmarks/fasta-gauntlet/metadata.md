@@ -1,11 +1,11 @@
 # FASTA Gauntlet Metadata
 
-- generated_at_utc: 2026-06-14T18:21:16Z
-- git_commit: 758be30
+- generated_at_utc: 2026-06-15T00:04:50Z
+- git_commit: ca37784
 - git_dirty: true
 - rustc: rustc 1.92.0 (ded5c06cf 2025-12-08)
 - cargo: cargo 1.92.0 (344c4567c 2025-10-21)
-- records: 10000
+- records: 100000
 - read_len: 150
 - iters: 3
 - thread_cap: 8

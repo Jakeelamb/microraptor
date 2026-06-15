@@ -10,4 +10,6 @@ Microraptor memory/RSS smoke rows: [`microraptor-memory.tsv`](microraptor-memory
 
 External tools: [`external-tools.tsv`](external-tools.tsv)
 
+External parity: [`external-parity.tsv`](external-parity.tsv)
+
 Metadata: [`metadata.md`](metadata.md)

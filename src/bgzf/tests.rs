@@ -89,6 +89,30 @@ fn oversized_uncompressed_block_stream() -> Vec<u8> {
     out
 }
 
+fn mismatched_advertised_size_block_stream() -> Vec<u8> {
+    let input = vec![b'A'; 1024];
+    let compressed = deflate_block_flate2(&input, flate2::Compression::fast()).unwrap();
+    let total_size = BGZF_HEADER_LEN + compressed.len() + GZIP_TRAILER_LEN;
+    assert!(total_size <= BGZF_MAX_BLOCK_SIZE);
+
+    let mut out = Vec::with_capacity(total_size + BGZF_EOF_BLOCK.len());
+    out.extend_from_slice(&[31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0]);
+    out.extend_from_slice(&[b'B', b'C', 2, 0]);
+    out.extend_from_slice(
+        &u16::try_from(total_size - 1)
+            .unwrap_or(u16::MAX)
+            .to_le_bytes(),
+    );
+    out.extend_from_slice(&compressed);
+
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&input);
+    out.extend_from_slice(&hasher.finalize().to_le_bytes());
+    out.extend_from_slice(&1_u32.to_le_bytes());
+    out.extend_from_slice(BGZF_EOF_BLOCK);
+    out
+}
+
 #[test]
 fn bgzf_decoders_reject_oversized_uncompressed_blocks() {
     let encoded = oversized_uncompressed_block_stream();
@@ -107,6 +131,19 @@ fn bgzf_decoders_reject_oversized_uncompressed_blocks() {
 
     let index_err = build_bgzf_index(&encoded[..]).unwrap_err();
     assert!(index_err.to_string().contains("exceeds 64 KiB"));
+}
+
+#[test]
+fn flate2_reader_rejects_blocks_that_inflate_past_advertised_size() {
+    let encoded = mismatched_advertised_size_block_stream();
+    let mut reader = BgzfReader::with_inflate_backend(&encoded[..], BgzfInflateBackend::Flate2);
+    let mut out = Vec::new();
+
+    let err = reader.read_to_end(&mut out).unwrap_err();
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds advertised size"));
+    assert!(out.len() <= 2);
 }
 
 #[test]

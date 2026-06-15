@@ -97,6 +97,7 @@ run bash -n \
   scripts/benchmark-fasta-peer-size-sweep.sh \
   scripts/benchmark-fasta-gauntlet.sh \
   scripts/check-replication-host.sh \
+  scripts/check-fuzz-corpus.sh \
   scripts/discover-local-benchmark-corpus.sh \
   scripts/export-replication-kit.sh \
   scripts/prepare-real-benchmark-inputs.sh \
@@ -122,6 +123,7 @@ if [[ "${nightly}" -eq 1 ]]; then
   run cargo +nightly test --all-features
   run cargo +nightly test --no-default-features
   run cargo +nightly fuzz build
+  run scripts/check-fuzz-corpus.sh
 fi
 
 case "${bench_tier}" in
@@ -144,7 +146,7 @@ case "${bench_tier}" in
     run scripts/benchmark-rust-peers.sh
     run scripts/benchmark-fasta-peers.sh
     run scripts/benchmark-fasta-peer-size-sweep.sh
-    run scripts/benchmark-fasta-gauntlet.sh
+    run env MICRORAPTOR_FASTA_GAUNTLET_RESULT_DIR=docs/benchmarks/fasta-gauntlet scripts/benchmark-fasta-gauntlet.sh
     run scripts/check-benchmark-snapshots.sh
     ;;
   *)

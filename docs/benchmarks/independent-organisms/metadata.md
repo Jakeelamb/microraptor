@@ -1,7 +1,7 @@
 # microraptor benchmark metadata
 
-- generated_at_utc: 2026-06-13T04:57:33Z
-- git_commit: 574fa99
+- generated_at_utc: 2026-06-15T00:00:32Z
+- git_commit: ca37784
 - git_dirty: true
 - rustc: rustc 1.92.0 (ded5c06cf 2025-12-08)
 - cargo: cargo 1.92.0 (344c4567c 2025-10-21)
@@ -10,21 +10,21 @@
 - feature_flags: all-features
 - kernel: Linux 7.0.9-arch2-1 x86_64 GNU/Linux
 - cpu: AMD Ryzen AI 9 HX 370 w/ Radeon 890M
-- logical_cpus: 24
+- logical_cpus: 8
 - memory: 93Gi
 - filesystem: btrfs
-- storage_available: 383G
+- storage_available: 296G
 - records: 100000
 - read_len: 150
 - iters: 3
-- workers: 24
+- workers: 8
 
 ## Tool versions
 
 ### microraptor
 
 ```text
-microraptor-bench [--input PATH | --paired-inputs R1 R2] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--bgzf-parallel-min-bytes N] [--json] [--check-bgzf-pack-regression] [--check-label NAME] [--min-input-bytes N] [--tolerance-pct N] [--skip-timing-checks] [--profile-bgzf-parallel]
+microraptor-bench [--input PATH | --paired-inputs R1 R2] [--format fastq|fasta] [--mode all|parse|pack] [--records N] [--read-len N] [--iters N] [--slab-size BYTES] [--workers N] [--bgzf-parallel-min-bytes N] [--json] [--mmap] [--check-bgzf-pack-regression] [--check-label NAME] [--min-input-bytes N] [--tolerance-pct N] [--skip-timing-checks] [--profile-bgzf-parallel]
 ```
 
 ### seqkit

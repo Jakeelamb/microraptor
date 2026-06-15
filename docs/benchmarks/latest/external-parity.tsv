@@ -1,0 +1,37 @@
+label	tool	parity_status	expected_records	expected_bases	expected_checksum	observed_records	observed_bases	observed_checksum	notes
+seqkit stats single/raw	seqkit	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqkit stats single/raw	seqkit	match	100000	15000000	12945858864820177352	100000	15000000	12945858864820177352	seqkit seq -w 0 normalized FASTQ stream
+seqkit stats single/gzip	seqkit	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqkit stats single/gzip	seqkit	match	100000	15000000	12945858864820177352	100000	15000000	12945858864820177352	seqkit seq -w 0 normalized FASTQ stream
+seqkit stats single/bgzf	seqkit	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqkit stats single/bgzf	seqkit	match	100000	15000000	12945858864820177352	100000	15000000	12945858864820177352	seqkit seq -w 0 normalized FASTQ stream
+seqkit stats paired/r1/raw	seqkit	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqkit stats paired/r1/raw	seqkit	match	100000	15000000	12945858864820177352	100000	15000000	12945858864820177352	seqkit seq -w 0 normalized FASTQ stream
+seqkit stats paired/r2/raw	seqkit	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqkit stats paired/r2/raw	seqkit	match	100000	15000000	12725525685719183448	100000	15000000	12725525685719183448	seqkit seq -w 0 normalized FASTQ stream
+seqkit stats paired/r1/gzip	seqkit	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqkit stats paired/r1/gzip	seqkit	match	100000	15000000	12945858864820177352	100000	15000000	12945858864820177352	seqkit seq -w 0 normalized FASTQ stream
+seqkit stats paired/r2/gzip	seqkit	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqkit stats paired/r2/gzip	seqkit	match	100000	15000000	12725525685719183448	100000	15000000	12725525685719183448	seqkit seq -w 0 normalized FASTQ stream
+seqkit stats paired/r1/bgzf	seqkit	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqkit stats paired/r1/bgzf	seqkit	match	100000	15000000	12945858864820177352	100000	15000000	12945858864820177352	seqkit seq -w 0 normalized FASTQ stream
+seqkit stats paired/r2/bgzf	seqkit	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqkit stats paired/r2/bgzf	seqkit	match	100000	15000000	12725525685719183448	100000	15000000	12725525685719183448	seqkit seq -w 0 normalized FASTQ stream
+seqtk comp single/raw	seqtk	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqtk comp single/raw	seqtk	match	100000	15000000	12945858864820177352	100000	15000000	12945858864820177352	seqtk seq -A normalized FASTA sequence stream
+seqtk comp single/gzip	seqtk	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqtk comp single/gzip	seqtk	match	100000	15000000	12945858864820177352	100000	15000000	12945858864820177352	seqtk seq -A normalized FASTA sequence stream
+seqtk comp single/bgzf	seqtk	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqtk comp single/bgzf	seqtk	match	100000	15000000	12945858864820177352	100000	15000000	12945858864820177352	seqtk seq -A normalized FASTA sequence stream
+seqtk fqchk single/raw	seqtk	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+seqtk fqchk single/raw	seqtk	match	100000	15000000	12945858864820177352	100000	15000000	12945858864820177352	seqtk seq -A normalized FASTA sequence stream
+bgzip test single/bgzf	bgzip	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+bgzip decompress single/bgzf	bgzip	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+samtools import single/raw	samtools	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+samtools import single/raw	samtools	match	100000	15000000	12945858864820177352	100000	15000000	12945858864820177352	samtools import -O SAM sequence stream
+samtools import paired/raw	samtools	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+samtools import paired/gzip	samtools	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+samtools import paired/bgzf	samtools	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+fastp paired/raw	fastp	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+fastp paired/gzip	fastp	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured
+fastp paired/bgzf	fastp	timing_only	100000	15000000	NA	NA	NA	NA	no normalized comparator parser configured

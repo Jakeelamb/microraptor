@@ -8,18 +8,18 @@ The benchmark reads one gzip-compressed in-memory FASTA byte buffer through each
 
 | tool | records | bases | best ms | records/s | bases/s | checksum |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `microraptor-resident-visitor` | 100000 | 15000000 | 4.353 | 22974683 | 3446202594 | `17112343752537438183` |
-| `microraptor-libdeflate-resident-visitor` | 100000 | 15000000 | 2.807 | 35626758 | 5344013760 | `17112343752537438183` |
-| `microraptor-libdeflate-two-line-visitor` | 100000 | 15000000 | 2.608 | 38346087 | 5751913086 | `17112343752537438183` |
-| `microraptor-libdeflate-two-line-counter` | 100000 | 15000000 | 2.616 | 38226708 | 5734006327 | `17112343752537438183` |
-| `microraptor-two-line-resident-visitor` | 100000 | 15000000 | 4.204 | 23786581 | 3567987162 | `17112343752537438183` |
-| `microraptor-two-line-resident-counter` | 100000 | 15000000 | 5.475 | 18265984 | 2739897677 | `17112343752537438183` |
-| `microraptor-two-line-stream-visitor` | 100000 | 15000000 | 5.167 | 19353762 | 2903064358 | `17112343752537438183` |
-| `microraptor-two-line-stream-counter` | 100000 | 15000000 | 4.873 | 20520620 | 3078093067 | `17112343752537438183` |
-| `microraptor-stream` | 100000 | 15000000 | 6.892 | 14510047 | 2176507187 | `17112343752537438183` |
-| `microraptor-stream-visitor` | 100000 | 15000000 | 6.650 | 15038598 | 2255789709 | `17112343752537438183` |
-| `seq_io` | 100000 | 15000000 | 3.635 | 27507887 | 4126183079 | `17112343752537438183` |
-| `bio` | 100000 | 15000000 | 8.683 | 11516726 | 1727508956 | `17112343752537438183` |
+| `microraptor-resident-visitor` | 100000 | 15000000 | 6.478 | 15436367 | 2315455138 | `17112343752537438183` |
+| `microraptor-libdeflate-resident-visitor` | 100000 | 15000000 | 2.959 | 33796023 | 5069403513 | `17112343752537438183` |
+| `microraptor-libdeflate-two-line-visitor` | 100000 | 15000000 | 2.587 | 38653094 | 5797964141 | `17112343752537438183` |
+| `microraptor-libdeflate-two-line-counter` | 100000 | 15000000 | 2.300 | 43481663 | 6522249567 | `17112343752537438183` |
+| `microraptor-two-line-resident-visitor` | 100000 | 15000000 | 4.317 | 23162109 | 3474316462 | `17112343752537438183` |
+| `microraptor-two-line-resident-counter` | 100000 | 15000000 | 3.527 | 28353640 | 4253046031 | `17112343752537438183` |
+| `microraptor-two-line-stream-visitor` | 100000 | 15000000 | 3.724 | 26850229 | 4027534372 | `17112343752537438183` |
+| `microraptor-two-line-stream-counter` | 100000 | 15000000 | 3.450 | 28989364 | 4348404613 | `17112343752537438183` |
+| `microraptor-stream` | 100000 | 15000000 | 6.255 | 15986870 | 2398030545 | `17112343752537438183` |
+| `microraptor-stream-visitor` | 100000 | 15000000 | 6.554 | 15257650 | 2288647590 | `17112343752537438183` |
+| `seq_io` | 100000 | 15000000 | 3.439 | 29078127 | 4361719110 | `17112343752537438183` |
+| `bio` | 100000 | 15000000 | 7.727 | 12941462 | 1941219360 | `17112343752537438183` |
 
 Figure: [`figures/fasta-library-peer-bases-throughput.svg`](figures/fasta-library-peer-bases-throughput.svg)
 
